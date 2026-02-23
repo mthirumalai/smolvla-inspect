@@ -1,0 +1,9 @@
+# pip install -r requirements.txt
+# Requires Python >= 3.10. If you see "from versions: none", use a 3.10+ venv:
+#   python3.10 -m venv .venv && source .venv/bin/activate  # or python3.11, etc.
+#   pip install --upgrade pip && pip install -r requirements.txt
+lerobot[smolvla]
+matplotlib>=3.7
+numpy>=1.24
+Pillow>=10.0
+pyyaml>=6.0
