@@ -46,10 +46,24 @@ Interpreting results:
 """
 
 import argparse
+import logging
 import math
 import os
 import sys
+import warnings
 from pathlib import Path
+
+# Preload Homebrew FFmpeg 6 libavdevice so PyAV/av doesn't load its bundled copy;
+# avoids "Class AVFFrameReceiver is implemented in both..." duplicate symbol warning.
+_ffmpeg6_lib = "/opt/homebrew/opt/ffmpeg@6/lib"
+if os.path.isdir(_ffmpeg6_lib):
+    _libavdevice = os.path.join(_ffmpeg6_lib, "libavdevice.60.dylib")
+    if os.path.isfile(_libavdevice):
+        try:
+            import ctypes
+            ctypes.CDLL(_libavdevice)
+        except OSError:
+            pass
 
 import numpy as np
 import torch
@@ -59,6 +73,9 @@ matplotlib.use("Agg")  # Non-interactive backend for saving files
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from PIL import Image
+from matplotlib.colors import LinearSegmentedColormap
+
+_CYAN_CMAP = LinearSegmentedColormap.from_list("cyan", ["black", "cyan", "white"])
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +706,7 @@ def create_visualization_grid(frames, heatmaps, actions=None,
         ax2.imshow(heatmap_resized, cmap="jet", vmin=0, vmax=1)
         ax2.axis("off")
         if i == 0:
-            ax2.set_ylabel("Self-attn", fontsize=11, rotation=0, labelpad=60, va="center")
+            ax2.set_ylabel("SigLIP\nself-attn", fontsize=11, rotation=0, labelpad=60, va="center")
 
         # Row 3: Self-attention overlay
         ax3 = fig.add_subplot(gs[2, i])
@@ -703,39 +720,45 @@ def create_visualization_grid(frames, heatmaps, actions=None,
 
             # Row 4: Cross-attention heatmap
             ax4 = fig.add_subplot(gs[3, i])
-            ax4.imshow(cross_hm, cmap="hot", vmin=0, vmax=1)
+            ax4.imshow(cross_hm, cmap="Greens", vmin=0, vmax=1)
             ax4.axis("off")
             if i == 0:
-                ax4.set_ylabel("Cross-attn", fontsize=11, rotation=0, labelpad=60, va="center")
+                ax4.set_ylabel("Action\ncross-attn", fontsize=11, rotation=0, labelpad=60, va="center")
 
-            # Row 5: Dual-color overlay (self-attn=blue, cross-attn=red)
-            dual = frame_np.astype(np.float32).copy()
-            blue_layer = np.zeros_like(dual)
-            blue_layer[:, :, 2] = heatmap_resized * 255
-            red_layer = np.zeros_like(dual)
-            red_layer[:, :, 0] = cross_hm * 255
-            dual = (0.5 * dual + 0.25 * blue_layer + 0.25 * red_layer)
-            dual = np.clip(dual, 0, 255).astype(np.uint8)
+            # Row 5: Co-attention overlay (self-attn × cross-attn)
+            co_attn = heatmap_resized * cross_hm          # element-wise product
+            co_attn = co_attn / (co_attn.max() + 1e-8)   # renormalize to [0, 1]
+            co_overlay = frame_np.copy()
+            co_overlay = (0.5 * co_overlay.astype(np.float32)
+                          + 0.5 * _CYAN_CMAP(co_attn)[:, :, :3] * 255)
+            co_overlay = np.clip(co_overlay, 0, 255).astype(np.uint8)
 
             ax5 = fig.add_subplot(gs[4, i])
-            ax5.imshow(dual)
+            ax5.imshow(co_overlay)
             ax5.axis("off")
             if i == 0:
-                ax5.set_ylabel("Dual overlay\n(blue=self, red=cross)", fontsize=9, rotation=0, labelpad=80, va="center")
-
-    title = (
-        f"SmolVLA Attention — Episode {episode_idx}\n"
-        f"Bright regions = where the model focuses"
-    )
-    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
+                ax5.set_ylabel("Co-attention\noverlay", fontsize=11, rotation=0, labelpad=60, va="center")
 
     if has_cross:
-        footer = ("Row 1: Original  |  Row 2: Self-attn heatmap  |  Row 3: Self-attn overlay  |  "
-                  "Row 4: Cross-attn heatmap  |  Row 5: Dual overlay")
+        legend = ("Row 1: Original  |  Row 2: SigLIP self-attn heatmap  |  Row 3: Self-attn overlay  |  "
+                  "Row 4: Action cross-attn heatmap  |  Row 5: Co-attention (self × cross)")
+        dual_legend = "Co-attention: self-attn × cross-attn — bright regions are both visually salient and action-relevant"
     else:
-        footer = "Row 1: Original  |  Row 2: Heatmap (attention only)  |  Row 3: Overlay (heatmap on frame)"
-    fig.subplots_adjust(bottom=0.04)
-    fig.text(0.5, 0.01, footer, ha="center", fontsize=9, style="italic")
+        legend = "Row 1: Original  |  Row 2: SigLIP self-attn heatmap  |  Row 3: Overlay (heatmap on frame)"
+        dual_legend = None
+
+    if dual_legend:
+        title = (
+            f"SmolVLA Attention — Episode {episode_idx}\n\n"
+            f"{legend}\n\n"
+            f"{dual_legend}"
+        )
+    else:
+        title = (
+            f"SmolVLA Attention — Episode {episode_idx}\n\n"
+            f"{legend}"
+        )
+    fig.suptitle(title, fontsize=14, fontweight="bold", y=0.98)
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
@@ -831,7 +854,7 @@ def create_per_head_grid(frame, attn_weights, grid_size, image_size,
         r, c = divmod(idx, cols)
         axes[r, c].axis("off")
 
-    fig.suptitle("Per-head attention patterns", fontsize=13, fontweight="bold")
+    fig.suptitle("SigLIP vision encoder per-head self-attention", fontsize=13, fontweight="bold")
     plt.savefig(output_path, dpi=120, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved per-head grid: {output_path}")
@@ -1565,7 +1588,24 @@ Examples:
     
     try:
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-        policy = SmolVLAPolicy.from_pretrained(args.model)
+        # Suppress noisy warnings from HF/lerobot during model loading:
+        #  - "Device 'cuda' is not available. Switching to 'mps'"
+        #  - "`torch_dtype` is deprecated! Use `dtype` instead!"
+        #  - "Loading ... weights ..."
+        _suppressed_loggers = {
+            name: logging.getLogger(name)
+            for name in ("lerobot.configs.policies", "lerobot", "transformers")
+        }
+        _saved_levels = {name: lg.level for name, lg in _suppressed_loggers.items()}
+        for lg in _suppressed_loggers.values():
+            lg.setLevel(logging.ERROR)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*torch_dtype.*deprecated.*")
+                policy = SmolVLAPolicy.from_pretrained(args.model)
+        finally:
+            for name, lg in _suppressed_loggers.items():
+                lg.setLevel(_saved_levels[name])
         policy.to(device)
         policy.eval()
         print(f"  Model loaded successfully ({sum(p.numel() for p in policy.parameters()) / 1e6:.1f}M params)")
@@ -1672,31 +1712,7 @@ Examples:
     if args.save_individual:
         print(f"  Individual frames:  {args.output_dir}/episode_{args.episode:03d}/")
     
-    print(f"""
-How to interpret the results:
-  ┌───────────────────────────────────────────────────────────────────┐
-  │ SELF-ATTENTION (vision encoder, rows 2-3):                       │
-  │   Healthy: bright on gripper, object, goal; dark background.     │
-  │   Overfitting: bright on shelves, cables, table texture.         │
-  │                                                                   │
-  │ CROSS-ATTENTION (action expert → vision, rows 4-5, if enabled):  │
-  │   Healthy: tight focus on the regions the action decoder uses    │
-  │   to predict actions (gripper tip, target object).               │
-  │   Diffuse: expert reads all tokens equally — weak specialisation.│
-  │                                                                   │
-  │ Compare self-attn vs cross-attn: if self-attn is diffuse but    │
-  │ cross-attn is focused, the decoder has learned to select useful  │
-  │ tokens despite a noisy encoder.                                  │
-  └───────────────────────────────────────────────────────────────────┘
-
-Next steps:
-  • Compare attention before/after applying the cropping pipeline
-  • Compare base model vs fine-tuned model attention
-  • If background is highlighted → confirms distribution shift hypothesis
-  • Use --cross-attention to see what the action decoder actually reads
-  • Use --method rollout for accumulated information flow across layers
-  • Use --show-heads to find specialised attention heads
-""")
+    print()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ output_dir: ./outputs
 save_individual: true                   # true to also save each frame separately
 
 # Attention analysis options
-method: last-layer                      # last-layer | rollout | all-layers
-cross_attention: false                  # true to capture action-expert → vision cross-attention (slower)
-show_heads: false                       # true to save a per-head attention grid for the first frame
+method: rollout                         # last-layer | rollout | all-layers
+cross_attention: true                   # true to capture action-expert → vision cross-attention (slower)
+show_heads: true                        # true to save a per-head attention grid for the first frame
 raw_attention: false                    # true to skip positional baseline subtraction
