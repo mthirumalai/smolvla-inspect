@@ -205,21 +205,22 @@ box(ax, 2, 5.8, 6, 0.8, "Cross-attention heatmap\n(Greens colormap)",
     bg=GREEN_BG, border=GREEN_BORDER, fontsize=9, fontweight="bold")
 
 # Co-attention
-arrow(ax, 5, 5.8, 5, 5.2, color=CYAN_BORDER)
+arrow(ax, 5, 5.8, 5, 5.3, color=CYAN_BORDER)
 
-# Show the multiplication
-ax.text(1.8, 4.8, "self-attn", ha="center", va="center", fontsize=8,
+# Show the multiplication — centered at x=5
+ax.text(3.8, 4.9, "self-attn", ha="center", va="center", fontsize=8,
         color=BLUE_BORDER, fontweight="bold")
-ax.text(2.8, 4.8, " x ", ha="center", va="center", fontsize=10,
+ax.text(5.0, 4.9, " x ", ha="center", va="center", fontsize=10,
         color=TEXT_COLOR, fontweight="bold")
-ax.text(3.8, 4.8, "cross-attn", ha="center", va="center", fontsize=8,
+ax.text(6.2, 4.9, "cross-attn", ha="center", va="center", fontsize=8,
         color=GREEN_BORDER, fontweight="bold")
 
-box(ax, 2, 3.8, 6, 0.8, "Co-attention heatmap\n(cyan colormap: black -> cyan -> white)",
-    bg=CYAN_BG, border=CYAN_BORDER, fontsize=9, fontweight="bold")
-arrow(ax, 3.5, 5.2, 5, 4.6, color=CYAN_BORDER)
+arrow(ax, 5, 4.6, 5, 4.2, color=CYAN_BORDER)
 
-ax.text(5, 3.2, "Bright cyan = both visually salient\nAND action-relevant",
+box(ax, 2, 3.4, 6, 0.8, "Co-attention heatmap\n(cyan colormap: black -> cyan -> white)",
+    bg=CYAN_BG, border=CYAN_BORDER, fontsize=9, fontweight="bold")
+
+ax.text(5, 2.8, "Bright cyan = both visually salient\nAND action-relevant",
         ha="center", va="center", fontsize=8, color=CYAN_BORDER, fontstyle="italic")
 
 plt.tight_layout(w_pad=2)
