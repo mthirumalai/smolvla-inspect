@@ -126,12 +126,13 @@ smolvla-inspect/
 │   └── how_it_works_architecture.png   # Diagram: architecture + hooks + attention→heatmap
 ├── configs/
 │   └── defaults.yaml      # Default model/dataset/output paths (optional)
+├── docs/
+│   ├── ELI5.md             # Plain-language explanation of how the interpretability works
+│   └── TESTING.md          # CLI test commands and expected output
 ├── outputs/                # Generated grid and per-frame images
 ├── run.sh                  # Wrapper that sets FFmpeg lib path
 ├── requirements.txt
-├── README.md
-├── TESTING.md              # CLI test commands and expected output
-└── ELI5.md                 # Plain-language explanation of how the interpretability works
+└── README.md
 ```
 
 ---
