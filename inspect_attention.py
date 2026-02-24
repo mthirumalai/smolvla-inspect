@@ -75,6 +75,25 @@ import matplotlib.gridspec as gridspec
 from PIL import Image
 from matplotlib.colors import LinearSegmentedColormap
 
+try:
+    from lerobot.policies.smolvla.modeling_smolvla import resize_with_pad
+except ImportError:
+    def resize_with_pad(img, width, height, pad_value=-1):
+        """Aspect-ratio-preserving resize with top/left padding."""
+        if img.ndim != 4:
+            raise ValueError(f"(b,c,h,w) expected, but {img.shape}")
+        cur_height, cur_width = img.shape[2:]
+        ratio = max(cur_width / width, cur_height / height)
+        resized_height = int(cur_height / ratio)
+        resized_width = int(cur_width / ratio)
+        resized_img = F.interpolate(
+            img, size=(resized_height, resized_width), mode="bilinear", align_corners=False,
+        )
+        pad_height = max(0, int(height - resized_height))
+        pad_width = max(0, int(width - resized_width))
+        padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
+        return padded_img
+
 _CYAN_CMAP = LinearSegmentedColormap.from_list("cyan", ["black", "cyan", "white"])
 
 
@@ -534,7 +553,21 @@ class GradCAMFallback:
 # 3. Attention-to-heatmap conversion
 # ---------------------------------------------------------------------------
 
-def attention_to_heatmap(attn_weights, grid_size, image_size):
+def compute_padding_patches(input_hw, target_size, patch_size):
+    """Number of pure-padding patch rows (top) and columns (left)
+    produced by resize_with_pad for the given input dimensions."""
+    if input_hw is None:
+        return (0, 0)
+    in_h, in_w = input_hw
+    ratio = max(in_w / target_size, in_h / target_size)
+    resized_h = int(in_h / ratio)
+    resized_w = int(in_w / ratio)
+    pad_h = max(0, target_size - resized_h)
+    pad_w = max(0, target_size - resized_w)
+    return (pad_h // patch_size, pad_w // patch_size)
+
+
+def attention_to_heatmap(attn_weights, grid_size, image_size, content_crop=None):
     """
     Convert attention weights from patch-space to pixel-space heatmap.
     
@@ -565,7 +598,13 @@ def attention_to_heatmap(attn_weights, grid_size, image_size):
         attn_2d = attn_weights.reshape(h_patches, w_patches)
     else:
         attn_2d = attn_weights
-    
+
+    # Crop out pure-padding patches (top rows, left columns) before upsampling
+    if content_crop is not None:
+        crop_h, crop_w = content_crop
+        if crop_h > 0 or crop_w > 0:
+            attn_2d = attn_2d[crop_h:, crop_w:]
+
     # Upsample to image resolution using bilinear interpolation
     attn_2d = attn_2d.float().unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
     heatmap = F.interpolate(attn_2d, size=(h_img, w_img), mode="bilinear", align_corners=False)
@@ -658,7 +697,8 @@ def compute_attention_rollout(all_layer_attentions):
     return rollout
 
 
-def compute_positional_baseline(vision_encoder, attn_capture, device, method):
+def compute_positional_baseline(vision_encoder, attn_capture, device, method,
+                                input_hw=None):
     """
     Compute the attention pattern produced by a content-free (mean-gray)
     image.  This captures the fixed positional component of attention so
@@ -672,6 +712,10 @@ def compute_positional_baseline(vision_encoder, attn_capture, device, method):
         device: Torch device.
         method: ``"last-layer"`` or ``"rollout"`` — same aggregation used
             for real frames so the baseline is comparable.
+        input_hw: Optional ``(H, W)`` of the original input images.  When
+            provided the baseline gray image is built at this aspect ratio
+            then preprocessed with ``resize_with_pad`` so padding patches
+            match those in real frames.
 
     Returns:
         Tensor of shape ``(num_patches,)`` — per-patch baseline scores.
@@ -681,7 +725,15 @@ def compute_positional_baseline(vision_encoder, attn_capture, device, method):
         getattr(vision_encoder, "config", None), "image_size", None,
     ) or getattr(vision_encoder, "image_size", 384)
 
-    gray = torch.full((1, 3, img_size, img_size), 0.5, device=device)
+    if input_hw is not None:
+        # Build gray at original aspect ratio, then resize_with_pad
+        # so padding patches match the real frames exactly.
+        in_h, in_w = input_hw
+        gray_content = torch.full((1, 3, in_h, in_w), 0.5, device=device)
+        gray = resize_with_pad(gray_content, img_size, img_size, pad_value=0)
+        gray = gray * 2.0 - 1.0  # normalize to [-1, 1] matching SigLIP
+    else:
+        gray = torch.full((1, 3, img_size, img_size), 0.5, device=device)
     try:
         enc_dtype = next(vision_encoder.parameters()).dtype
         gray = gray.to(enc_dtype)
@@ -928,7 +980,7 @@ def save_individual_frames(frames, heatmaps, output_dir, episode_idx=0):
 
 
 def create_per_head_grid(frame, attn_weights, grid_size, image_size,
-                         output_path="per_head_attention.png"):
+                         output_path="per_head_attention.png", content_crop=None):
     """
     Visualise each attention head's pattern individually for a single
     frame.  Useful for identifying specialised heads (e.g. one tracking
@@ -965,7 +1017,7 @@ def create_per_head_grid(frame, attn_weights, grid_size, image_size,
         r, c = divmod(h, cols)
         head_attn = attn_weights[h]                      # (patches, patches)
         scores = head_attn.mean(dim=0)                    # per-patch importance
-        hmap = attention_to_heatmap(scores, grid_size, image_size)
+        hmap = attention_to_heatmap(scores, grid_size, image_size, content_crop=content_crop)
 
         blended = overlay_heatmap(frame_np.copy(), hmap, alpha=0.5)
         axes[r, c].imshow(blended)
@@ -1328,17 +1380,6 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
             print(f"  WARNING: Could not set up cross-attention capture: {e}")
             cross_capture = None
 
-    # --- Compute positional baseline (once) ---
-    baseline_scores = None
-    if not raw_attention:
-        baseline_scores = compute_positional_baseline(
-            vision_encoder, attn_capture, device, method,
-        )
-        if baseline_scores is not None:
-            print("  Positional baseline computed (subtracting to reveal content-dependent attention)")
-        else:
-            print("  Could not compute positional baseline, using raw attention")
-
     # --- Find image key in dataset ---
     if image_key is None:
         image_keys = find_image_keys(dataset)
@@ -1358,6 +1399,29 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
     first_sample = dataset[frame_pairs[0][0]]
     task_str = _resolve_task_string(first_sample, dataset)
     print(f"  Task string: \"{task_str}\"")
+
+    # --- Compute positional baseline (once, after frames are loaded so we
+    #     know the input aspect ratio for a properly padded baseline) ---
+    first_img = frame_pairs[0][1]  # (C, H, W)
+    input_hw = (first_img.shape[1], first_img.shape[2])
+
+    baseline_scores = None
+    if not raw_attention:
+        baseline_scores = compute_positional_baseline(
+            vision_encoder, attn_capture, device, method, input_hw=input_hw,
+        )
+        if baseline_scores is not None:
+            print("  Positional baseline computed (subtracting to reveal content-dependent attention)")
+        else:
+            print("  Could not compute positional baseline, using raw attention")
+
+    # --- Compute padding-patch crop so heatmaps exclude pad regions ---
+    target_size = getattr(getattr(vision_encoder, "config", None), "image_size", None) or 384
+    patch_size_cfg = getattr(vision_encoder, "patch_size", None) or getattr(
+        getattr(vision_encoder, "config", None), "patch_size", 14)
+    content_crop = compute_padding_patches(input_hw, target_size, patch_size_cfg)
+    if content_crop != (0, 0):
+        print(f"  Padding crop: {content_crop[0]} top rows, {content_crop[1]} left cols of patches")
 
     # --- Run inference and collect attention ---
     print(f"\n[4/4] Running forward passes and extracting attention (method={method})...")
@@ -1411,10 +1475,10 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                         getattr(vision_encoder, "config", None), "image_size", None,
                     ) or getattr(vision_encoder, "image_size", 384)
                     if img.shape[-1] != target_size or img.shape[-2] != target_size:
-                        img_resized = F.interpolate(img, size=(target_size, target_size),
-                                                    mode="bilinear", align_corners=False)
+                        img_resized = resize_with_pad(img, target_size, target_size, pad_value=0)
                     else:
                         img_resized = img
+                    img_resized = img_resized * 2.0 - 1.0  # normalize to [-1, 1] matching SigLIP
 
                     try:
                         enc_dtype = next(vision_encoder.parameters()).dtype
@@ -1507,7 +1571,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                 grid_h = grid_w = grid_side
 
             img_h, img_w = img_tensor.shape[1], img_tensor.shape[2]
-            heatmap = attention_to_heatmap(patch_scores, (grid_h, grid_w), (img_h, img_w))
+            heatmap = attention_to_heatmap(patch_scores, (grid_h, grid_w), (img_h, img_w),
+                                         content_crop=content_crop)
             heatmaps.append(heatmap)
 
             print(f"    Frame {i}: {n_patches} patches → "
@@ -1520,6 +1585,7 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                     img_tensor, raw_heads_attn,
                     (grid_h, grid_w), (img_h, img_w),
                     output_path=head_path,
+                    content_crop=content_crop,
                 )
                 raw_heads_attn = None  # only once
         else:
