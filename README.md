@@ -262,6 +262,18 @@ smolvla-inspect/
 
 ---
 
+## Roadmap
+
+Attention maps show where the model allocates compute, but not whether those regions actually drive the output. The following interpretability methods would complement the current tooling:
+
+- [ ] **Gradient-based attribution** -- compute `d(action) / d(patch_embedding)` via vanilla saliency, GradCAM, or Integrated Gradients to measure which image patches *causally influence* the predicted action (not just where attention points)
+- [ ] **Occlusion / perturbation sensitivity** -- mask out image regions or zero out specific prefix tokens (vision, language, state) and measure action MSE change; model-agnostic and directly answers "if I cover the gripper, does the model break?"
+- [ ] **Representation probing** -- train small linear classifiers on intermediate layer representations to test what information is encoded at each stage (e.g., can layer N predict object position? does the Expert encode gripper state?)
+- [ ] **Causal tracing / activation patching** -- replace activations at specific (layer, token) positions with corrupted versions and measure output change; builds a causal map of information flow through the model
+- [ ] **Temporal consistency analysis** -- track attention patterns across frames in an episode to check if attention follows the object smoothly, whether cross-attention shifts predict upcoming actions, and correlation between attention movement and action direction
+
+---
+
 ## Note on FFmpeg
 
 If you installed `ffmpeg@6` and linked it (`brew link --overwrite ffmpeg@6`), your default `ffmpeg` is now 6.x. To switch back later: `brew unlink ffmpeg@6 && brew link ffmpeg`.
