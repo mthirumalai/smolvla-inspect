@@ -36,6 +36,9 @@ Runs three diagnostic checks across all model components (SigLIP vision encoder,
 
 **Output:** Terminal report, markdown report (`model_health_report.md`), and a 3-panel plot (`model_health_report.png`).
 
+![Example health report](assets/example_health_report.png)
+*Example 3-panel health report: spectral alpha distribution, attention entropy by layer, and head redundancy matrix. See the full [markdown report](assets/example_health_report.md) for per-layer details.*
+
 For a detailed visual walkthrough of the architecture and how it maps to the report, see **[Architecture Diagrams](assets/architecture.md)**.
 
 ---
@@ -118,7 +121,7 @@ python inspect_attention.py
 ### Examples
 
 ```bash
-# Default: attention heatmaps with last-layer method
+# Default: rollout aggregation + cross-attention + per-head grid
 ./run.sh
 
 # Your fine-tuned model
@@ -127,14 +130,14 @@ python inspect_attention.py
 # More frames, specific episode
 ./run.sh --episode 3 --num-frames 12
 
-# Rollout aggregation (multiply attention across all layers)
-./run.sh --method rollout
+# Last-layer method instead of rollout
+./run.sh --method last-layer
 
-# Enable cross-attention capture (slower, adds rows 4-5)
-./run.sh --cross-attention
+# Skip cross-attention capture (faster, omits rows 4-5)
+./run.sh --no-cross-attention
 
-# Per-head attention grid for the first frame
-./run.sh --show-heads
+# Skip per-head attention grid
+./run.sh --no-show-heads
 
 # Raw attention without positional baseline subtraction
 ./run.sh --raw-attention
@@ -167,10 +170,10 @@ Results land in `outputs/`.
 | `--image-key` | auto-detected | Dataset image key override |
 | `--output-dir` | `./outputs` | Output directory |
 | `--device` | `auto` | `auto`, `cpu`, `cuda`, or `mps` |
-| `--save-individual` | `false` | Save each frame as a separate PNG |
-| `--method` | `last-layer` | `last-layer`, `rollout`, or `all-layers` |
-| `--cross-attention` | `false` | Capture action-expert cross-attention |
-| `--show-heads` | `false` | Save per-head attention grid for first frame |
+| `--save-individual` | `true` | Save each frame as a separate PNG |
+| `--method` | `rollout` | `last-layer`, `rollout`, or `all-layers` |
+| `--cross-attention` | `true` | Capture action-expert cross-attention |
+| `--show-heads` | `true` | Save per-head attention grid for first frame |
 | `--raw-attention` | `false` | Skip positional baseline subtraction |
 
 **Model health diagnostics:**
