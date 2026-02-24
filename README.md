@@ -63,6 +63,9 @@ For a detailed visual walkthrough of the architecture and how it maps to the rep
 
 5. **Turn attention into spatial heatmaps** -- patch-level importance scores are reshaped into a 2D grid, upsampled with bilinear interpolation to image size, and normalized to [0, 1]. A percentile threshold (`--attn-threshold`, default 0.5) then zeros out low-attention values to suppress residual positional noise from SigLIP's learned position embeddings, and re-normalizes the remainder.
 
+   ![Positional baseline](assets/example_positional_baseline.png)
+   *Positional baseline diagnostic: attention pattern from a content-free gray image, showing position-dependent artifacts that get subtracted from real frames.*
+
 6. **Visualize** -- the output grid has up to 5 rows per frame:
 
 | Row | Content | Colormap |
