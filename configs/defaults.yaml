@@ -13,3 +13,12 @@ method: rollout                         # last-layer | rollout | all-layers
 cross_attention: true                   # true to capture action-expert → vision cross-attention (slower)
 show_heads: true                        # true to save a per-head attention grid for the first frame
 raw_attention: false                    # true to skip positional baseline subtraction
+
+# Model health analysis
+model_health: false
+health_frames: 5
+entropy_warn: 0.8
+entropy_critical: 0.95
+entropy_low: 0.1
+redundancy_warn: 0.7
+redundancy_critical: 0.9

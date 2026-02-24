@@ -9,7 +9,14 @@ See what SmolVLA's vision encoder and action expert are looking at when the mode
 
 ## What this does
 
-SmolVLA is a **vision-language-action** policy: it takes camera images and a language instruction, then outputs robot actions. This tool **visualizes where the model looks** by extracting attention maps from two places:
+SmolVLA is a **vision-language-action** policy: it takes camera images and a language instruction, then outputs robot actions. This tool has two modes:
+
+1. **Attention visualization** (default) -- extracts and visualizes attention heatmaps showing where the model looks
+2. **Model health diagnostics** (`--model-health`) -- runs spectral analysis, attention entropy, and head redundancy checks across all model components
+
+### Attention visualization
+
+Extracts attention maps from two places:
 
 1. **SigLIP vision encoder** (self-attention) -- which image patches the encoder considers important during feature extraction
 2. **Action expert** (cross-attention) -- which image regions the action decoder actually reads when predicting actions
@@ -18,6 +25,18 @@ That lets you check whether the model attends to task-relevant regions (gripper,
 
 **Input:** A pretrained or fine-tuned SmolVLA policy + a LeRobot dataset (e.g. episodes of pick-and-place).
 **Output:** A multi-row grid PNG per episode, optional per-frame PNGs, and an optional per-head attention grid.
+
+### Model health diagnostics
+
+Runs three diagnostic checks across all model components (SigLIP vision encoder, VLM text model, action expert, connector, and projection heads):
+
+1. **Weight spectral analysis** -- fits a power-law to singular values of each weight matrix using WeightWatcher. The alpha exponent indicates training quality (2-4 = healthy, >6 = severely undertrained).
+2. **Attention entropy** -- measures how focused or diffuse each attention head is across three attention operations: SigLIP self-attention, VLM+Expert joint self-attention, and Expert-to-VLM cross-attention.
+3. **Head redundancy** -- measures pairwise cosine similarity between attention heads within each layer. High similarity means wasted capacity.
+
+**Output:** Terminal report, markdown report (`model_health_report.md`), and a 3-panel plot (`model_health_report.png`).
+
+For a detailed visual walkthrough of the architecture and how it maps to the report, see **[Architecture Diagrams](assets/architecture.md)**.
 
 ---
 
@@ -34,10 +53,10 @@ That lets you check whether the model attends to task-relevant regions (gripper,
 
 3. **Aggregate across layers** (`--method`):
    - `last-layer` -- uses only the final encoder layer
-   - `rollout` (default) -- multiplies attention across all layers with residual connections, giving a more complete picture of information flow
+   - `rollout` -- multiplies attention across all layers with residual connections, giving a more complete picture of information flow
    - `all-layers` -- keeps each layer separately
 
-4. **Capture cross-attention** (`--cross-attention`, on by default) -- SmolVLA's VLM builds a KV cache from the prefix (vision + language + state tokens). The action expert queries that cache. The script monkey-patches `eager_attention_forward()` on the expert layers to intercept the softmax attention when expert Q attends to prefix K. Only columns corresponding to vision tokens are kept, giving a heatmap of which image regions the action decoder reads.
+4. **Capture cross-attention** (`--cross-attention`) -- SmolVLA's VLM builds a KV cache from the prefix (vision + language + state tokens). The action expert queries that cache. The script monkey-patches `eager_attention_forward()` on the expert layers to intercept the softmax attention when expert Q attends to prefix K. Only columns corresponding to vision tokens are kept, giving a heatmap of which image regions the action decoder reads.
 
 5. **Turn attention into spatial heatmaps** -- patch-level importance scores are reshaped into a 2D grid, upsampled with bilinear interpolation to image size, and normalized to [0, 1].
 
@@ -99,7 +118,7 @@ python inspect_attention.py
 ### Examples
 
 ```bash
-# Default config: rollout method, cross-attention enabled, per-head grid enabled
+# Default: attention heatmaps with last-layer method
 ./run.sh
 
 # Your fine-tuned model
@@ -108,14 +127,26 @@ python inspect_attention.py
 # More frames, specific episode
 ./run.sh --episode 3 --num-frames 12
 
-# Last-layer only (faster, no rollout)
-./run.sh --method last-layer
+# Rollout aggregation (multiply attention across all layers)
+./run.sh --method rollout
 
-# Skip cross-attention (faster, 3-row grid only) — edit configs/defaults.yaml:
-#   cross_attention: false
+# Enable cross-attention capture (slower, adds rows 4-5)
+./run.sh --cross-attention
+
+# Per-head attention grid for the first frame
+./run.sh --show-heads
 
 # Raw attention without positional baseline subtraction
 ./run.sh --raw-attention
+
+# Model health diagnostics (spectral analysis + entropy + redundancy)
+./run.sh --model-health
+
+# Health check with more sample frames for stable entropy estimates
+./run.sh --model-health --health-frames 10
+
+# Custom thresholds for health warnings
+./run.sh --model-health --entropy-warn 0.85 --redundancy-warn 0.75
 
 # Explicit device override (auto-detected by default: mps > cuda > cpu)
 ./run.sh --device cuda
@@ -124,6 +155,8 @@ python inspect_attention.py
 Results land in `outputs/`.
 
 ### CLI flags
+
+**Attention visualization:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -134,11 +167,23 @@ Results land in `outputs/`.
 | `--image-key` | auto-detected | Dataset image key override |
 | `--output-dir` | `./outputs` | Output directory |
 | `--device` | `auto` | `auto`, `cpu`, `cuda`, or `mps` |
-| `--save-individual` | `true` | Save each frame as a separate PNG |
-| `--method` | `rollout` | `last-layer`, `rollout`, or `all-layers` |
-| `--cross-attention` | `true` | Capture action-expert cross-attention |
-| `--show-heads` | `true` | Save per-head attention grid for first frame |
+| `--save-individual` | `false` | Save each frame as a separate PNG |
+| `--method` | `last-layer` | `last-layer`, `rollout`, or `all-layers` |
+| `--cross-attention` | `false` | Capture action-expert cross-attention |
+| `--show-heads` | `false` | Save per-head attention grid for first frame |
 | `--raw-attention` | `false` | Skip positional baseline subtraction |
+
+**Model health diagnostics:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model-health` | `false` | Run health diagnostics instead of attention heatmaps |
+| `--health-frames` | `5` | Number of sample frames for entropy/redundancy |
+| `--entropy-warn` | `0.8` | Entropy ratio threshold for "unfocused" warning |
+| `--entropy-critical` | `0.95` | Entropy ratio threshold for "dead" heads |
+| `--entropy-low` | `0.1` | Entropy ratio threshold for "collapsed" heads |
+| `--redundancy-warn` | `0.7` | Cosine similarity threshold for "high redundancy" |
+| `--redundancy-critical` | `0.9` | Cosine similarity threshold for "collapsed" heads |
 
 Defaults can be changed in `configs/defaults.yaml`.
 
@@ -172,14 +217,33 @@ The cyan overlay highlights regions where **both** the vision encoder and the ac
 
 Look for heads that specialize: one head tracking the gripper, another tracking the object, another attending globally. Specialization is a sign of a well-trained encoder. Heads that all look identical suggest the model hasn't learned diverse attention strategies.
 
+### Model health report
+
+| Metric | Healthy | Warning | Critical |
+|--------|---------|---------|----------|
+| Spectral alpha | 2-4 | 4-6 (undertrained) | >6 (severely undertrained) or <2 (overcorrelated) |
+| Attention entropy | 0.10-0.80 | >0.80 (unfocused) | >0.95 (dead) or <0.10 (collapsed) |
+| Head redundancy | <0.70 (diverse) | >0.70 (redundant) | >0.90 (collapsed) |
+
+The report covers three attention components mapped to distinct operations in the architecture:
+
+| Report component | Architecture operation | When it runs |
+|-----------------|----------------------|-------------|
+| SigLIP Vision (12L, 12H) | Self-attention inside the vision encoder | Image encoding |
+| VLM+Expert Joint Self-Attn (16L, 15H) | VLM and Expert tokens concatenated, attend to each other | Prefill (initial encoding) |
+| Expert-to-VLM Cross-Attn (16L, 8H) | Expert queries VLM's cached keys/values | Generation (action decoding, 10 steps) |
+
+See **[Architecture Diagrams](assets/architecture.md)** for visual explanations of each component.
+
 ---
 
 ## Project layout
 
 ```
 smolvla-inspect/
-├── inspect_attention.py      # All logic: model loading, hooks, heatmaps, visualization
+├── inspect_attention.py      # All logic: model loading, hooks, heatmaps, health diagnostics
 ├── assets/
+│   ├── architecture.md       # Architecture diagrams and report reference
 │   ├── how_it_works_architecture.png
 │   ├── example_grid.png
 │   └── example_per_head.png
@@ -188,7 +252,9 @@ smolvla-inspect/
 ├── docs/
 │   ├── ELI5.md               # Plain-language explanation of the interpretability approach
 │   └── TESTING.md            # CLI test commands and expected output
-├── outputs/                  # Generated images (gitignored)
+├── outputs/                  # Generated images and reports (gitignored)
+│   ├── model_health_report.md
+│   └── model_health_report.png
 ├── run.sh                    # Wrapper that sets FFmpeg lib path
 ├── requirements.txt
 └── README.md

@@ -7,3 +7,4 @@ matplotlib>=3.7
 numpy>=1.24
 Pillow>=10.0
 pyyaml>=6.0
+weightwatcher>=0.7
