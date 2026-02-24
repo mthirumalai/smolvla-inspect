@@ -13,6 +13,7 @@ method: rollout                         # last-layer | rollout | all-layers
 cross_attention: true                   # true to capture action-expert → vision cross-attention (slower)
 show_heads: true                        # true to save a per-head attention grid for the first frame
 raw_attention: false                    # true to skip positional baseline subtraction
+attn_threshold: 0.5                    # percentile (0-1) below which attention values are zeroed
 
 # Model health analysis
 model_health: false

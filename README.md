@@ -24,7 +24,7 @@ Extracts attention maps from two places:
 That lets you check whether the model attends to task-relevant regions (gripper, object, goal) or background (walls, table texture) -- useful for debugging overfitting or distribution shift.
 
 **Input:** A pretrained or fine-tuned SmolVLA policy + a LeRobot dataset (e.g. episodes of pick-and-place).
-**Output:** A multi-row grid PNG per episode, optional per-frame PNGs, and an optional per-head attention grid.
+**Output:** A multi-row grid PNG per episode, optional per-frame PNGs, an optional per-head attention grid, and a positional baseline diagnostic (`positional_baseline.png`) showing the position-dependent attention pattern that gets subtracted.
 
 ### Model health diagnostics
 
@@ -61,7 +61,7 @@ For a detailed visual walkthrough of the architecture and how it maps to the rep
 
 4. **Capture cross-attention** (`--cross-attention`) -- SmolVLA's VLM builds a KV cache from the prefix (vision + language + state tokens). The action expert queries that cache. The script monkey-patches `eager_attention_forward()` on the expert layers to intercept the softmax attention when expert Q attends to prefix K. Only columns corresponding to vision tokens are kept, giving a heatmap of which image regions the action decoder reads.
 
-5. **Turn attention into spatial heatmaps** -- patch-level importance scores are reshaped into a 2D grid, upsampled with bilinear interpolation to image size, and normalized to [0, 1].
+5. **Turn attention into spatial heatmaps** -- patch-level importance scores are reshaped into a 2D grid, upsampled with bilinear interpolation to image size, and normalized to [0, 1]. A percentile threshold (`--attn-threshold`, default 0.5) then zeros out low-attention values to suppress residual positional noise from SigLIP's learned position embeddings, and re-normalizes the remainder.
 
 6. **Visualize** -- the output grid has up to 5 rows per frame:
 
@@ -77,7 +77,7 @@ Rows 4-5 only appear when cross-attention is enabled. The co-attention overlay m
 
 ### Per-head grid
 
-With `--show-heads`, a separate grid shows each of the 12 SigLIP attention heads individually for the first frame:
+With `--show-heads`, a separate grid shows each of the 12 SigLIP attention heads individually for the first frame. Each head has its per-head positional baseline subtracted (computed from a gray-image forward pass) so the patterns reflect content-dependent attention rather than position artifacts.
 
 ![Per-head attention grid](assets/example_per_head.png)
 *Each subplot is one attention head. Look for specialization -- e.g. one head tracking the gripper, another tracking the object.*
@@ -142,6 +142,12 @@ python inspect_attention.py
 # Raw attention without positional baseline subtraction
 ./run.sh --raw-attention
 
+# Higher threshold to suppress more positional noise (default 0.5)
+./run.sh --attn-threshold 0.7
+
+# No threshold (show all baseline-subtracted values)
+./run.sh --attn-threshold 0
+
 # Model health diagnostics (spectral analysis + entropy + redundancy)
 ./run.sh --model-health
 
@@ -175,6 +181,7 @@ Results land in `outputs/`.
 | `--cross-attention` | `true` | Capture action-expert cross-attention |
 | `--show-heads` | `true` | Save per-head attention grid for first frame |
 | `--raw-attention` | `false` | Skip positional baseline subtraction |
+| `--attn-threshold` | `0.5` | Percentile (0-1) below which attention values are zeroed to suppress positional noise |
 
 **Model health diagnostics:**
 
@@ -256,6 +263,7 @@ smolvla-inspect/
 │   ├── ELI5.md               # Plain-language explanation of the interpretability approach
 │   └── TESTING.md            # CLI test commands and expected output
 ├── outputs/                  # Generated images and reports (gitignored)
+│   ├── positional_baseline.png
 │   ├── model_health_report.md
 │   └── model_health_report.png
 ├── run.sh                    # Wrapper that sets FFmpeg lib path

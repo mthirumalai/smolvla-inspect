@@ -567,16 +567,21 @@ def compute_padding_patches(input_hw, target_size, patch_size):
     return (pad_h // patch_size, pad_w // patch_size)
 
 
-def attention_to_heatmap(attn_weights, grid_size, image_size, content_crop=None):
+def attention_to_heatmap(attn_weights, grid_size, image_size, content_crop=None,
+                         threshold_pct=0.0):
     """
     Convert attention weights from patch-space to pixel-space heatmap.
-    
+
     Args:
         attn_weights: Tensor of shape (num_patches,) or (H_patches, W_patches)
                       representing per-patch attention scores
         grid_size: (H_patches, W_patches) — the patch grid dimensions
         image_size: (H_pixels, W_pixels) — the original image dimensions
-    
+        content_crop: Optional (crop_h, crop_w) to remove padding patches
+        threshold_pct: Percentile threshold (0.0–1.0). Values below this
+                       percentile are zeroed, then the remainder is
+                       re-normalised to [0, 1].  0.0 = no thresholding.
+
     Returns:
         heatmap: numpy array of shape (H_pixels, W_pixels) normalized to [0, 1]
     """
@@ -614,7 +619,15 @@ def attention_to_heatmap(attn_weights, grid_size, image_size, content_crop=None)
     hmin, hmax = heatmap.min(), heatmap.max()
     if hmax > hmin:
         heatmap = (heatmap - hmin) / (hmax - hmin)
-    
+
+    # Percentile thresholding: zero out diffuse low-attention noise
+    if threshold_pct > 0:
+        thresh_val = np.percentile(heatmap, threshold_pct * 100)
+        heatmap = np.where(heatmap >= thresh_val, heatmap, 0.0)
+        hmax = heatmap.max()
+        if hmax > 0:
+            heatmap = heatmap / hmax
+
     return heatmap
 
 
@@ -718,7 +731,9 @@ def compute_positional_baseline(vision_encoder, attn_capture, device, method,
             match those in real frames.
 
     Returns:
-        Tensor of shape ``(num_patches,)`` — per-patch baseline scores.
+        ``(baseline_scores, per_head_baseline)`` where *baseline_scores* has
+        shape ``(num_patches,)`` and *per_head_baseline* has shape
+        ``(heads, num_patches)`` (or *None* if unavailable).
     """
     # Build a mean-gray image at the encoder's expected resolution
     img_size = getattr(
@@ -760,20 +775,30 @@ def compute_positional_baseline(vision_encoder, attn_capture, device, method,
                 vision_encoder(pixel_values=gray, patch_attention_mask=patch_mask)
         except Exception as e:
             print(f"  WARNING: Baseline forward pass failed ({e}), skipping correction")
-            return None
+            return None, None
+
+    # Capture per-head baseline from the last layer before aggregation
+    per_head_baseline = None
+    last_layer_attn = attn_capture.get_last_layer_attention()
+    if last_layer_attn is not None:
+        head_attn = last_layer_attn
+        while head_attn.dim() > 3:
+            head_attn = head_attn[0]
+        # head_attn: (heads, patches, patches)
+        per_head_baseline = head_attn.mean(dim=-2)  # (heads, patches)
 
     # Reduce captured attention using the same method as real frames
     if method == "rollout":
         all_layers = attn_capture.get_all_layer_attentions()
         rollout_mat = compute_attention_rollout(all_layers)
         if rollout_mat is None:
-            return None
+            return None, per_head_baseline
         baseline_scores = rollout_mat.mean(dim=0)
     else:
         # "last-layer" or "all-layers" both use last-layer for the summary
-        attn = attn_capture.get_last_layer_attention()
-        if attn is None:
-            return None
+        if last_layer_attn is None:
+            return None, None
+        attn = last_layer_attn
         while attn.dim() > 3:
             attn = attn[0]
         if attn.dim() == 3:
@@ -781,7 +806,7 @@ def compute_positional_baseline(vision_encoder, attn_capture, device, method,
         baseline_scores = compute_patch_attention_scores(attn, method="mean")
 
     attn_capture.reset_maps()
-    return baseline_scores
+    return baseline_scores, per_head_baseline
 
 
 # ---------------------------------------------------------------------------
@@ -980,7 +1005,8 @@ def save_individual_frames(frames, heatmaps, output_dir, episode_idx=0):
 
 
 def create_per_head_grid(frame, attn_weights, grid_size, image_size,
-                         output_path="per_head_attention.png", content_crop=None):
+                         output_path="per_head_attention.png", content_crop=None,
+                         baseline_per_head=None, threshold_pct=0.0):
     """
     Visualise each attention head's pattern individually for a single
     frame.  Useful for identifying specialised heads (e.g. one tracking
@@ -993,6 +1019,9 @@ def create_per_head_grid(frame, attn_weights, grid_size, image_size,
         grid_size: ``(H_patches, W_patches)``
         image_size: ``(H_pixels, W_pixels)``
         output_path: where to save the PNG
+        baseline_per_head: Optional tensor ``(heads, patches)`` — per-head
+            positional baseline to subtract before heatmap creation.
+        threshold_pct: Percentile threshold passed to ``attention_to_heatmap``.
     """
     if isinstance(frame, torch.Tensor):
         frame_np = frame.permute(1, 2, 0).numpy()
@@ -1017,7 +1046,11 @@ def create_per_head_grid(frame, attn_weights, grid_size, image_size,
         r, c = divmod(h, cols)
         head_attn = attn_weights[h]                      # (patches, patches)
         scores = head_attn.mean(dim=0)                    # per-patch importance
-        hmap = attention_to_heatmap(scores, grid_size, image_size, content_crop=content_crop)
+        if baseline_per_head is not None and h < baseline_per_head.shape[0]:
+            scores = torch.clamp(scores - baseline_per_head[h], min=0)
+        hmap = attention_to_heatmap(scores, grid_size, image_size,
+                                    content_crop=content_crop,
+                                    threshold_pct=threshold_pct)
 
         blended = overlay_heatmap(frame_np.copy(), hmap, alpha=0.5)
         axes[r, c].imshow(blended)
@@ -1318,7 +1351,7 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                            image_key=None, device="cpu",
                            method="last-layer", cross_attention=False,
                            show_heads=False, output_dir="./outputs",
-                           raw_attention=False):
+                           raw_attention=False, attn_threshold=0.5):
     """
     Core function: Run inference and extract attention heatmaps.
 
@@ -1333,6 +1366,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                     *show_heads* is True).
         raw_attention: If *True* skip positional baseline subtraction
                        (show raw, uncorrected attention).
+        attn_threshold: Percentile (0–1) below which attention values are
+                        zeroed to suppress residual positional noise.
 
     Returns:
         frames: list of image tensors (C, H, W)
@@ -1406,8 +1441,9 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
     input_hw = (first_img.shape[1], first_img.shape[2])
 
     baseline_scores = None
+    per_head_baseline = None
     if not raw_attention:
-        baseline_scores = compute_positional_baseline(
+        baseline_scores, per_head_baseline = compute_positional_baseline(
             vision_encoder, attn_capture, device, method, input_hw=input_hw,
         )
         if baseline_scores is not None:
@@ -1422,6 +1458,26 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
     content_crop = compute_padding_patches(input_hw, target_size, patch_size_cfg)
     if content_crop != (0, 0):
         print(f"  Padding crop: {content_crop[0]} top rows, {content_crop[1]} left cols of patches")
+
+    # --- Save positional baseline diagnostic heatmap ---
+    if baseline_scores is not None:
+        n_bl = baseline_scores.shape[0]
+        bl_side = int(math.sqrt(n_bl))
+        grid_h_bl = target_size // patch_size_cfg if target_size and patch_size_cfg else bl_side
+        grid_w_bl = grid_h_bl
+        img_h_bl, img_w_bl = first_img.shape[1], first_img.shape[2]
+        bl_heatmap = attention_to_heatmap(
+            baseline_scores, (grid_h_bl, grid_w_bl), (img_h_bl, img_w_bl),
+            content_crop=content_crop,
+        )
+        bl_path = os.path.join(output_dir, "positional_baseline.png")
+        fig_bl, ax_bl = plt.subplots(figsize=(6, 6))
+        ax_bl.imshow(bl_heatmap, cmap="jet")
+        ax_bl.set_title("Positional baseline (gray-image attention)", fontsize=11)
+        ax_bl.axis("off")
+        fig_bl.savefig(bl_path, dpi=100, bbox_inches="tight")
+        plt.close(fig_bl)
+        print(f"  Saved positional baseline diagnostic: {bl_path}")
 
     # --- Run inference and collect attention ---
     print(f"\n[4/4] Running forward passes and extracting attention (method={method})...")
@@ -1572,7 +1628,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
 
             img_h, img_w = img_tensor.shape[1], img_tensor.shape[2]
             heatmap = attention_to_heatmap(patch_scores, (grid_h, grid_w), (img_h, img_w),
-                                         content_crop=content_crop)
+                                         content_crop=content_crop,
+                                         threshold_pct=attn_threshold)
             heatmaps.append(heatmap)
 
             print(f"    Frame {i}: {n_patches} patches → "
@@ -1586,6 +1643,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                     (grid_h, grid_w), (img_h, img_w),
                     output_path=head_path,
                     content_crop=content_crop,
+                    baseline_per_head=per_head_baseline if not raw_attention else None,
+                    threshold_pct=attn_threshold,
                 )
                 raw_heads_attn = None  # only once
         else:
@@ -1608,7 +1667,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                     cs_h = cs_w = cs_side
 
                 img_h, img_w = img_tensor.shape[1], img_tensor.shape[2]
-                cross_hm = attention_to_heatmap(cross_scores, (cs_h, cs_w), (img_h, img_w))
+                cross_hm = attention_to_heatmap(cross_scores, (cs_h, cs_w), (img_h, img_w),
+                                               threshold_pct=attn_threshold)
                 cross_attn_heatmaps.append(cross_hm)
                 print(f"    Frame {i}: Cross-attention captured ({n_vis} vision tokens)")
             else:
@@ -2602,6 +2662,9 @@ Examples:
     parser.add_argument("--raw-attention", action="store_true",
                         default=defaults.get("raw_attention", False),
                         help="Skip positional baseline subtraction (show raw attention)")
+    parser.add_argument("--attn-threshold", type=float,
+                        default=defaults.get("attn_threshold", 0.5),
+                        help="Percentile threshold (0-1) below which attention values are zeroed")
 
     # Model health diagnostics
     parser.add_argument("--model-health", action="store_true",
@@ -2726,6 +2789,7 @@ Examples:
             show_heads=args.show_heads,
             output_dir=args.output_dir,
             raw_attention=args.raw_attention,
+            attn_threshold=args.attn_threshold,
         )
     except Exception as e:
         print(f"\n  Attention extraction failed: {e}")
