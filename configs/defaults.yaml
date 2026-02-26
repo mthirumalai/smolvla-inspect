@@ -5,6 +5,7 @@ dataset: lerobot/svla_so101_pickplace    # SO101 pick-and-place dataset
 episode: 0
 num_frames: 8
 device: auto                             # auto | cpu | cuda | mps
+task: null                               # override task/language instruction (default: from dataset)
 output_dir: ./outputs
 save_individual: true                   # true to also save each frame separately
 

@@ -1193,7 +1193,7 @@ def _match_image_keys(policy_img_keys, dataset_img_keys):
     return mapping
 
 
-def _resolve_task_string(sample, dataset=None):
+def _resolve_task_string(sample, dataset=None, task_override=None):
     """
     Get the task/language instruction for a sample.
 
@@ -1202,6 +1202,9 @@ def _resolve_task_string(sample, dataset=None):
       2. ``dataset.meta.tasks`` — first task in the dataset metadata
       3. Generic fallback
     """
+    if task_override is not None:
+        return task_override
+
     task = sample.get("task")
     if task is not None:
         if isinstance(task, list):
@@ -1221,7 +1224,8 @@ def _resolve_task_string(sample, dataset=None):
 
 
 def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
-                                   image_key_for_grad=None, dataset=None):
+                                   image_key_for_grad=None, dataset=None,
+                                   task_override=None):
     """
     Build a batch dict that matches the policy's expected keys (e.g. observation.images.camera1),
     by mapping from the dataset sample keys (e.g. observation.images.up, observation.images.side).
@@ -1277,7 +1281,7 @@ def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
             batch[pkey] = img.clone().detach().requires_grad_(False)
 
     # --- Resolve task string ---
-    task_text = _resolve_task_string(sample, dataset)
+    task_text = _resolve_task_string(sample, dataset, task_override=task_override)
     if "task" not in batch:
         batch["task"] = [task_text]
 
@@ -1351,7 +1355,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                            image_key=None, device="cpu",
                            method="last-layer", cross_attention=False,
                            show_heads=False, output_dir="./outputs",
-                           raw_attention=False, attn_threshold=0.5):
+                           raw_attention=False, attn_threshold=0.5,
+                           task_override=None):
     """
     Core function: Run inference and extract attention heatmaps.
 
@@ -1368,6 +1373,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                        (show raw, uncorrected attention).
         attn_threshold: Percentile (0–1) below which attention values are
                         zeroed to suppress residual positional noise.
+        task_override: If not *None*, use this string as the language
+                       instruction instead of the one from the dataset.
 
     Returns:
         frames: list of image tensors (C, H, W)
@@ -1432,7 +1439,7 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
 
     # --- Log task string being used ---
     first_sample = dataset[frame_pairs[0][0]]
-    task_str = _resolve_task_string(first_sample, dataset)
+    task_str = _resolve_task_string(first_sample, dataset, task_override=task_override)
     print(f"  Task string: \"{task_str}\"")
 
     # --- Compute positional baseline (once, after frames are loaded so we
@@ -1516,6 +1523,7 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                     batch, _ = build_policy_batch_from_sample(
                         sample, policy, device, batch_size=1,
                         image_key_for_grad=None, dataset=dataset,
+                        task_override=task_override,
                     )
                     try:
                         policy.select_action(batch)
@@ -1563,6 +1571,7 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
                         batch, _ = build_policy_batch_from_sample(
                             sample, policy, device, batch_size=1,
                             image_key_for_grad=None, dataset=dataset,
+                            task_override=task_override,
                         )
                         try:
                             policy.select_action(batch)
@@ -1688,7 +1697,8 @@ def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
 # 7. Alternative: Pure gradient-based visualization (no hooks needed)
 # ---------------------------------------------------------------------------
 
-def gradient_attention_map(policy, dataset, frame_idx, image_key, device="cpu"):
+def gradient_attention_map(policy, dataset, frame_idx, image_key, device="cpu",
+                           task_override=None):
     """
     Compute input-gradient saliency map as a fallback.
     
@@ -1704,7 +1714,7 @@ def gradient_attention_map(policy, dataset, frame_idx, image_key, device="cpu"):
     # so we don't get "All image features are missing" when dataset uses up/side.
     batch, grad_pkey = build_policy_batch_from_sample(
         sample, policy, device, batch_size=1, image_key_for_grad=image_key,
-        dataset=dataset,
+        dataset=dataset, task_override=task_override,
     )
     if grad_pkey is None:
         # No policy image key matched; try legacy: use raw sample keys
@@ -2479,6 +2489,7 @@ def run_model_health_report(policy, dataset, args):
                     batch, _ = build_policy_batch_from_sample(
                         sample, policy, device, batch_size=1,
                         image_key_for_grad=None, dataset=dataset,
+                        task_override=getattr(args, 'task', None),
                     )
                     try:
                         policy.select_action(batch)
@@ -2642,6 +2653,8 @@ Examples:
     parser.add_argument("--num-frames", type=int,
                         default=defaults.get("num_frames", 8))
     parser.add_argument("--image-key", type=str, default=None)
+    parser.add_argument("--task", type=str, default=defaults.get("task", None),
+                        help="Override the task/language instruction (default: from dataset)")
     parser.add_argument("--output-dir", type=str,
                         default=defaults.get("output_dir", "./outputs"))
     parser.add_argument("--device", type=str,
@@ -2790,6 +2803,7 @@ Examples:
             output_dir=args.output_dir,
             raw_attention=args.raw_attention,
             attn_threshold=args.attn_threshold,
+            task_override=args.task,
         )
     except Exception as e:
         print(f"\n  Attention extraction failed: {e}")
@@ -2803,7 +2817,8 @@ Examples:
         heatmaps = []
         for frame_idx, img_tensor in frame_pairs:
             frames.append(img_tensor)
-            saliency = gradient_attention_map(policy, dataset, frame_idx, image_key, args.device)
+            saliency = gradient_attention_map(policy, dataset, frame_idx, image_key, args.device,
+                                                task_override=args.task)
             if saliency is not None:
                 heatmaps.append(saliency)
             else:
