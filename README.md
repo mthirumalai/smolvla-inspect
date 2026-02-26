@@ -3,7 +3,7 @@
 See what SmolVLA's vision encoder and action expert are looking at when the model predicts robot actions.
 
 ![Example attention grid](assets/example_grid.png)
-*5-row attention grid for a pick-and-place episode. Row 1: original frames. Row 2: SigLIP self-attention heatmap. Row 3: self-attention overlay. Row 4: action cross-attention heatmap. Row 5: co-attention (self x cross) overlay in cyan.*
+*7-row attention + gradient grid for a pick-and-place episode. Rows 1-3: original frames, SigLIP self-attention, self-attention overlay. Rows 4-5: action cross-attention, co-attention (self x cross). Rows 6-7: saliency (|dA/dpx|) and GradCAM — gradient-based attribution showing which image regions causally influence the predicted action.*
 
 ---
 
