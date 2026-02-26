@@ -40,6 +40,7 @@ from .viz import (
     overlay_heatmap,
 )
 from .health import run_model_health_report
+from .gradient import compute_gradient_maps, compute_saliency_map
 
 
 def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
@@ -389,62 +390,15 @@ def gradient_attention_map(policy, dataset, frame_idx, image_key, device="cpu",
     """
     Compute input-gradient saliency map as a fallback.
 
-    This doesn't require hooking into attention — it directly computes
-    which input pixels most affect the output actions by backpropagating
-    through the entire model.
-
-    Interpretation: Bright pixels = changing this pixel would change
-    the predicted action the most.
+    Delegates to :func:`gradient.compute_saliency_map` which bypasses the
+    ``@torch.no_grad()`` on ``select_action()`` by calling internal model
+    methods directly under ``torch.enable_grad()``.
     """
     sample = dataset[frame_idx]
-    # Build batch using policy-expected image keys (camera1, camera2, ...)
-    # so we don't get "All image features are missing" when dataset uses up/side.
-    batch, grad_pkey = build_policy_batch_from_sample(
-        sample, policy, device, batch_size=1, image_key_for_grad=image_key,
-        dataset=dataset, task_override=task_override,
+    return compute_saliency_map(
+        policy, sample, dataset, image_key, device,
+        task_override=task_override,
     )
-    if grad_pkey is None:
-        # No policy image key matched; try legacy: use raw sample keys
-        img = sample[image_key].unsqueeze(0).to(device).float()
-        img.requires_grad_(True)
-        batch = {k: v.unsqueeze(0).to(device) if isinstance(v, torch.Tensor) else ([v] if isinstance(v, str) else v) for k, v in sample.items()}
-        batch[image_key] = img
-        if "task" not in batch:
-            batch["task"] = ["pick and place"]
-        grad_tensor = img
-    else:
-        grad_tensor = batch[grad_pkey]
-
-    try:
-        policy.train()  # Need gradients
-        action = policy.select_action(batch)
-
-        # Backpropagate from action norm
-        if isinstance(action, dict):
-            action_tensor = list(action.values())[0]
-        elif isinstance(action, torch.Tensor):
-            action_tensor = action
-        else:
-            return None
-
-        loss = action_tensor.sum()
-        loss.backward()
-
-        # Saliency = absolute gradient magnitude across channels
-        if grad_tensor.grad is None:
-            return None
-        saliency = grad_tensor.grad.abs().squeeze(0)
-        if saliency.dim() == 3:
-            saliency = saliency.mean(dim=0)  # (H, W)
-        saliency = saliency / (saliency.max() + 1e-8)
-
-        return saliency.detach().cpu().numpy()
-
-    except Exception as e:
-        print(f"  Gradient saliency failed: {e}")
-        return None
-    finally:
-        policy.eval()
 
 
 def load_defaults():
@@ -532,6 +486,19 @@ Examples:
                         default=defaults.get("redundancy_critical", 0.9),
                         help="Cosine similarity threshold for 'collapsed' (default: 0.9)")
 
+    # Gradient-based attribution
+    parser.add_argument("--gradient", nargs="?", const="both",
+                        default=defaults.get("gradient", None),
+                        choices=["saliency", "gradcam", "both"],
+                        help="Gradient attribution method (default: off; bare --gradient means 'both')")
+    parser.add_argument("--gradient-device", type=str,
+                        default=defaults.get("gradient_device", None),
+                        choices=["cpu", "cuda", "mps"],
+                        help="Device for gradient attribution (default: same as --device)")
+    parser.add_argument("--gradient-seed", type=int,
+                        default=defaults.get("gradient_seed", 42),
+                        help="Fixed noise seed for reproducible gradient attribution (default: 42)")
+
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -546,11 +513,17 @@ Examples:
             args.device = "cpu"
     device = torch.device(args.device)
 
+    # Resolve gradient device (defaults to main device)
+    grad_device_str = args.gradient_device or args.device
+    grad_device = torch.device(grad_device_str)
+
     # -----------------------------------------------------------------------
     print("=" * 70)
     print("SmolVLA Attention Visualizer")
     print("=" * 70)
     print(f"  Device: {args.device}")
+    if args.gradient and grad_device_str != args.device:
+        print(f"  Gradient device: {grad_device_str}")
 
     # --- Load model ---
     print(f"\n[Step 1] Loading model: {args.model}")
@@ -660,6 +633,34 @@ Examples:
         print("\nERROR: No frames extracted. Check episode index and dataset.")
         sys.exit(1)
 
+    # --- Gradient-based attribution (after attention hooks are cleaned up) ---
+    saliency_maps = None
+    gradcam_maps = None
+    if args.gradient:
+        image_key_for_grad = args.image_key or find_image_keys(dataset)[0]
+
+        # Move model to gradient device if different from main device
+        if grad_device != device:
+            print(f"\n  Moving model from {device} to {grad_device} for gradient computation...")
+            policy.to(grad_device)
+
+        print(f"\n[Step 3b] Computing gradient attribution (method={args.gradient}, device={grad_device_str})...")
+        saliency_maps, gradcam_maps = compute_gradient_maps(
+            policy=policy,
+            dataset=dataset,
+            episode_idx=args.episode,
+            num_frames=args.num_frames,
+            image_key=image_key_for_grad,
+            device=grad_device_str,
+            method=args.gradient,
+            noise_seed=args.gradient_seed,
+            task_override=args.task,
+        )
+        if saliency_maps:
+            print(f"  Saliency maps: {len(saliency_maps)} frames")
+        if gradcam_maps:
+            print(f"  GradCAM maps: {len(gradcam_maps)} frames")
+
     # --- Generate visualizations ---
     print(f"\n[Step 4] Generating visualizations...")
 
@@ -669,6 +670,8 @@ Examples:
         heatmaps=heatmaps,
         actions=actions,
         cross_attn_heatmaps=cross_attn_heatmaps,
+        saliency_maps=saliency_maps,
+        gradcam_maps=gradcam_maps,
         episode_idx=args.episode,
         output_path=grid_path,
     )

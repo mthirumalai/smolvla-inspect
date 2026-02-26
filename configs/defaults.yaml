@@ -16,6 +16,11 @@ show_heads: true                        # true to save a per-head attention grid
 raw_attention: false                    # true to skip positional baseline subtraction
 attn_threshold: 0.5                    # percentile (0-1) below which attention values are zeroed
 
+# Gradient-based attribution
+gradient: null                         # null | saliency | gradcam | both
+gradient_device: cpu                  # null (same as device) | cpu | cuda | mps
+gradient_seed: 42                      # fixed noise seed for reproducible gradient attribution
+
 # Model health analysis
 model_health: false
 health_frames: 5

@@ -9,10 +9,11 @@ See what SmolVLA's vision encoder and action expert are looking at when the mode
 
 ## What this does
 
-SmolVLA is a **vision-language-action** policy: it takes camera images and a language instruction, then outputs robot actions. This tool has two modes:
+SmolVLA is a **vision-language-action** policy: it takes camera images and a language instruction, then outputs robot actions. This tool has three modes:
 
 1. **Attention visualization** (default) -- extracts and visualizes attention heatmaps showing where the model looks
-2. **Model health diagnostics** (`--model-health`) -- runs spectral analysis, attention entropy, and head redundancy checks across all model components
+2. **Gradient-based attribution** (`--gradient`) -- computes saliency maps and GradCAM to show which pixels *causally influence* the predicted action
+3. **Model health diagnostics** (`--model-health`) -- runs spectral analysis, attention entropy, and head redundancy checks across all model components
 
 ### Attention visualization
 
@@ -25,6 +26,18 @@ That lets you check whether the model attends to task-relevant regions (gripper,
 
 **Input:** A pretrained or fine-tuned SmolVLA policy + a LeRobot dataset (e.g. episodes of pick-and-place).
 **Output:** A multi-row grid PNG per episode, optional per-frame PNGs, an optional per-head attention grid, and a positional baseline diagnostic (`positional_baseline.png`) showing the position-dependent attention pattern that gets subtracted.
+
+### Gradient-based attribution
+
+Attention maps show where the model *allocates compute*, but not whether those regions actually *drive the output*. Gradient attribution answers that question by backpropagating from the predicted action to the input pixels:
+
+1. **Saliency** (`--gradient saliency`) -- computes `|d(action) / d(pixel)|` at full pixel resolution. Highlights the raw input regions whose changes most affect the predicted action.
+2. **GradCAM** (`--gradient gradcam`) -- hooks the last SigLIP encoder layer, weights activations by their gradient, and produces a patch-resolution heatmap. Shows which high-level visual features drive the action.
+3. **Both** (`--gradient` or `--gradient both`) -- runs both methods and adds both rows to the output grid.
+
+Since gradient computation requires `.backward()` through the full model (~176 transformer layer passes), it is slower than attention-only mode. MPS backward support is limited for some ops, so you can run attention on MPS and gradients on CPU with `--gradient-device cpu` (see [Split device execution](#split-device-execution)).
+
+**Output:** Up to 2 additional rows in the grid PNG -- saliency overlay (inferno colormap) and GradCAM overlay (magma colormap).
 
 ### Model health diagnostics
 
@@ -66,17 +79,19 @@ For a detailed visual walkthrough of the architecture and how it maps to the rep
    ![Positional baseline](assets/example_positional_baseline.png)
    *Positional baseline diagnostic: attention pattern from a content-free gray image, showing position-dependent artifacts that get subtracted from real frames.*
 
-6. **Visualize** -- the output grid has up to 5 rows per frame:
+6. **Visualize** -- the output grid has up to 7 rows per frame:
 
-| Row | Content | Colormap |
-|-----|---------|----------|
-| 1 | Original frame | -- |
-| 2 | SigLIP self-attention heatmap | jet (blue-to-red) |
-| 3 | Self-attention overlay on frame | jet |
-| 4 | Action cross-attention heatmap | Greens |
-| 5 | Co-attention overlay (self x cross) | cyan (black-cyan-white) |
+| Row | Content | Colormap | When shown |
+|-----|---------|----------|------------|
+| 1 | Original frame | -- | always |
+| 2 | SigLIP self-attention heatmap | jet (blue-to-red) | always |
+| 3 | Self-attention overlay on frame | jet | always |
+| 4 | Action cross-attention heatmap | Greens | `--cross-attention` |
+| 5 | Co-attention overlay (self x cross) | cyan (black-cyan-white) | `--cross-attention` |
+| 6 | Saliency overlay (\|dA/dpx\|) | inferno | `--gradient saliency` or `both` |
+| 7 | GradCAM overlay (SigLIP last layer) | magma | `--gradient gradcam` or `both` |
 
-Rows 4-5 only appear when cross-attention is enabled. The co-attention overlay multiplies self-attention and cross-attention element-wise, highlighting regions that are **both** visually salient and action-relevant.
+Rows 4-5 only appear when cross-attention is enabled. The co-attention overlay multiplies self-attention and cross-attention element-wise, highlighting regions that are **both** visually salient and action-relevant. Rows 6-7 only appear when gradient attribution is enabled.
 
 ### Per-head grid
 
@@ -133,6 +148,9 @@ python inspect_attention.py
 # More frames, specific episode
 ./run.sh --episode 3 --num-frames 12
 
+# Override the language instruction (useful for multi-task datasets)
+./run.sh --task "pick up the red cube"
+
 # Last-layer method instead of rollout
 ./run.sh --method last-layer
 
@@ -150,6 +168,15 @@ python inspect_attention.py
 
 # No threshold (show all baseline-subtracted values)
 ./run.sh --attn-threshold 0
+
+# Gradient-based attribution: saliency + GradCAM
+./run.sh --gradient
+
+# Saliency only
+./run.sh --gradient saliency
+
+# Attention on MPS, gradients on CPU (avoids MPS backward issues)
+./run.sh --device mps --gradient both --gradient-device cpu
 
 # Model health diagnostics (spectral analysis + entropy + redundancy)
 ./run.sh --model-health
@@ -177,6 +204,7 @@ Results land in `outputs/`.
 | `--episode` | `0` | Episode index to visualize |
 | `--num-frames` | `8` | Number of frames to sample |
 | `--image-key` | auto-detected | Dataset image key override |
+| `--task` | from dataset | Override the language instruction |
 | `--output-dir` | `./outputs` | Output directory |
 | `--device` | `auto` | `auto`, `cpu`, `cuda`, or `mps` |
 | `--save-individual` | `true` | Save each frame as a separate PNG |
@@ -185,6 +213,14 @@ Results land in `outputs/`.
 | `--show-heads` | `true` | Save per-head attention grid for first frame |
 | `--raw-attention` | `false` | Skip positional baseline subtraction |
 | `--attn-threshold` | `0.5` | Percentile (0-1) below which attention values are zeroed to suppress positional noise |
+
+**Gradient-based attribution:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--gradient` | off | `saliency`, `gradcam`, or `both` (bare `--gradient` means `both`) |
+| `--gradient-device` | same as `--device` | Device for gradient computation (`cpu`, `cuda`, `mps`) |
+| `--gradient-seed` | `42` | Fixed noise seed for reproducible gradient attribution |
 
 **Model health diagnostics:**
 
@@ -226,6 +262,45 @@ Defaults can be changed in `configs/defaults.yaml`.
 
 The cyan overlay highlights regions where **both** the vision encoder and the action expert agree something is important. Bright cyan = high self-attention AND high cross-attention. This is the strongest signal for task-relevant regions.
 
+### Gradient attribution (saliency + GradCAM rows)
+
+| Pattern | Interpretation |
+|---------|----------------|
+| Saliency highlights gripper/object edges | **Healthy** -- action predictions are driven by task-relevant pixel changes |
+| GradCAM highlights same regions as self-attention | Attention and causal influence agree -- strong signal |
+| Attention focused but saliency diffuse | Attention points at the right place, but the action doesn't depend on it (possible shortcut) |
+| Saliency focused on unexpected region (e.g. table edge) | Model may be using a visual shortcut rather than task understanding |
+| GradCAM and saliency disagree | GradCAM operates at patch level while saliency is pixel-level -- some divergence is normal, but large disagreement warrants investigation |
+
+### Grid row reference
+
+| Row | Name | Question it answers | Resolution | Interpretation of hot spots |
+|-----|------|---------------------|------------|----------------------------|
+| SigLIP self-attn | Vision encoder attention | Which patches attend to each other inside the encoder? | 32x32 patches | Encoder's internal processing focus -- structural, not necessarily action-relevant |
+| Action cross-attn | Action-to-vision cross-attention | Which vision tokens does the action decoder query? | 8x8 tokens (post pixel-shuffle) | Visual regions the action decoder pulls information from |
+| Co-attention | Self x cross product | Which regions are both visually salient and action-queried? | 8x8 upsampled | Strongest attention signal for "what the model looks at to decide what to do" |
+| Saliency \|dA/dpx\| | Input-gradient saliency | If I changed this pixel, would the action change? | Full pixel (480x640) | Pixels that causally influence the predicted action -- fine-grained but noisy |
+| GradCAM SigLIP L-1 | Gradient-weighted activations | Which learned feature regions drive the action? | 32x32 patches | Patch regions whose features most influence the action -- coarser but more semantic |
+
+**Attention vs gradient:**
+
+|  | Attention rows | Gradient rows |
+|--|----------------|---------------|
+| Measures | Correlation ("model looked here") | Causation ("changing here changes the action") |
+| High attn + low gradient | Model looks but doesn't use it for action | -- |
+| Low attn + high gradient | -- | Region subtly influences output without dominating attention |
+| Both high | -- | Strong evidence this region genuinely drives behavior |
+
+### Split device execution
+
+Gradient computation requires `.backward()` through the full model, which can fail or be slow on MPS. Use `--gradient-device cpu` to run attention on MPS (fast, forward-only) and gradients on CPU (backward-compatible):
+
+```bash
+./run.sh --device mps --gradient both --gradient-device cpu
+```
+
+The model is moved to the gradient device after attention extraction finishes. Since gradients run last, there is no need to move it back.
+
 ### Per-head patterns
 
 Look for heads that specialize: one head tracking the gripper, another tracking the object, another attending globally. Specialization is a sign of a well-trained encoder. Heads that all look identical suggest the model hasn't learned diverse attention strategies.
@@ -254,22 +329,32 @@ See **[Architecture Diagrams](assets/architecture.md)** for visual explanations 
 
 ```
 smolvla-inspect/
-├── inspect_attention.py      # All logic: model loading, hooks, heatmaps, health diagnostics
+├── inspect_attention.py        # Thin entry point (delegates to smolvla_inspect)
+├── smolvla_inspect/            # Main package
+│   ├── __init__.py
+│   ├── cli.py                  # CLI args, orchestration, attention extraction
+│   ├── capture.py              # Attention hook classes (SigLIP, cross-attention)
+│   ├── heatmap.py              # Patch scores, rollout, positional baseline, upsampling
+│   ├── gradient.py             # Gradient attribution (saliency, GradCAM)
+│   ├── data.py                 # Dataset helpers, batch building, image key mapping
+│   ├── viz.py                  # Visualization grid, overlays, per-head grids
+│   ├── health.py               # Model health diagnostics (spectral, entropy, redundancy)
+│   └── _compat.py              # Resize/pad compatibility helpers
 ├── assets/
-│   ├── architecture.md       # Architecture diagrams and report reference
+│   ├── architecture.md         # Architecture diagrams and report reference
 │   ├── how_it_works_architecture.png
 │   ├── example_grid.png
 │   └── example_per_head.png
 ├── configs/
-│   └── defaults.yaml         # Default CLI values (model, dataset, method, flags)
+│   └── defaults.yaml           # Default CLI values (model, dataset, method, flags)
 ├── docs/
-│   ├── ELI5.md               # Plain-language explanation of the interpretability approach
-│   └── TESTING.md            # CLI test commands and expected output
-├── outputs/                  # Generated images and reports (gitignored)
+│   ├── ELI5.md                 # Plain-language explanation of the interpretability approach
+│   └── TESTING.md              # CLI test commands and expected output
+├── outputs/                    # Generated images and reports (gitignored)
 │   ├── positional_baseline.png
 │   ├── model_health_report.md
 │   └── model_health_report.png
-├── run.sh                    # Wrapper that sets FFmpeg lib path
+├── run.sh                      # Wrapper that sets FFmpeg lib path
 ├── requirements.txt
 └── README.md
 ```
@@ -280,7 +365,7 @@ smolvla-inspect/
 
 Attention maps show where the model allocates compute, but not whether those regions actually drive the output. The following interpretability methods would complement the current tooling:
 
-- [ ] **Gradient-based attribution** -- compute `d(action) / d(patch_embedding)` via vanilla saliency, GradCAM, or Integrated Gradients to measure which image patches *causally influence* the predicted action (not just where attention points)
+- [x] **Gradient-based attribution** -- vanilla saliency (`|d(action)/d(pixel)|`) and GradCAM on SigLIP's last encoder layer, with split device support (`--gradient-device`) for running gradients on CPU while attention runs on MPS/CUDA
 - [ ] **Occlusion / perturbation sensitivity** -- mask out image regions or zero out specific prefix tokens (vision, language, state) and measure action MSE change; model-agnostic and directly answers "if I cover the gripper, does the model break?"
 - [ ] **Representation probing** -- train small linear classifiers on intermediate layer representations to test what information is encoded at each stage (e.g., can layer N predict object position? does the Expert encode gripper state?)
 - [ ] **Causal tracing / activation patching** -- replace activations at specific (layer, token) positions with corrupted versions and measure output change; builds a causal map of information flow through the model
