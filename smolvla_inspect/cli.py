@@ -498,6 +498,12 @@ Examples:
     parser.add_argument("--gradient-seed", type=int,
                         default=defaults.get("gradient_seed", 42),
                         help="Fixed noise seed for reproducible gradient attribution (default: 42)")
+    parser.add_argument("--smooth-grad", type=int,
+                        default=defaults.get("smooth_grad", 1),
+                        help="SmoothGrad samples for saliency (1 = vanilla, >1 = averaged over N noisy inputs)")
+    parser.add_argument("--smooth-grad-sigma", type=float,
+                        default=defaults.get("smooth_grad_sigma", 0.15),
+                        help="Gaussian noise std for SmoothGrad (default: 0.15)")
 
     args = parser.parse_args()
 
@@ -655,9 +661,12 @@ Examples:
             method=args.gradient,
             noise_seed=args.gradient_seed,
             task_override=args.task,
+            smooth_n=args.smooth_grad,
+            smooth_sigma=args.smooth_grad_sigma,
         )
+        sal_label = f"SmoothGrad (N={args.smooth_grad})" if args.smooth_grad > 1 else "Saliency"
         if saliency_maps:
-            print(f"  Saliency maps: {len(saliency_maps)} frames")
+            print(f"  {sal_label} maps: {len(saliency_maps)} frames")
         if gradcam_maps:
             print(f"  GradCAM maps: {len(gradcam_maps)} frames")
 
@@ -674,6 +683,7 @@ Examples:
         gradcam_maps=gradcam_maps,
         episode_idx=args.episode,
         output_path=grid_path,
+        smooth_n=args.smooth_grad,
     )
 
     if args.save_individual:

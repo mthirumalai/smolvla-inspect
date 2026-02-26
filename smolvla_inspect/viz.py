@@ -73,7 +73,8 @@ def _frame_to_np(frame):
 def create_visualization_grid(frames, heatmaps, actions=None,
                                cross_attn_heatmaps=None,
                                saliency_maps=None, gradcam_maps=None,
-                               episode_idx=0, output_path="attention_grid.png"):
+                               episode_idx=0, output_path="attention_grid.png",
+                               smooth_n=1):
     """
     Create a grid visualization showing original frames, heatmaps, and overlays.
 
@@ -162,12 +163,12 @@ def create_visualization_grid(frames, heatmaps, actions=None,
             row += 1
 
         if has_saliency:
-            # Saliency overlay
+            sal_label = f"SmoothGrad\nN={smooth_n}" if smooth_n > 1 else "Saliency\n|dA/dpx|"
             ax = fig.add_subplot(gs[row, i])
             ax.imshow(sal_overlay)
             ax.axis("off")
             if i == 0:
-                ax.set_ylabel("Saliency\n|dA/dpx|", fontsize=11, rotation=0, labelpad=60, va="center")
+                ax.set_ylabel(sal_label, fontsize=11, rotation=0, labelpad=60, va="center")
             row += 1
 
         # --- Bottom rows: interpretable overlays (most important) ---
@@ -206,7 +207,7 @@ def create_visualization_grid(frames, heatmaps, actions=None,
     if has_cross:
         legend_parts.append("Action cross-attn heatmap")
     if has_saliency:
-        legend_parts.append("Saliency |dA/dpx|")
+        legend_parts.append(f"SmoothGrad N={smooth_n}" if smooth_n > 1 else "Saliency |dA/dpx|")
     legend_parts.append("Self-attn overlay")
     if has_cross:
         legend_parts.append("Co-attention (self \u00d7 cross)")

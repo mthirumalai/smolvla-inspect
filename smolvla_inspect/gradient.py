@@ -92,50 +92,80 @@ def _run_forward_with_grad(policy, batch, device, noise_seed=42):
 # ---------------------------------------------------------------------------
 
 def compute_saliency_map(policy, sample, dataset, image_key, device,
-                         noise_seed=42, task_override=None):
+                         noise_seed=42, task_override=None,
+                         smooth_n=1, smooth_sigma=0.15):
     """
     Compute ``|d(action)/d(pixel)|`` at pixel resolution.
+
+    When *smooth_n* > 1, uses SmoothGrad: averages saliency over *N*
+    copies of the input with additive Gaussian noise (std = *smooth_sigma*).
 
     Returns:
         numpy array ``(H, W)`` in ``[0, 1]``, or *None* on failure.
     """
-    batch, grad_pkey = build_policy_batch_from_sample(
-        sample, policy, device, batch_size=1,
-        image_key_for_grad=image_key, dataset=dataset,
-        task_override=task_override,
-    )
-    if grad_pkey is None:
-        print("    WARNING: Could not identify gradient image tensor")
-        return None
+    accumulated = None
+    n_success = 0
 
-    grad_tensor = batch[grad_pkey]
-
-    try:
-        policy.reset()
-        action_scalar = _run_forward_with_grad(policy, batch, device, noise_seed)
-        action_scalar.backward()
-
-        if grad_tensor.grad is None:
-            print("    WARNING: grad is None — gradient did not flow to input pixels")
+    for k in range(smooth_n):
+        batch, grad_pkey = build_policy_batch_from_sample(
+            sample, policy, device, batch_size=1,
+            image_key_for_grad=image_key, dataset=dataset,
+            task_override=task_override,
+        )
+        if grad_pkey is None:
+            print("    WARNING: Could not identify gradient image tensor")
             return None
 
-        saliency = grad_tensor.grad.abs().squeeze(0)  # (C, H, W)
-        if saliency.dim() == 3:
-            saliency = saliency.mean(dim=0)  # (H, W)
-        saliency = saliency / (saliency.max() + 1e-8)
-        return saliency.detach().cpu().numpy()
+        grad_tensor = batch[grad_pkey]
 
-    except torch.cuda.OutOfMemoryError:
-        torch.cuda.empty_cache()
-        print("    WARNING: CUDA OOM during saliency — skipping this frame")
+        # Add Gaussian noise for SmoothGrad (skip for k=0 when N=1)
+        if smooth_n > 1:
+            noise = torch.randn_like(grad_tensor) * smooth_sigma
+            grad_tensor.data.add_(noise)
+
+        try:
+            policy.reset()
+            action_scalar = _run_forward_with_grad(policy, batch, device, noise_seed)
+            action_scalar.backward()
+
+            if grad_tensor.grad is None:
+                if k == 0:
+                    print("    WARNING: grad is None — gradient did not flow to input pixels")
+                    return None
+                continue
+
+            sal = grad_tensor.grad.abs().squeeze(0)  # (C, H, W)
+            if sal.dim() == 3:
+                sal = sal.mean(dim=0)  # (H, W)
+
+            if accumulated is None:
+                accumulated = sal.detach().clone()
+            else:
+                accumulated += sal.detach()
+            n_success += 1
+
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            print("    WARNING: CUDA OOM during saliency — skipping this frame")
+            return None
+        except RuntimeError as e:
+            if "MPS" in str(e) or "mps" in str(e):
+                print(f"    WARNING: MPS backward error: {e}")
+                print("    Consider using --gradient-device cpu")
+                return None
+            else:
+                if k == 0:
+                    print(f"    WARNING: Saliency computation failed: {e}")
+                    return None
+                # For SmoothGrad, tolerate occasional failures
+                continue
+
+    if accumulated is None or n_success == 0:
         return None
-    except RuntimeError as e:
-        if "MPS" in str(e) or "mps" in str(e):
-            print(f"    WARNING: MPS backward error: {e}")
-            print("    Consider using --gradient-device cpu")
-        else:
-            print(f"    WARNING: Saliency computation failed: {e}")
-        return None
+
+    accumulated /= n_success
+    accumulated = accumulated / (accumulated.max() + 1e-8)
+    return accumulated.cpu().numpy()
 
 
 # ---------------------------------------------------------------------------
@@ -245,12 +275,14 @@ def compute_gradcam_map(policy, sample, dataset, image_key, device,
 
 def compute_gradient_maps(policy, dataset, episode_idx, num_frames, image_key,
                           device, method="both", noise_seed=42,
-                          task_override=None):
+                          task_override=None, smooth_n=1, smooth_sigma=0.15):
     """
     Compute saliency and/or GradCAM maps for a set of episode frames.
 
     Args:
         method: ``"saliency"``, ``"gradcam"``, or ``"both"``
+        smooth_n: Number of SmoothGrad samples (1 = vanilla saliency).
+        smooth_sigma: Gaussian noise std for SmoothGrad.
 
     Returns:
         ``(saliency_maps, gradcam_maps)`` — each is a list of numpy arrays
@@ -274,18 +306,19 @@ def compute_gradient_maps(policy, dataset, episode_idx, num_frames, image_key,
 
         if do_saliency:
             policy.zero_grad()
+            label = f"SmoothGrad (N={smooth_n})" if smooth_n > 1 else "Saliency"
             smap = compute_saliency_map(
                 policy, sample, dataset, image_key, device,
                 noise_seed=noise_seed, task_override=task_override,
+                smooth_n=smooth_n, smooth_sigma=smooth_sigma,
             )
             if smap is not None:
                 saliency_maps.append(smap)
-                print(f"    Frame {i}: Saliency computed ({smap.shape})")
+                print(f"    Frame {i}: {label} computed ({smap.shape})")
             else:
-                # Uniform fallback
                 h, w = img_tensor.shape[1], img_tensor.shape[2]
                 saliency_maps.append(np.ones((h, w)) * 0.5)
-                print(f"    Frame {i}: Saliency failed, using uniform")
+                print(f"    Frame {i}: {label} failed, using uniform")
 
         if do_gradcam:
             policy.zero_grad()
