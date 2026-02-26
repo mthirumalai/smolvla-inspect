@@ -111,7 +111,31 @@ def create_visualization_grid(frames, heatmaps, actions=None,
 
         row = 0
 
-        # Row 1: Original
+        # Precompute optional maps needed by multiple rows
+        cross_hm = None
+        co_overlay = None
+        if has_cross:
+            cross_hm = _resize_heatmap(cross_attn_heatmaps[i], h, w)
+            co_attn = heatmap_resized * cross_hm
+            co_attn = co_attn / (co_attn.max() + 1e-8)
+            co_overlay = frame_np.copy()
+            co_overlay = (0.5 * co_overlay.astype(np.float32)
+                          + 0.5 * _CYAN_CMAP(co_attn)[:, :, :3] * 255)
+            co_overlay = np.clip(co_overlay, 0, 255).astype(np.uint8)
+
+        sal_overlay = None
+        if has_saliency:
+            sal_hm = _resize_heatmap(saliency_maps[i], h, w)
+            sal_overlay = overlay_heatmap(frame_np, sal_hm, alpha=0.45, colormap="inferno")
+
+        gc_overlay = None
+        if has_gradcam:
+            gc_hm = _resize_heatmap(gradcam_maps[i], h, w)
+            gc_overlay = overlay_heatmap(frame_np, gc_hm, alpha=0.45, colormap="magma")
+
+        # --- Top rows: raw maps ---
+
+        # Original
         ax = fig.add_subplot(gs[row, i])
         ax.imshow(frame_np)
         ax.set_title(f"Frame {i}", fontsize=10)
@@ -120,7 +144,7 @@ def create_visualization_grid(frames, heatmaps, actions=None,
             ax.set_ylabel("Original", fontsize=11, rotation=0, labelpad=60, va="center")
         row += 1
 
-        # Row 2: Self-attention heatmap
+        # SigLIP self-attention heatmap
         ax = fig.add_subplot(gs[row, i])
         ax.imshow(heatmap_resized, cmap="jet", vmin=0, vmax=1)
         ax.axis("off")
@@ -128,7 +152,27 @@ def create_visualization_grid(frames, heatmaps, actions=None,
             ax.set_ylabel("SigLIP\nself-attn", fontsize=11, rotation=0, labelpad=60, va="center")
         row += 1
 
-        # Row 3: Self-attention overlay
+        if has_cross:
+            # Action cross-attention heatmap
+            ax = fig.add_subplot(gs[row, i])
+            ax.imshow(cross_hm, cmap="Greens", vmin=0, vmax=1)
+            ax.axis("off")
+            if i == 0:
+                ax.set_ylabel("Action\ncross-attn", fontsize=11, rotation=0, labelpad=60, va="center")
+            row += 1
+
+        if has_saliency:
+            # Saliency overlay
+            ax = fig.add_subplot(gs[row, i])
+            ax.imshow(sal_overlay)
+            ax.axis("off")
+            if i == 0:
+                ax.set_ylabel("Saliency\n|dA/dpx|", fontsize=11, rotation=0, labelpad=60, va="center")
+            row += 1
+
+        # --- Bottom rows: interpretable overlays (most important) ---
+
+        # Self-attention overlay
         ax = fig.add_subplot(gs[row, i])
         ax.imshow(overlay)
         ax.axis("off")
@@ -137,24 +181,7 @@ def create_visualization_grid(frames, heatmaps, actions=None,
         row += 1
 
         if has_cross:
-            cross_hm = _resize_heatmap(cross_attn_heatmaps[i], h, w)
-
-            # Cross-attention heatmap
-            ax = fig.add_subplot(gs[row, i])
-            ax.imshow(cross_hm, cmap="Greens", vmin=0, vmax=1)
-            ax.axis("off")
-            if i == 0:
-                ax.set_ylabel("Action\ncross-attn", fontsize=11, rotation=0, labelpad=60, va="center")
-            row += 1
-
             # Co-attention overlay (self-attn × cross-attn)
-            co_attn = heatmap_resized * cross_hm
-            co_attn = co_attn / (co_attn.max() + 1e-8)
-            co_overlay = frame_np.copy()
-            co_overlay = (0.5 * co_overlay.astype(np.float32)
-                          + 0.5 * _CYAN_CMAP(co_attn)[:, :, :3] * 255)
-            co_overlay = np.clip(co_overlay, 0, 255).astype(np.uint8)
-
             ax = fig.add_subplot(gs[row, i])
             ax.imshow(co_overlay)
             ax.axis("off")
@@ -162,21 +189,8 @@ def create_visualization_grid(frames, heatmaps, actions=None,
                 ax.set_ylabel("Co-attention\noverlay", fontsize=11, rotation=0, labelpad=60, va="center")
             row += 1
 
-        if has_saliency:
-            sal_hm = _resize_heatmap(saliency_maps[i], h, w)
-            sal_overlay = overlay_heatmap(frame_np, sal_hm, alpha=0.45, colormap="inferno")
-
-            ax = fig.add_subplot(gs[row, i])
-            ax.imshow(sal_overlay)
-            ax.axis("off")
-            if i == 0:
-                ax.set_ylabel("Saliency\n|dA/dpx|", fontsize=11, rotation=0, labelpad=60, va="center")
-            row += 1
-
         if has_gradcam:
-            gc_hm = _resize_heatmap(gradcam_maps[i], h, w)
-            gc_overlay = overlay_heatmap(frame_np, gc_hm, alpha=0.45, colormap="magma")
-
+            # GradCAM overlay (bottommost)
             ax = fig.add_subplot(gs[row, i])
             ax.imshow(gc_overlay)
             ax.axis("off")
@@ -188,13 +202,14 @@ def create_visualization_grid(frames, heatmaps, actions=None,
     legend_parts = [
         "Original",
         "SigLIP self-attn heatmap",
-        "Self-attn overlay",
     ]
     if has_cross:
         legend_parts.append("Action cross-attn heatmap")
-        legend_parts.append("Co-attention (self \u00d7 cross)")
     if has_saliency:
         legend_parts.append("Saliency |dA/dpx|")
+    legend_parts.append("Self-attn overlay")
+    if has_cross:
+        legend_parts.append("Co-attention (self \u00d7 cross)")
     if has_gradcam:
         legend_parts.append("GradCAM SigLIP L-1")
 

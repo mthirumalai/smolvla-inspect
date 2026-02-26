@@ -3,7 +3,7 @@
 See what SmolVLA's vision encoder and action expert are looking at when the model predicts robot actions.
 
 ![Example attention grid](assets/example_grid.png)
-*7-row attention + gradient grid for a pick-and-place episode. Rows 1-3: original frames, SigLIP self-attention, self-attention overlay. Rows 4-5: action cross-attention, co-attention (self x cross). Rows 6-7: saliency (|dA/dpx|) and GradCAM — gradient-based attribution showing which image regions causally influence the predicted action.*
+*7-row grid for a pick-and-place episode. Top: original frames, raw heatmaps (self-attn, cross-attn, saliency). Bottom: interpretable overlays — self-attention overlay, co-attention (self x cross), and GradCAM showing which image regions causally drive the predicted action.*
 
 ---
 
@@ -76,8 +76,6 @@ For a detailed visual walkthrough of the architecture and how it maps to the rep
 
 5. **Turn attention into spatial heatmaps** -- patch-level importance scores are reshaped into a 2D grid, upsampled with bilinear interpolation to image size, and normalized to [0, 1]. A percentile threshold (`--attn-threshold`, default 0.5) then zeros out low-attention values to suppress residual positional noise from SigLIP's learned position embeddings, and re-normalizes the remainder.
 
-   ![Positional baseline](assets/example_positional_baseline.png)
-   *Positional baseline diagnostic: attention pattern from a content-free gray image, showing position-dependent artifacts that get subtracted from real frames.*
 
 6. **Visualize** -- the output grid has up to 7 rows per frame:
 
@@ -85,13 +83,13 @@ For a detailed visual walkthrough of the architecture and how it maps to the rep
 |-----|---------|----------|------------|
 | 1 | Original frame | -- | always |
 | 2 | SigLIP self-attention heatmap | jet (blue-to-red) | always |
-| 3 | Self-attention overlay on frame | jet | always |
-| 4 | Action cross-attention heatmap | Greens | `--cross-attention` |
-| 5 | Co-attention overlay (self x cross) | cyan (black-cyan-white) | `--cross-attention` |
-| 6 | Saliency overlay (\|dA/dpx\|) | inferno | `--gradient saliency` or `both` |
+| 3 | Action cross-attention heatmap | Greens | `--cross-attention` |
+| 4 | Saliency overlay (\|dA/dpx\|) | inferno | `--gradient saliency` or `both` |
+| 5 | Self-attention overlay on frame | jet | always |
+| 6 | Co-attention overlay (self x cross) | cyan (black-cyan-white) | `--cross-attention` |
 | 7 | GradCAM overlay (SigLIP last layer) | magma | `--gradient gradcam` or `both` |
 
-Rows 4-5 only appear when cross-attention is enabled. The co-attention overlay multiplies self-attention and cross-attention element-wise, highlighting regions that are **both** visually salient and action-relevant. Rows 6-7 only appear when gradient attribution is enabled.
+Raw heatmaps are at the top (rows 1-4), interpretable overlays at the bottom (rows 5-7). The bottom three rows are the most useful: self-attention overlay shows where the encoder focuses, co-attention shows where encoder and action decoder agree, and GradCAM shows which regions causally drive the predicted action.
 
 ### Per-head grid
 
@@ -278,8 +276,9 @@ The cyan overlay highlights regions where **both** the vision encoder and the ac
 |-----|------|---------------------|------------|----------------------------|
 | SigLIP self-attn | Vision encoder attention | Which patches attend to each other inside the encoder? | 32x32 patches | Encoder's internal processing focus -- structural, not necessarily action-relevant |
 | Action cross-attn | Action-to-vision cross-attention | Which vision tokens does the action decoder query? | 8x8 tokens (post pixel-shuffle) | Visual regions the action decoder pulls information from |
-| Co-attention | Self x cross product | Which regions are both visually salient and action-queried? | 8x8 upsampled | Strongest attention signal for "what the model looks at to decide what to do" |
 | Saliency \|dA/dpx\| | Input-gradient saliency | If I changed this pixel, would the action change? | Full pixel (480x640) | Pixels that causally influence the predicted action -- fine-grained but noisy |
+| Self-attn overlay | Self-attention on frame | Where does the encoder focus, overlaid on the image? | 32x32 upsampled | Visual check of encoder focus against actual scene content |
+| Co-attention | Self x cross product | Which regions are both visually salient and action-queried? | 8x8 upsampled | Strongest attention signal for "what the model looks at to decide what to do" |
 | GradCAM SigLIP L-1 | Gradient-weighted activations | Which learned feature regions drive the action? | 32x32 patches | Patch regions whose features most influence the action -- coarser but more semantic |
 
 **Attention vs gradient:**
