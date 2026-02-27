@@ -1,0 +1,41 @@
+# GPU-optimized defaults (RTX 3080 / similar).  CLI flags override these.
+
+model: lerobot/smolvla_base
+dataset: lerobot/svla_so101_pickplace
+episode: 0
+num_frames: 8
+device: auto
+task: null
+output_dir: ./outputs
+save_individual: true
+
+# Attention analysis options
+method: rollout
+cross_attention: true
+show_heads: true
+raw_attention: false
+attn_threshold: 0.5
+
+# Gradient-based attribution
+gradient: both
+gradient_device: cuda
+gradient_seed: 42
+smooth_grad: 20
+smooth_grad_sigma: 0.15
+
+# Extended attribution features
+gradcam_connector: true
+gradcam_vlm_layers: null
+per_step_cross_attention: true
+vision_vs_state: false
+per_action_dim: true
+language_diff: null
+
+# Model health analysis
+model_health: false
+health_frames: 5
+entropy_warn: 0.8
+entropy_critical: 0.95
+entropy_low: 0.1
+redundancy_warn: 0.7
+redundancy_critical: 0.9
