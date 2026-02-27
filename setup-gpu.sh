@@ -5,6 +5,12 @@ set -euo pipefail
 
 echo "=== smolvla-inspect GPU setup ==="
 
+# 0. Pull latest code on extended-attribution branch
+echo "Switching to extended-attribution branch..."
+git fetch origin
+git checkout extended-attribution
+git pull origin extended-attribution
+
 # 1. Ensure Python >= 3.10
 PYTHON=$(command -v python3)
 PY_VERSION=$($PYTHON --version 2>&1 | awk '{print $2}')
