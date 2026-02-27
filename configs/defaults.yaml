@@ -23,6 +23,14 @@ gradient_seed: 42                      # fixed noise seed for reproducible gradi
 smooth_grad: 1                         # SmoothGrad samples (1 = vanilla saliency, >1 = averaged)
 smooth_grad_sigma: 0.15                # Gaussian noise std for SmoothGrad
 
+# Extended attribution features
+gradcam_connector: false
+gradcam_vlm_layers: null
+per_step_cross_attention: false
+vision_vs_state: false
+per_action_dim: false
+language_diff: null
+
 # Model health analysis
 model_health: false
 health_frames: 5

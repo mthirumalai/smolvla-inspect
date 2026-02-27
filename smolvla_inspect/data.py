@@ -158,9 +158,41 @@ def _resolve_task_string(sample, dataset=None, task_override=None):
     return "manipulate object"
 
 
+def get_alternative_task_string(original_task, dataset=None):
+    """
+    Select a contrasting task string for language-conditional comparison.
+
+    Tiers:
+      1. Different task from ``dataset.meta.tasks`` (if >1 task)
+      2. ``"do not " + original_task`` (semantic negation)
+      3. ``"observe the scene"`` (always available)
+
+    Returns:
+        ``(alt_task, tier)`` — the alternative string and which tier was used.
+    """
+    # Tier 1: different task from dataset metadata
+    if dataset is not None:
+        try:
+            tasks_df = dataset.meta.tasks
+            if len(tasks_df) > 1:
+                for idx in range(len(tasks_df)):
+                    candidate = tasks_df.iloc[idx].name
+                    if candidate != original_task:
+                        return candidate, 1
+        except (AttributeError, IndexError):
+            pass
+
+    # Tier 2: semantic negation
+    if original_task and original_task.strip():
+        return f"do not {original_task}", 2
+
+    # Tier 3: fallback
+    return "observe the scene", 3
+
+
 def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
                                    image_key_for_grad=None, dataset=None,
-                                   task_override=None):
+                                   task_override=None, state_requires_grad=False):
     """
     Build a batch dict that matches the policy's expected keys (e.g. observation.images.camera1),
     by mapping from the dataset sample keys (e.g. observation.images.up, observation.images.side).
@@ -236,6 +268,12 @@ def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
             batch[lang_mask_key] = tok_out["attention_mask"].to(device)
         except Exception as e:
             print(f"    WARNING: Could not tokenize task string: {e}")
+
+    # --- Enable gradient on state tensor if requested (for F4: vision vs state) ---
+    if state_requires_grad:
+        state_key = "observation.state"
+        if state_key in batch:
+            batch[state_key] = batch[state_key].clone().detach().requires_grad_(True)
 
     return batch, grad_pkey
 

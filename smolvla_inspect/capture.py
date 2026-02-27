@@ -237,6 +237,43 @@ class ActionVisionAttentionCapture:
         end = start + n_vision
         return start, end, n_vision
 
+    def get_per_step_cross_attention(self, vision_start, vision_end,
+                                       num_expert_layers=16):
+        """
+        Group captured cross-attention by denoising step and average
+        across layers within each step.
+
+        SmolVLA runs 10 denoising steps, each invoking all 16 expert
+        layers.  ``step = call_idx // num_expert_layers``.
+
+        Returns:
+            list of Tensors ``(n_vision_tokens,)`` — one per denoising
+            step, or *None* if no cross-attention was captured.
+        """
+        if not self.cross_attn_weights:
+            return None
+
+        # Group by step
+        from collections import defaultdict
+        steps = defaultdict(list)
+        for call_idx, probs in self.cross_attn_weights:
+            step = call_idx // num_expert_layers
+            # probs: (B, heads, q_len, k_len)
+            avg = probs[0].mean(dim=0).mean(dim=0)  # (k_len,)
+            vision_avg = avg[vision_start:vision_end]
+            steps[step].append(vision_avg)
+
+        if not steps:
+            return None
+
+        result = []
+        for step_idx in sorted(steps.keys()):
+            tensors = steps[step_idx]
+            stacked = torch.stack(tensors, dim=0).mean(dim=0)  # (n_vision_tokens,)
+            result.append(stacked)
+
+        return result
+
     def get_mean_cross_attention(self, vision_start, vision_end):
         """
         Average captured cross-attention over all layers and heads,
