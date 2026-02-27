@@ -5,22 +5,20 @@ set -euo pipefail
 
 echo "=== smolvla-inspect GPU setup ==="
 
-# 1. Install Python 3.11 (Ubuntu 20.04 ships with 3.8)
-if ! command -v python3.11 &>/dev/null; then
-    echo "Installing Python 3.11 via deadsnakes PPA..."
-    sudo apt update
-    sudo apt install -y software-properties-common
-    sudo add-apt-repository -y ppa:deadsnakes/ppa
-    sudo apt update
-    sudo apt install -y python3.11 python3.11-venv python3.11-dev
-else
-    echo "Python 3.11 already installed."
+# 1. Ensure Python >= 3.10
+PYTHON=$(command -v python3)
+PY_VERSION=$($PYTHON --version 2>&1 | awk '{print $2}')
+PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
+if [ "$PY_MINOR" -lt 10 ]; then
+    echo "Error: Python >= 3.10 required, found $PY_VERSION"
+    exit 1
 fi
+echo "Using Python $PY_VERSION"
 
 # 2. Create virtual environment
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
-    python3.11 -m venv .venv
+    $PYTHON -m venv .venv
 else
     echo "Virtual environment already exists."
 fi
