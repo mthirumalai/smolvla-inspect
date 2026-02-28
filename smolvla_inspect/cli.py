@@ -434,9 +434,17 @@ def gradient_attention_map(policy, dataset, frame_idx, image_key, device="cpu",
     )
 
 
-def load_defaults():
-    """Load defaults from configs/defaults.yaml if it exists."""
-    config_path = Path(__file__).resolve().parent.parent / "configs" / "defaults.yaml"
+def load_defaults(config_path=None):
+    """Load defaults from a YAML config file.
+
+    Resolution order:
+      1. Explicit *config_path* argument (from ``--config``)
+      2. ``configs/defaults.yaml`` in the project root
+    """
+    if config_path is None:
+        config_path = Path(__file__).resolve().parent.parent / "configs" / "defaults.yaml"
+    else:
+        config_path = Path(config_path)
     if config_path.exists():
         try:
             import yaml
@@ -444,11 +452,20 @@ def load_defaults():
                 return yaml.safe_load(f) or {}
         except ImportError:
             pass
+    elif config_path != Path(__file__).resolve().parent.parent / "configs" / "defaults.yaml":
+        # Only error if the user explicitly asked for a config that doesn't exist
+        print(f"ERROR: Config file not found: {config_path}")
+        sys.exit(1)
     return {}
 
 
 def main():
-    defaults = load_defaults()
+    # Pre-parse --config so we can load defaults before building the full parser
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config", type=str, default=None,
+                            help="Path to YAML config file (default: configs/defaults.yaml)")
+    pre_args, _ = pre_parser.parse_known_args()
+    defaults = load_defaults(pre_args.config)
 
     parser = argparse.ArgumentParser(
         description="See what SmolVLA's vision encoder is looking at.",
@@ -458,9 +475,12 @@ Examples:
   python inspect_attention.py
   python inspect_attention.py --episode 3 --num-frames 12 --device cuda
   python inspect_attention.py --model path/to/finetuned_checkpoint
+  python inspect_attention.py --config configs/gpu.yaml
         """
     )
 
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to YAML config file (default: configs/defaults.yaml)")
     parser.add_argument("--model", type=str,
                         default=defaults.get("model", "lerobot/smolvla_base"))
     parser.add_argument("--dataset", type=str,

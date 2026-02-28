@@ -25,11 +25,11 @@ smooth_grad_sigma: 0.15
 
 # Extended attribution features
 gradcam_connector: true
-gradcam_vlm_layers: null
+gradcam_vlm_layers: "4,8,12,16"
 per_step_cross_attention: true
-vision_vs_state: false
+vision_vs_state: true
 per_action_dim: true
-language_diff: null
+language_diff: auto
 
 # Model health analysis
 model_health: false
