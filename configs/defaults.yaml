@@ -8,6 +8,7 @@ device: auto                             # auto | cpu | cuda | mps
 task: null                               # override task/language instruction (default: from dataset)
 output_dir: ./outputs
 save_individual: true                   # true to also save each frame separately
+image_map: null                        # dataset→policy image key mapping, e.g. "front=camera2,side=camera3"
 
 # Attention analysis options
 method: rollout                         # last-layer | rollout | all-layers

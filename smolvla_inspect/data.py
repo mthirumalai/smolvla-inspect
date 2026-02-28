@@ -77,14 +77,44 @@ def find_image_keys(dataset):
 _image_key_warning_shown = False
 
 
-def _match_image_keys(policy_img_keys, dataset_img_keys):
+def parse_image_map(image_map_str):
+    """
+    Parse a ``--image-map`` CLI string into a dict.
+
+    Accepts either short suffixes or full dotted keys::
+
+        "front=camera2,side=camera3"
+        "observation.images.front=observation.images.camera2"
+
+    Returns:
+        dict mapping dataset key (or suffix) → policy key (or suffix).
+    """
+    if not image_map_str:
+        return {}
+    result = {}
+    for pair in image_map_str.split(","):
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        left, right = pair.split("=", 1)
+        result[left.strip()] = right.strip()
+    return result
+
+
+def _match_image_keys(policy_img_keys, dataset_img_keys, image_map=None):
     """
     Match dataset image keys to policy image keys.
 
     Strategy (in priority order):
+      0. Explicit ``image_map`` overrides — user-provided mappings
       1. Exact match — dataset key exists in policy keys
       2. Suffix match — last segment matches (e.g. both end in 'wrist')
       3. Positional fallback — pair by sorted order (with warning)
+
+    Args:
+        image_map: optional dict mapping dataset key (or suffix) → policy
+            key (or suffix).  Both full keys (``observation.images.front``)
+            and short suffixes (``front``) are accepted.
 
     Returns:
         List of ``(dataset_key, policy_key)`` pairs.
@@ -93,6 +123,28 @@ def _match_image_keys(policy_img_keys, dataset_img_keys):
     mapping = []
     unmatched_pkeys = list(policy_img_keys)
     unmatched_dkeys = list(dataset_img_keys)
+
+    # Pass 0: explicit user overrides
+    if image_map:
+        for dkey in list(unmatched_dkeys):
+            d_suffix = dkey.rsplit(".", 1)[-1]
+            # Try full key first, then suffix
+            target = image_map.get(dkey) or image_map.get(d_suffix)
+            if target is None:
+                continue
+            # Resolve target: full key match or suffix match in policy keys
+            matched_pkey = None
+            if target in unmatched_pkeys:
+                matched_pkey = target
+            else:
+                for pkey in unmatched_pkeys:
+                    if pkey.rsplit(".", 1)[-1] == target:
+                        matched_pkey = pkey
+                        break
+            if matched_pkey is not None:
+                mapping.append((dkey, matched_pkey))
+                unmatched_pkeys.remove(matched_pkey)
+                unmatched_dkeys.remove(dkey)
 
     # Pass 1: exact match
     for dkey in list(unmatched_dkeys):
@@ -122,7 +174,7 @@ def _match_image_keys(policy_img_keys, dataset_img_keys):
         if not _image_key_warning_shown:
             pairs = ", ".join(f"'{d}' -> '{p}'" for d, p in positional)
             print(f"    WARNING: No name match for images — mapping by position: {pairs}. "
-                  f"Use --image-key if this is wrong.")
+                  f"Use --image-map if this is wrong.")
             _image_key_warning_shown = True
 
     return mapping
@@ -192,7 +244,8 @@ def get_alternative_task_string(original_task, dataset=None):
 
 def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
                                    image_key_for_grad=None, dataset=None,
-                                   task_override=None, state_requires_grad=False):
+                                   task_override=None, state_requires_grad=False,
+                                   image_map=None):
     """
     Build a batch dict that matches the policy's expected keys (e.g. observation.images.camera1),
     by mapping from the dataset sample keys (e.g. observation.images.up, observation.images.side).
@@ -232,7 +285,7 @@ def build_policy_batch_from_sample(sample, policy, device, batch_size=1,
             batch[key] = val
 
     # Map dataset image keys -> policy image keys (exact > suffix > positional)
-    img_mapping = _match_image_keys(policy_img_keys, dataset_img_keys)
+    img_mapping = _match_image_keys(policy_img_keys, dataset_img_keys, image_map=image_map)
     grad_pkey = None
     for dkey, pkey in img_mapping:
         img = sample[dkey]

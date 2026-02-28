@@ -135,7 +135,8 @@ def _run_forward_with_grad_raw(policy, batch, device, noise_seed=42):
 
 def _run_forward_with_multi_hooks(policy, sample, dataset, image_key, device,
                                    noise_seed=42, task_override=None,
-                                   hook_specs=None, state_requires_grad=False):
+                                   hook_specs=None, state_requires_grad=False,
+                                   image_map=None):
     """
     Register multiple forward/backward hooks, run one forward+backward pass,
     and return captured activations/gradients organized by feature key.
@@ -158,6 +159,7 @@ def _run_forward_with_multi_hooks(policy, sample, dataset, image_key, device,
         image_key_for_grad=image_key, dataset=dataset,
         task_override=task_override,
         state_requires_grad=state_requires_grad,
+        image_map=image_map,
     )
 
     captured = {}
@@ -238,7 +240,7 @@ def _gradcam_from_captured(activations, gradients, spatial_shape=None):
 
 def compute_saliency_map(policy, sample, dataset, image_key, device,
                          noise_seed=42, task_override=None,
-                         smooth_n=1, smooth_sigma=0.15):
+                         smooth_n=1, smooth_sigma=0.15, image_map=None):
     """
     Compute ``|d(action)/d(pixel)|`` at pixel resolution.
 
@@ -255,7 +257,7 @@ def compute_saliency_map(policy, sample, dataset, image_key, device,
         batch, grad_pkey = build_policy_batch_from_sample(
             sample, policy, device, batch_size=1,
             image_key_for_grad=image_key, dataset=dataset,
-            task_override=task_override,
+            task_override=task_override, image_map=image_map,
         )
         if grad_pkey is None:
             print("    WARNING: Could not identify gradient image tensor")
@@ -318,7 +320,7 @@ def compute_saliency_map(policy, sample, dataset, image_key, device,
 # ---------------------------------------------------------------------------
 
 def compute_gradcam_map(policy, sample, dataset, image_key, device,
-                        noise_seed=42, task_override=None):
+                        noise_seed=42, task_override=None, image_map=None):
     """
     Gradient-weighted class activation map at patch resolution (32x32).
 
@@ -360,7 +362,7 @@ def compute_gradcam_map(policy, sample, dataset, image_key, device,
         batch, _ = build_policy_batch_from_sample(
             sample, policy, device, batch_size=1,
             image_key_for_grad=image_key, dataset=dataset,
-            task_override=task_override,
+            task_override=task_override, image_map=image_map,
         )
 
         policy.reset()
@@ -419,7 +421,8 @@ def compute_gradcam_map(policy, sample, dataset, image_key, device,
 # ---------------------------------------------------------------------------
 
 def compute_gradcam_connector(policy, sample, dataset, image_key, device,
-                               noise_seed=42, task_override=None):
+                               noise_seed=42, task_override=None,
+                               image_map=None):
     """
     GradCAM on the VLM connector output (post-pixel-shuffle, 64 tokens).
 
@@ -449,7 +452,7 @@ def compute_gradcam_connector(policy, sample, dataset, image_key, device,
         batch, _ = build_policy_batch_from_sample(
             sample, policy, device, batch_size=1,
             image_key_for_grad=image_key, dataset=dataset,
-            task_override=task_override,
+            task_override=task_override, image_map=image_map,
         )
         policy.reset()
         action_scalar = _run_forward_with_grad(policy, batch, device, noise_seed)
@@ -476,7 +479,7 @@ def compute_gradcam_connector(policy, sample, dataset, image_key, device,
 
 def compute_gradcam_connector_maps(policy, dataset, episode_idx, num_frames,
                                     image_key, device, noise_seed=42,
-                                    task_override=None):
+                                    task_override=None, image_map=None):
     """Compute connector GradCAM for all frames in an episode."""
     frame_pairs = get_episode_frames(dataset, episode_idx, num_frames, image_key)
     maps = []
@@ -486,6 +489,7 @@ def compute_gradcam_connector_maps(policy, dataset, episode_idx, num_frames,
         cam = compute_gradcam_connector(
             policy, sample, dataset, image_key, device,
             noise_seed=noise_seed, task_override=task_override,
+            image_map=image_map,
         )
         if cam is not None:
             maps.append(cam)
@@ -505,7 +509,7 @@ def compute_gradcam_connector_maps(policy, dataset, episode_idx, num_frames,
 
 def compute_gradcam_vlm_layers(policy, sample, dataset, image_key, device,
                                 layer_indices, noise_seed=42,
-                                task_override=None):
+                                task_override=None, image_map=None):
     """
     GradCAM on VLM text model intermediate layers.
 
@@ -549,7 +553,7 @@ def compute_gradcam_vlm_layers(policy, sample, dataset, image_key, device,
         captured = _run_forward_with_multi_hooks(
             policy, sample, dataset, image_key, device,
             noise_seed=noise_seed, task_override=task_override,
-            hook_specs=hook_specs,
+            hook_specs=hook_specs, image_map=image_map,
         )
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
@@ -611,7 +615,8 @@ def compute_gradcam_vlm_layers(policy, sample, dataset, image_key, device,
 
 def compute_gradcam_vlm_layers_maps(policy, dataset, episode_idx, num_frames,
                                      image_key, device, layer_indices,
-                                     noise_seed=42, task_override=None):
+                                     noise_seed=42, task_override=None,
+                                     image_map=None):
     """Compute VLM layer GradCAM for all frames in an episode."""
     frame_pairs = get_episode_frames(dataset, episode_idx, num_frames, image_key)
     # result[layer_idx] = list of per-frame dicts
@@ -622,6 +627,7 @@ def compute_gradcam_vlm_layers_maps(policy, dataset, episode_idx, num_frames,
         result = compute_gradcam_vlm_layers(
             policy, sample, dataset, image_key, device,
             layer_indices, noise_seed=noise_seed, task_override=task_override,
+            image_map=image_map,
         )
         if result is not None:
             for li in layer_indices:
@@ -644,7 +650,8 @@ def compute_gradcam_vlm_layers_maps(policy, dataset, episode_idx, num_frames,
 # ---------------------------------------------------------------------------
 
 def compute_vision_vs_state_ratio(policy, sample, dataset, image_key, device,
-                                   noise_seed=42, task_override=None):
+                                   noise_seed=42, task_override=None,
+                                   image_map=None):
     """
     Compare gradient norms w.r.t. vision input vs. state input.
 
@@ -656,7 +663,7 @@ def compute_vision_vs_state_ratio(policy, sample, dataset, image_key, device,
         sample, policy, device, batch_size=1,
         image_key_for_grad=image_key, dataset=dataset,
         task_override=task_override,
-        state_requires_grad=True,
+        state_requires_grad=True, image_map=image_map,
     )
     if grad_pkey is None:
         print("    WARNING: Could not identify gradient image tensor")
@@ -702,7 +709,7 @@ def compute_vision_vs_state_ratio(policy, sample, dataset, image_key, device,
 
 def compute_vision_vs_state_maps(policy, dataset, episode_idx, num_frames,
                                   image_key, device, noise_seed=42,
-                                  task_override=None):
+                                  task_override=None, image_map=None):
     """Compute vision vs state ratio for all frames."""
     frame_pairs = get_episode_frames(dataset, episode_idx, num_frames, image_key)
     results = []
@@ -712,6 +719,7 @@ def compute_vision_vs_state_maps(policy, dataset, episode_idx, num_frames,
         r = compute_vision_vs_state_ratio(
             policy, sample, dataset, image_key, device,
             noise_seed=noise_seed, task_override=task_override,
+            image_map=image_map,
         )
         results.append(r)
         if r is not None:
@@ -730,7 +738,7 @@ def compute_vision_vs_state_maps(policy, dataset, episode_idx, num_frames,
 
 def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
                                     noise_seed=42, task_override=None,
-                                    action_dim_names=None):
+                                    action_dim_names=None, image_map=None):
     """
     GradCAM on SigLIP last layer, one map per action dimension.
 
@@ -767,7 +775,7 @@ def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
         batch, _ = build_policy_batch_from_sample(
             sample, policy, device, batch_size=1,
             image_key_for_grad=image_key, dataset=dataset,
-            task_override=task_override,
+            task_override=task_override, image_map=image_map,
         )
         policy.reset()
         actions = _run_forward_with_grad_raw(policy, batch, device, noise_seed)
@@ -785,6 +793,7 @@ def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
             grid_h = grid_w = img_size // patch_size
 
         cam_maps = []
+        magnitudes = []
         for d in tqdm(range(n_dims), desc="  Action dims", unit="dim", leave=False):
             # Register backward hook to capture per-dim gradients
             grad_store = {}
@@ -804,12 +813,15 @@ def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
             dA = grad_store.get("value")
             if dA is None:
                 cam_maps.append(np.ones((grid_h, grid_w)) * 0.5)
+                magnitudes.append(0.0)
                 continue
 
             alpha = dA.mean(dim=1, keepdim=True)
             cam = (alpha * A).sum(dim=-1)
             cam = torch.relu(cam).squeeze(0)
             cam = cam[:grid_h * grid_w].reshape(grid_h, grid_w)
+            raw_max = cam.max().item()
+            magnitudes.append(raw_max)
             cam = cam / (cam.max() + 1e-8)
             cam_maps.append(cam.detach().float().cpu().numpy())
 
@@ -821,7 +833,7 @@ def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
             dim_name = action_dim_names[d] if action_dim_names and d < len(action_dim_names) else f"dim_{d}"
             print(f"      Action dim {d} ({dim_name}): GradCAM computed")
 
-        return cam_maps
+        return {"maps": cam_maps, "magnitudes": magnitudes}
 
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
@@ -839,26 +851,35 @@ def compute_per_action_dim_gradcam(policy, sample, dataset, image_key, device,
 
 def compute_per_action_dim_maps(policy, dataset, episode_idx, num_frames,
                                  image_key, device, noise_seed=42,
-                                 task_override=None, action_dim_names=None):
-    """Compute per-action-dim GradCAM for all frames."""
+                                 task_override=None, action_dim_names=None,
+                                 image_map=None):
+    """Compute per-action-dim GradCAM for all frames.
+
+    Returns:
+        ``(all_maps, all_magnitudes)`` — all_maps is a list of (list of cam
+        maps per dim) per frame; all_magnitudes is a list of (list of float
+        magnitudes per dim) per frame.
+    """
     frame_pairs = get_episode_frames(dataset, episode_idx, num_frames, image_key)
-    # result: list of (list of cam maps per dim) per frame
     all_maps = []
+    all_magnitudes = []
     for i, (frame_idx, img_tensor) in enumerate(tqdm(frame_pairs, desc="Per-action-dim", unit="frame")):
         sample = dataset[frame_idx]
         policy.zero_grad()
         print(f"    Frame {i}: Per-action-dim GradCAM...")
-        maps = compute_per_action_dim_gradcam(
+        result = compute_per_action_dim_gradcam(
             policy, sample, dataset, image_key, device,
             noise_seed=noise_seed, task_override=task_override,
-            action_dim_names=action_dim_names,
+            action_dim_names=action_dim_names, image_map=image_map,
         )
-        if maps is not None:
-            all_maps.append(maps)
+        if result is not None:
+            all_maps.append(result["maps"])
+            all_magnitudes.append(result["magnitudes"])
         else:
             all_maps.append(None)
+            all_magnitudes.append(None)
             print(f"    Frame {i}: Per-action-dim GradCAM failed")
-    return all_maps
+    return all_maps, all_magnitudes
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +888,8 @@ def compute_per_action_dim_maps(policy, dataset, episode_idx, num_frames,
 
 def compute_language_conditional_diff(policy, sample, dataset, image_key,
                                        device, noise_seed=42,
-                                       task_override=None, alt_task=None):
+                                       task_override=None, alt_task=None,
+                                       image_map=None):
     """
     Run GradCAM twice — once with the original task, once with an
     alternative — and compute the difference.
@@ -896,6 +918,7 @@ def compute_language_conditional_diff(policy, sample, dataset, image_key,
     original_cam = compute_gradcam_map(
         policy, sample, dataset, image_key, device,
         noise_seed=noise_seed, task_override=original_task,
+        image_map=image_map,
     )
     if original_cam is None:
         return None
@@ -905,14 +928,15 @@ def compute_language_conditional_diff(policy, sample, dataset, image_key,
     alt_cam = compute_gradcam_map(
         policy, sample, dataset, image_key, device,
         noise_seed=noise_seed, task_override=alt_task_str,
+        image_map=image_map,
     )
     if alt_cam is None:
         return None
 
-    # Difference: positive = more important for original task
+    # Symmetric difference: positive = original stronger, negative = alt stronger
     diff = original_cam - alt_cam
-    diff = np.clip(diff, 0, None)
-    diff = diff / (diff.max() + 1e-8)
+    abs_max = np.abs(diff).max() + 1e-8
+    diff = diff / abs_max  # [-1, 1]
 
     return {
         "original_cam": original_cam,
@@ -926,7 +950,8 @@ def compute_language_conditional_diff(policy, sample, dataset, image_key,
 
 def compute_language_conditional_maps(policy, dataset, episode_idx, num_frames,
                                        image_key, device, noise_seed=42,
-                                       task_override=None, alt_task=None):
+                                       task_override=None, alt_task=None,
+                                       image_map=None):
     """Compute language-conditional diff for all frames."""
     frame_pairs = get_episode_frames(dataset, episode_idx, num_frames, image_key)
     results = []
@@ -936,7 +961,7 @@ def compute_language_conditional_maps(policy, dataset, episode_idx, num_frames,
         r = compute_language_conditional_diff(
             policy, sample, dataset, image_key, device,
             noise_seed=noise_seed, task_override=task_override,
-            alt_task=alt_task,
+            alt_task=alt_task, image_map=image_map,
         )
         results.append(r)
         if r is not None:
@@ -952,7 +977,8 @@ def compute_language_conditional_maps(policy, dataset, episode_idx, num_frames,
 
 def compute_gradient_maps(policy, dataset, episode_idx, num_frames, image_key,
                           device, method="both", noise_seed=42,
-                          task_override=None, smooth_n=1, smooth_sigma=0.15):
+                          task_override=None, smooth_n=1, smooth_sigma=0.15,
+                          image_map=None):
     """
     Compute saliency and/or GradCAM maps for a set of episode frames.
 
@@ -988,6 +1014,7 @@ def compute_gradient_maps(policy, dataset, episode_idx, num_frames, image_key,
                 policy, sample, dataset, image_key, device,
                 noise_seed=noise_seed, task_override=task_override,
                 smooth_n=smooth_n, smooth_sigma=smooth_sigma,
+                image_map=image_map,
             )
             if smap is not None:
                 saliency_maps.append(smap)
@@ -1002,6 +1029,7 @@ def compute_gradient_maps(policy, dataset, episode_idx, num_frames, image_key,
             gcam = compute_gradcam_map(
                 policy, sample, dataset, image_key, device,
                 noise_seed=noise_seed, task_override=task_override,
+                image_map=image_map,
             )
             if gcam is not None:
                 gradcam_maps.append(gcam)
