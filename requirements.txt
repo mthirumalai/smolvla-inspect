@@ -8,3 +8,13 @@ numpy>=1.24
 Pillow>=10.0
 pyyaml>=6.0
 weightwatcher>=0.7
+
+# Web viewer (optional — needed for `smolvla-inspect serve`)
+fastapi>=0.100
+uvicorn[standard]>=0.20
+pydantic-settings>=2.0
+python-multipart>=0.0.6
+
+# LLM providers (optional — needed for AI-powered analysis)
+anthropic>=0.25
+openai>=1.0

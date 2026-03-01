@@ -32,6 +32,10 @@ vision_vs_state: false
 per_action_dim: false
 language_diff: null
 
+# Data export (for web viewer)
+export_data: true                      # save structured .npz + JSON alongside PNGs
+run_name: null                         # run folder name (default: timestamped run_YYYY-MM-DD_HH-MM-SS)
+
 # Model health analysis
 model_health: false
 health_frames: 5

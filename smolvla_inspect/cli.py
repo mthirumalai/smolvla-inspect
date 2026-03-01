@@ -61,6 +61,19 @@ from .gradient import (
     compute_per_action_dim_maps,
     compute_language_conditional_maps,
 )
+from .export import (
+    create_run_dir,
+    save_frames,
+    save_self_attention,
+    save_cross_attention,
+    save_gradient_data,
+    save_health_data,
+    build_manifest,
+    collect_model_info,
+    collect_dataset_info,
+    collect_image_paths,
+    build_available_viz,
+)
 
 
 def extract_attention_maps(policy, dataset, episode_idx=0, num_frames=8,
@@ -507,6 +520,14 @@ Examples:
                         choices=["auto", "cpu", "cuda", "mps"])
     parser.add_argument("--save-individual", action="store_true",
                         default=defaults.get("save_individual", False))
+    parser.add_argument("--export-data", action="store_true",
+                        default=defaults.get("export_data", True),
+                        help="Save structured .npz + JSON alongside PNGs (default: true)")
+    parser.add_argument("--no-export-data", action="store_false", dest="export_data",
+                        help="Disable structured data export")
+    parser.add_argument("--run-name", type=str,
+                        default=defaults.get("run_name", None),
+                        help="Run folder name (default: timestamped run_YYYY-MM-DD_HH-MM-SS)")
     parser.add_argument("--method", type=str,
                         default=defaults.get("method", "last-layer"),
                         choices=["last-layer", "rollout", "all-layers"],
@@ -598,7 +619,18 @@ Examples:
         args.gradient = "gradcam"
         print("  NOTE: --language-diff auto-enables --gradient gradcam")
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    # --- Set up run directory ---
+    base_output_dir = args.output_dir
+    os.makedirs(base_output_dir, exist_ok=True)
+
+    if args.export_data:
+        run_dir = create_run_dir(base_output_dir, args.run_name)
+        images_dir = os.path.join(run_dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        # Redirect output_dir so all PNGs go into images/ under the run folder
+        args.output_dir = images_dir
+    else:
+        run_dir = None
 
     # Auto-detect device
     if args.device == "auto":
@@ -737,6 +769,14 @@ Examples:
     if not frames:
         print("\nERROR: No frames extracted. Check episode index and dataset.")
         sys.exit(1)
+
+    # --- Export attention data ---
+    if run_dir:
+        save_frames(run_dir, frames)
+        save_self_attention(run_dir, heatmaps)
+        if cross_attn_heatmaps:
+            save_cross_attention(run_dir, cross_attn_heatmaps,
+                                per_step_data=per_step_cross_attn)
 
     # --- Gradient-based attribution (after attention hooks are cleaned up) ---
     saliency_maps = None
@@ -883,6 +923,22 @@ Examples:
                 alt_task=alt_task, image_map=image_map,
             )
 
+    # --- Export gradient data ---
+    if run_dir and (saliency_maps or gradcam_maps or connector_gradcam_maps
+                    or vlm_layer_results or per_action_dim_maps
+                    or language_diff_results or vision_vs_state_results):
+        save_gradient_data(
+            run_dir,
+            saliency_maps=saliency_maps,
+            gradcam_maps=gradcam_maps,
+            connector_maps=connector_gradcam_maps,
+            vlm_layer_results=vlm_layer_results,
+            per_action_dim_maps=per_action_dim_maps,
+            per_action_dim_mags=per_action_dim_mags,
+            language_diff_results=language_diff_results,
+            vision_vs_state_results=vision_vs_state_results,
+        )
+
     # --- Generate visualizations ---
     print(f"\n[Step 4] Generating visualizations...")
 
@@ -998,11 +1054,54 @@ Examples:
             episode_idx=args.episode,
         )
 
+    # --- Build and save manifest ---
+    if run_dir:
+        # Resolve task string for manifest
+        _manifest_task = args.task
+        if _manifest_task is None:
+            try:
+                _img_key = args.image_key or find_image_keys(dataset)[0]
+                _first = dataset[get_episode_frames(dataset, args.episode, 1, _img_key)[0][0]]
+                _manifest_task = _resolve_task_string(_first, dataset)
+            except Exception:
+                _manifest_task = ""
+        try:
+            _action_names = list(dataset.meta.names.get("action", []))
+        except (AttributeError, TypeError):
+            _action_names = None
+        _image_keys = find_image_keys(dataset) if dataset else None
+
+        model_info = collect_model_info(policy)
+        dataset_info_dict = collect_dataset_info(
+            dataset, args.episode, args.num_frames, _manifest_task,
+            action_dim_names=_action_names, image_keys=_image_keys,
+        )
+        available_viz = build_available_viz(
+            args,
+            heatmaps=heatmaps,
+            cross_attn_heatmaps=cross_attn_heatmaps,
+            saliency_maps=saliency_maps,
+            gradcam_maps=gradcam_maps,
+            connector_maps=connector_gradcam_maps,
+            vlm_layer_results=vlm_layer_results,
+            per_step_cross_attn=per_step_cross_attn,
+            per_action_dim_maps=per_action_dim_maps,
+            language_diff_results=language_diff_results,
+            vision_vs_state_results=vision_vs_state_results,
+        )
+        image_paths = collect_image_paths(run_dir)
+        build_manifest(run_dir, args, model_info=model_info,
+                       dataset_info=dataset_info_dict,
+                       available_viz=available_viz,
+                       image_paths=image_paths)
+        print(f"\n  Run manifest saved: {os.path.join(run_dir, 'run_manifest.json')}")
+
     # --- Summary ---
+    output_label = run_dir if run_dir else args.output_dir
     print(f"\n{'=' * 70}")
     print("DONE!")
     print(f"{'=' * 70}")
-    print(f"\nOutputs saved to: {args.output_dir}/")
+    print(f"\nOutputs saved to: {output_label}/")
     print(f"  Episode dashboard:  {grid_path}")
     if args.save_individual:
         print(f"  Individual frames:  {args.output_dir}/episode_{args.episode:03d}/")
@@ -1019,5 +1118,8 @@ Examples:
     if vision_vs_state_results:
         print(f"  Vision vs state:     vision_vs_state_ep{args.episode:03d}.txt")
         print(f"  Vision vs state chart: vision_vs_state_ep{args.episode:03d}.png")
+    if run_dir:
+        print(f"\n  Run directory: {run_dir}")
+        print(f"  Export data:   {os.path.join(run_dir, 'data')}/")
 
     print()

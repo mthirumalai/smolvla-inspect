@@ -1,0 +1,97 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #3F4547;
+  background-color: #f5f7f9;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --primary: #3B3BD3;
+  --primary-hover: #2D2DA8;
+  --on-primary: #FFFFFF;
+  --secondary-bg: #EDECFB;
+  --secondary-border: #C9C5F2;
+  --secondary-text: #1820A0;
+  --text-heading: #3F4547;
+  --text-body: #7F8385;
+  --border: #DBE4E8;
+  --bg-page: #f5f7f9;
+  --bg-card: #FFFFFF;
+  --bg-sidebar: #FAFBFC;
+  --danger: #D93B3B;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4 { color: var(--text-heading); margin: 0; }
+h1 { font-size: 24px; }
+h2 { font-size: 20px; }
+h3 { font-size: 16px; }
+h4 { font-size: 14px; }
+
+p { color: var(--text-body); margin: 0; }
+
+button {
+  border-radius: 6px;
+  border: 1px solid transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  border: none;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+
+.btn-secondary {
+  background: var(--secondary-bg);
+  border: 1px solid var(--secondary-border);
+  color: var(--secondary-text);
+}
+.btn-secondary:hover { background: #dddcf5; }
+
+.btn-tertiary {
+  background: transparent;
+  color: var(--primary);
+  border: none;
+}
+.btn-tertiary:hover { background: #f0f0ff; }
+
+code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  background: #f0f2f4;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+input[type="text"], textarea {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input[type="text"]:focus, textarea:focus {
+  border-color: var(--primary);
+}
