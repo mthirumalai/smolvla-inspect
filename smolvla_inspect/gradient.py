@@ -542,7 +542,9 @@ def compute_gradcam_vlm_layers(policy, sample, dataset, image_key, device,
             # Hook the MLP (it fires during forward_attn_layer)
             mlp = layer.mlp
         except (IndexError, AttributeError):
-            print(f"    WARNING: VLM layer {li} not found, skipping")
+            num_available = len(text_model.layers)
+            print(f"    WARNING: VLM layer {li} (0-indexed) not found — "
+                  f"model has {num_available} layers (0-{num_available - 1}), skipping")
             continue
         hook_specs.append({"key": f"vlm_layer_{li}", "module": mlp})
 

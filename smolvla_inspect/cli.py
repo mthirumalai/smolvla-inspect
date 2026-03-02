@@ -870,15 +870,34 @@ Examples:
             feat_idx += 1
             layer_str = args.gradcam_vlm_layers
             vlm_layer_indices = [int(x.strip()) - 1 for x in layer_str.split(",")]
-            print(f"\n  [{feat_idx}/{len(enabled_features)}] VLM layer GradCAM (layers {layer_str})...")
-            vlm_layer_results = compute_gradcam_vlm_layers_maps(
-                policy=policy, dataset=dataset,
-                episode_idx=args.episode, num_frames=args.num_frames,
-                image_key=image_key_for_grad, device=grad_device_str,
-                layer_indices=vlm_layer_indices,
-                noise_seed=args.gradient_seed, task_override=args.task,
-                image_map=image_map,
-            )
+
+            # Auto-detect layer count and filter out-of-range indices
+            try:
+                text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
+                num_layers = len(text_model.layers)
+                invalid = [i + 1 for i in vlm_layer_indices if i >= num_layers]
+                if invalid:
+                    print(f"  WARNING: Model has {num_layers} VLM layers — "
+                          f"skipping out-of-range layers {invalid} (1-indexed)")
+                    vlm_layer_indices = [i for i in vlm_layer_indices if i < num_layers]
+                if not vlm_layer_indices:
+                    print(f"  WARNING: No valid VLM layers to compute, skipping")
+                    vlm_layer_results = None
+                    # skip past the compute call
+            except AttributeError:
+                pass
+
+            if vlm_layer_indices:
+                valid_str = ",".join(str(i + 1) for i in vlm_layer_indices)
+                print(f"\n  [{feat_idx}/{len(enabled_features)}] VLM layer GradCAM (layers {valid_str})...")
+                vlm_layer_results = compute_gradcam_vlm_layers_maps(
+                    policy=policy, dataset=dataset,
+                    episode_idx=args.episode, num_frames=args.num_frames,
+                    image_key=image_key_for_grad, device=grad_device_str,
+                    layer_indices=vlm_layer_indices,
+                    noise_seed=args.gradient_seed, task_override=args.task,
+                    image_map=image_map,
+                )
 
         # F4: Vision vs. State
         if args.vision_vs_state:
