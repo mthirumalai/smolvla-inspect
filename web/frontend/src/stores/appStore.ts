@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { RunSummary, RunDetail } from "../services/api";
+import type { RunSummary, RunDetail, VizStats } from "../services/api";
 
 interface AppState {
   // Runs
@@ -35,6 +35,18 @@ interface AppState {
   // LLM config
   llmConfigured: boolean;
   setLlmConfigured: (v: boolean) => void;
+
+  // Run notes (runId -> note text)
+  runNotes: Record<string, string>;
+  setRunNote: (runId: string, note: string) => void;
+
+  // Viz stats cache (runId -> vizType -> VizStats)
+  vizStats: Record<string, Record<string, VizStats>>;
+  setVizStats: (runId: string, vizType: string, stats: VizStats) => void;
+
+  // LLM response cache (keyed by "runId:analysisType")
+  llmResponses: Record<string, string>;
+  setLlmResponse: (key: string, response: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -63,4 +75,25 @@ export const useAppStore = create<AppState>((set) => ({
 
   llmConfigured: false,
   setLlmConfigured: (v) => set({ llmConfigured: v }),
+
+  runNotes: {},
+  setRunNote: (runId, note) =>
+    set((state) => ({
+      runNotes: { ...state.runNotes, [runId]: note },
+    })),
+
+  vizStats: {},
+  setVizStats: (runId, vizType, stats) =>
+    set((state) => ({
+      vizStats: {
+        ...state.vizStats,
+        [runId]: { ...(state.vizStats[runId] || {}), [vizType]: stats },
+      },
+    })),
+
+  llmResponses: {},
+  setLlmResponse: (key, response) =>
+    set((state) => ({
+      llmResponses: { ...state.llmResponses, [key]: response },
+    })),
 }));

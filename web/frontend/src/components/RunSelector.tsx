@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../stores/appStore";
 import { listRuns } from "../services/api";
 
@@ -37,6 +37,12 @@ const VIZ_NAV_GROUPS: VizNavGroup[] = [
     items: [
       { key: "language_diff", label: "Language Diff" },
       { key: "vision_vs_state", label: "Vision vs State" },
+    ],
+  },
+  {
+    category: "INSIGHTS",
+    items: [
+      { key: "run_insights", label: "Run Insights" },
     ],
   },
   {
@@ -87,12 +93,33 @@ export default function RunSelector() {
     return VIZ_NAV_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        // Tools are always available
-        if (item.key === "compare" || item.key === "health") return true;
+        // Tools and insights are always available
+        if (item.key === "compare" || item.key === "health" || item.key === "run_insights") return true;
         return availViz[item.key];
       }),
     })).filter((group) => group.items.length > 0);
   }, [selectedRunId, availViz]);
+
+  // Auto-select first available viz when a run is selected but no viz type is set
+  // (e.g. on initial load when App.tsx auto-selects the first run)
+  useEffect(() => {
+    if (!selectedRunId || selectedVizType) return;
+    const run = runs.find((r) => r.id === selectedRunId);
+    if (!run) return;
+    if (run.is_legacy) {
+      setSelectedVizType("legacy_images");
+      return;
+    }
+    const avail = run.available_visualizations || {};
+    for (const group of VIZ_NAV_GROUPS) {
+      for (const item of group.items) {
+        if (avail[item.key]) {
+          setSelectedVizType(item.key);
+          return;
+        }
+      }
+    }
+  }, [selectedRunId, selectedVizType, runs, setSelectedVizType]);
 
   const handleSelectRun = (id: string) => {
     setSelectedRunId(id);

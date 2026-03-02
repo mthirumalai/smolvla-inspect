@@ -56,6 +56,35 @@ export interface VizData {
 export const getVizData = (runId: string, vizType: string) =>
   fetchJson<VizData>(`/api/runs/${runId}/viz/${vizType}`);
 
+// -- Stats --
+export interface VizStats {
+  viz_type: string;
+  per_frame: Record<string, unknown>[];
+  aggregate: Record<string, unknown>;
+}
+
+export const getVizStats = (runId: string, vizType: string) =>
+  fetchJson<VizStats>(`/api/runs/${runId}/stats/${vizType}`);
+
+export const getAllVizStats = (runId: string) =>
+  fetchJson<Record<string, unknown>>(`/api/runs/${runId}/stats`);
+
+// -- Notes --
+export interface RunNotes {
+  notes: string;
+  updated_at: string | null;
+}
+
+export const getRunNotes = (runId: string) =>
+  fetchJson<RunNotes>(`/api/runs/${runId}/notes`);
+
+export const setRunNotes = (runId: string, notes: string) =>
+  fetchJson<RunNotes>(`/api/runs/${runId}/notes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+
 // -- Health --
 export interface HealthData {
   weightwatcher: Record<string, unknown> | null;
@@ -106,6 +135,9 @@ export async function* streamAnalysis(req: {
   prompt?: string;
   viz_type?: string;
   include_images?: boolean;
+  include_stats?: boolean;
+  compare_run_ids?: string[];
+  run_notes?: Record<string, string>;
 }): AsyncGenerator<string> {
   const res = await fetch(`${API_BASE}/api/llm/analyze`, {
     method: "POST",
@@ -132,7 +164,12 @@ export async function* streamAnalysis(req: {
       if (line.startsWith("data: ")) {
         const data = line.slice(6);
         if (data === "[DONE]") return;
-        yield data;
+        // Tokens are JSON-encoded to preserve newlines through SSE
+        try {
+          yield JSON.parse(data);
+        } catch {
+          yield data;
+        }
       }
     }
   }

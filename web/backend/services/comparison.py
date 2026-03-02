@@ -23,6 +23,47 @@ def _diff_heatmaps(a: list[list[list[float]]],
     return result
 
 
+def compute_config_diff(manifests: list[dict]) -> dict:
+    """Compare configs across runs, returning only fields that differ."""
+    if len(manifests) < 2:
+        return {}
+
+    def _flatten(d: dict, prefix: str = "") -> dict:
+        flat = {}
+        for k, v in d.items():
+            key = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                flat.update(_flatten(v, key))
+            else:
+                flat[key] = v
+        return flat
+
+    # Flatten the config-relevant sections of each manifest
+    config_keys = ("cli_args", "model_info", "dataset_info")
+    flattened = []
+    for mf in manifests:
+        flat: dict = {}
+        for ck in config_keys:
+            section = mf.get(ck, {})
+            if isinstance(section, dict):
+                flat.update(_flatten(section, ck))
+        flattened.append(flat)
+
+    # Find fields that differ across any pair of runs
+    all_keys = set()
+    for f in flattened:
+        all_keys.update(f.keys())
+
+    diffs: dict = {}
+    for key in sorted(all_keys):
+        values = [f.get(key) for f in flattened]
+        # Check if all values are the same
+        if len(set(str(v) for v in values)) > 1:
+            diffs[key] = values
+
+    return diffs
+
+
 def compare_runs(run_dirs: list[Path],
                  manifests: list[dict],
                  viz_types: list[str],

@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..config import Settings
-from ..models.schemas import VizData
-from ..services import data_loader, run_scanner
+from ..models.schemas import VizData, VizStats
+from ..services import data_loader, run_scanner, stats_engine
 
 router = APIRouter(prefix="/api/runs", tags=["visualizations"])
 
@@ -119,6 +119,63 @@ async def get_viz_data(run_id: str, viz_type: str):
                        frames=list(range(len(vs))))
 
     raise HTTPException(404, f"Unknown viz type: {viz_type}")
+
+
+@router.get("/{run_id}/stats/{viz_type}", response_model=VizStats)
+async def get_viz_stats(run_id: str, viz_type: str):
+    """Compute and return stats for one viz type."""
+    run_dir, manifest = _load_run(run_id)
+    avail = manifest.get("available_visualizations", {})
+
+    if not avail.get(viz_type, False):
+        raise HTTPException(404, f"Visualization {viz_type} not available")
+
+    stats = _compute_stats_for_type(run_dir, viz_type)
+    if stats is None:
+        raise HTTPException(404, f"No stats computable for {viz_type}")
+
+    return VizStats(
+        viz_type=viz_type,
+        per_frame=stats.get("per_frame", []),
+        aggregate=stats.get("aggregate", stats),
+    )
+
+
+@router.get("/{run_id}/stats")
+async def get_all_stats(run_id: str):
+    """Compute and return stats for all available viz types."""
+    run_dir, manifest = _load_run(run_id)
+    summary = stats_engine.compute_run_summary_stats(run_dir, manifest)
+    return summary
+
+
+def _compute_stats_for_type(run_dir, viz_type: str) -> dict | None:
+    """Compute stats for a single viz type."""
+    heatmap_types = {
+        "self_attention": lambda: data_loader.load_self_attention_heatmaps(run_dir),
+        "cross_attention": lambda: data_loader.load_cross_attention_heatmaps(run_dir),
+        "saliency": lambda: data_loader.load_gradient_data(run_dir, "saliency"),
+        "gradcam_siglip": lambda: data_loader.load_gradient_data(run_dir, "gradcam_siglip"),
+        "gradcam_connector": lambda: data_loader.load_gradient_data(run_dir, "gradcam_connector"),
+    }
+    if viz_type in heatmap_types:
+        hm = heatmap_types[viz_type]()
+        return stats_engine.compute_heatmap_stats(hm) if hm else None
+
+    if viz_type == "per_head":
+        ph = data_loader.load_per_head_data(run_dir)
+        return stats_engine.compute_per_head_stats(
+            ph.get("heads", []), ph.get("entropies")) if ph else None
+
+    if viz_type == "vision_vs_state":
+        vs = data_loader.load_vision_vs_state(run_dir)
+        return stats_engine.compute_vision_vs_state_stats(vs) if vs else None
+
+    if viz_type == "per_action_dim":
+        dims = data_loader.load_per_action_dim(run_dir)
+        return stats_engine.compute_per_action_dim_stats(dims) if dims else None
+
+    return None
 
 
 def _matching_images(run_dir, viz_type: str) -> list[str]:

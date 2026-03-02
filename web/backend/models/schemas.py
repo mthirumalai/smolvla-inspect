@@ -66,6 +66,12 @@ class LLMConfig(BaseModel):
     base_url: str = ""
 
 
+class VizStats(BaseModel):
+    viz_type: str
+    per_frame: list[dict] = []
+    aggregate: dict = {}
+
+
 class LLMAnalyzeRequest(BaseModel):
     run_id: str
     analysis_type: str  # e.g. "self_attention", "health", "comparison"
@@ -74,3 +80,5 @@ class LLMAnalyzeRequest(BaseModel):
     frame_indices: list[int] | None = None
     compare_run_ids: list[str] | None = None
     include_images: bool = True
+    include_stats: bool = True
+    run_notes: dict[str, str] | None = None

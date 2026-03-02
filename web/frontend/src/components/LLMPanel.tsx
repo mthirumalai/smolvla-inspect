@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { streamAnalysis, getPromptTemplate } from "../services/api";
 import { useAppStore } from "../stores/appStore";
@@ -7,16 +7,38 @@ interface Props {
   analysisType: string;
   runId: string;
   vizType?: string;
+  compareRunIds?: string[];
+  runNotes?: Record<string, string>;
 }
 
-export default function LLMPanel({ analysisType, runId, vizType }: Props) {
+export default function LLMPanel({ analysisType, runId, vizType, compareRunIds, runNotes }: Props) {
   const llmConfigured = useAppStore((s) => s.llmConfigured);
-  const [response, setResponse] = useState("");
+  const setLlmResponse = useAppStore((s) => s.setLlmResponse);
+
+  const [response, setResponse] = useState(
+    () => useAppStore.getState().llmResponses[`${runId}:${analysisType}`] || ""
+  );
   const [loading, setLoading] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [promptEditable, setPromptEditable] = useState(false);
   const [defaultPrompt, setDefaultPrompt] = useState("");
+
+  // Track the current analysisType to abort stale streams
+  const activeAnalysisRef = useRef(analysisType);
+
+  // Reset local state when the section changes, restore from cache
+  useEffect(() => {
+    activeAnalysisRef.current = analysisType;
+    const cached = useAppStore.getState().llmResponses[`${runId}:${analysisType}`] || "";
+    setResponse(cached);
+    setShowPrompt(false);
+    setPrompt("");
+    setDefaultPrompt("");
+    setPromptEditable(false);
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisType, runId]);
 
   const loadPrompt = useCallback(async () => {
     try {
@@ -29,8 +51,13 @@ export default function LLMPanel({ analysisType, runId, vizType }: Props) {
   }, [analysisType]);
 
   const handleAnalyze = async () => {
+    const currentKey = `${runId}:${analysisType}`;
+    const currentAnalysis = analysisType;
     setLoading(true);
     setResponse("");
+    setLlmResponse(currentKey, "");
+
+    let accumulated = "";
     try {
       const gen = streamAnalysis({
         run_id: runId,
@@ -38,13 +65,21 @@ export default function LLMPanel({ analysisType, runId, vizType }: Props) {
         prompt: promptEditable && prompt !== defaultPrompt ? prompt : undefined,
         viz_type: vizType,
         include_images: true,
+        include_stats: true,
+        compare_run_ids: compareRunIds,
+        run_notes: runNotes,
       });
       for await (const token of gen) {
-        setResponse((prev) => prev + token);
+        // Stop accumulating if user navigated away
+        if (activeAnalysisRef.current !== currentAnalysis) break;
+        accumulated += token;
+        setResponse(accumulated);
       }
     } catch (err) {
-      setResponse(`Error: ${err}`);
+      accumulated = `Error: ${err}`;
+      setResponse(accumulated);
     } finally {
+      setLlmResponse(currentKey, accumulated);
       setLoading(false);
     }
   };

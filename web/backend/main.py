@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routers import compare, health, llm, runs, visualizations
+from .routers import compare, health, llm, notes, runs, visualizations
 
 _settings: Settings | None = None
 
@@ -50,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=get_settings().cors_origins,
+        allow_origin_regex=get_settings().cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -60,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(compare.router)
     app.include_router(llm.router)
+    app.include_router(notes.router)
 
     @app.get("/api/health")
     async def api_health():

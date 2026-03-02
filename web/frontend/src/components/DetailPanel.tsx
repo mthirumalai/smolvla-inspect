@@ -9,6 +9,8 @@ import ZoomableWrapper from "./ZoomableWrapper";
 import VisionVsStateChart from "./VisionVsStateChart";
 import CompareView from "./CompareView";
 import HealthView from "./HealthView";
+import RunInsightsView from "./RunInsightsView";
+import RunNotesEditor from "./RunNotesEditor";
 import LLMPanel from "./LLMPanel";
 
 const VIZ_TYPES: { key: string; label: string }[] = [
@@ -32,6 +34,8 @@ const HEATMAP_VIZ_TYPES = new Set([
   "gradcam_siglip",
   "gradcam_connector",
 ]);
+
+const SKIP_VIZ_FETCH = new Set(["compare", "health", "legacy_images", "run_insights"]);
 
 export default function DetailPanel() {
   const { selectedRunId, selectedRunDetail, selectedVizType, displayMode } = useAppStore();
@@ -57,8 +61,7 @@ export default function DetailPanel() {
       return;
     }
 
-    // Tools (compare, health) and legacy images don't need viz data fetch
-    if (selectedVizType === "compare" || selectedVizType === "health" || selectedVizType === "legacy_images") {
+    if (SKIP_VIZ_FETCH.has(selectedVizType)) {
       setVizData(null);
       return;
     }
@@ -77,7 +80,12 @@ export default function DetailPanel() {
   if (!selectedVizType) {
     return (
       <div className="detail-panel">
-        <RunHeader modelInfo={modelInfo} datasetInfo={datasetInfo} numFrames={numFrames} />
+        <RunHeader
+          runId={selectedRunId}
+          modelInfo={modelInfo}
+          datasetInfo={datasetInfo}
+          numFrames={numFrames}
+        />
         <div className="empty-state">
           <h3>Select a visualization</h3>
           <p>Pick a visualization type from the sidebar to view it here.</p>
@@ -94,11 +102,17 @@ export default function DetailPanel() {
 
   return (
     <div className="detail-panel">
-      <RunHeader modelInfo={modelInfo} datasetInfo={datasetInfo} numFrames={numFrames} />
+      <RunHeader
+        runId={selectedRunId}
+        modelInfo={modelInfo}
+        datasetInfo={datasetInfo}
+        numFrames={numFrames}
+      />
 
-      {/* Compare / Health special views */}
+      {/* Special views */}
       {selectedVizType === "compare" && <CompareView />}
       {selectedVizType === "health" && <HealthView />}
+      {selectedVizType === "run_insights" && <RunInsightsView />}
 
       {/* Legacy images */}
       {selectedVizType === "legacy_images" && (
@@ -109,9 +123,7 @@ export default function DetailPanel() {
       )}
 
       {/* Standard viz types */}
-      {selectedVizType !== "compare" &&
-        selectedVizType !== "health" &&
-        selectedVizType !== "legacy_images" && (
+      {!SKIP_VIZ_FETCH.has(selectedVizType) && (
           <>
             <h3 className="detail-viz-title">{vizLabel}</h3>
 
@@ -159,10 +171,12 @@ export default function DetailPanel() {
 }
 
 function RunHeader({
+  runId,
   modelInfo,
   datasetInfo,
   numFrames,
 }: {
+  runId: string;
   modelInfo: Record<string, unknown>;
   datasetInfo: Record<string, unknown>;
   numFrames: number;
@@ -194,6 +208,10 @@ function RunHeader({
         <span className="meta-value" style={{ maxWidth: 300 }}>
           {(datasetInfo.task_string as string) || "\u2014"}
         </span>
+      </div>
+      <div className="meta-item" style={{ marginLeft: "auto" }}>
+        <span className="meta-label">Note</span>
+        <RunNotesEditor runId={runId} />
       </div>
     </div>
   );

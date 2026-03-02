@@ -15,12 +15,8 @@ class Settings(BaseSettings):
     )
     host: str = "0.0.0.0"
     port: int = 8080
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:3000",
-    ]
+    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origin_regex: str = r"http://localhost:\d+"
 
     # LLM defaults
     llm_provider: str = "anthropic"  # "anthropic" or "openai"

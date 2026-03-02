@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAppStore } from "../stores/appStore";
-import { getVizData, frameUrl, type VizData } from "../services/api";
+import { getVizData, getRunDetail, frameUrl, type VizData, type RunDetail } from "../services/api";
 import DisplayModeToggle from "./DisplayModeToggle";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ImageViz from "./ImageViz";
 import ZoomableWrapper from "./ZoomableWrapper";
 import VisionVsStateChart from "./VisionVsStateChart";
+import ConfigDiffCard from "./ConfigDiffCard";
+import RunNotesEditor from "./RunNotesEditor";
 import LLMPanel from "./LLMPanel";
 
 const COMPARABLE_TYPES = [
@@ -20,12 +22,13 @@ const COMPARABLE_TYPES = [
 ];
 
 export default function CompareView() {
-  const { runs, selectedRunId, displayMode } = useAppStore();
+  const { runs, selectedRunId, displayMode, runNotes } = useAppStore();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedVizTypes, setSelectedVizTypes] = useState<string[]>([
     "self_attention",
   ]);
   const [compareData, setCompareData] = useState<Record<string, Record<string, VizData>>>({});
+  const [runDetails, setRunDetails] = useState<Record<string, RunDetail>>({});
   const [loading, setLoading] = useState(false);
 
   const toggleRun = (id: string) => {
@@ -37,6 +40,17 @@ export default function CompareView() {
           : prev
     );
   };
+
+  // Fetch run details for selected runs (for config diff)
+  useEffect(() => {
+    for (const id of selectedIds) {
+      if (!runDetails[id]) {
+        getRunDetail(id)
+          .then((detail) => setRunDetails((prev) => ({ ...prev, [id]: detail })))
+          .catch(() => {});
+      }
+    }
+  }, [selectedIds, runDetails]);
 
   const handleCompare = async () => {
     if (selectedIds.length < 2) return;
@@ -61,6 +75,27 @@ export default function CompareView() {
     setCompareData(result);
     setLoading(false);
   };
+
+  // Build config diff data
+  const configDiffData = useMemo(() => {
+    if (selectedIds.length < 2 || Object.keys(compareData).length === 0) return [];
+    return selectedIds
+      .filter((id) => runDetails[id])
+      .map((id) => ({
+        id,
+        name: runs.find((r) => r.id === id)?.name || id,
+        detail: runDetails[id],
+      }));
+  }, [selectedIds, runDetails, compareData, runs]);
+
+  // Collect run notes for selected runs
+  const selectedRunNotes = useMemo(() => {
+    const notes: Record<string, string> = {};
+    for (const id of selectedIds) {
+      if (runNotes[id]) notes[id] = runNotes[id];
+    }
+    return notes;
+  }, [selectedIds, runNotes]);
 
   return (
     <div>
@@ -133,6 +168,9 @@ export default function CompareView() {
         </div>
       </div>
 
+      {/* Config diff card */}
+      {configDiffData.length >= 2 && <ConfigDiffCard runDetails={configDiffData} />}
+
       {/* Side by side results */}
       {Object.keys(compareData).length > 0 &&
         selectedVizTypes.map((vt) => (
@@ -144,7 +182,10 @@ export default function CompareView() {
                 const data = compareData[runId]?.[vt];
                 return (
                   <div key={runId} className="compare-run-column">
-                    <h4>{run?.name || runId}</h4>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--border)" }}>
+                      <h4 style={{ margin: 0 }}>{run?.name || runId}</h4>
+                      <RunNotesEditor runId={runId} compact />
+                    </div>
                     {data?.heatmaps ? (
                       <CompareHeatmaps
                         runId={runId}
@@ -171,8 +212,10 @@ export default function CompareView() {
       {Object.keys(compareData).length > 0 && selectedRunId && (
         <div className="card">
           <LLMPanel
-            analysisType="comparison"
+            analysisType="multi_run_comparison"
             runId={selectedRunId}
+            compareRunIds={selectedIds}
+            runNotes={selectedRunNotes}
           />
         </div>
       )}
