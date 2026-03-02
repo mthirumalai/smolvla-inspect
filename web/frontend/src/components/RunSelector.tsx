@@ -14,15 +14,6 @@ interface VizNavGroup {
 
 const VIZ_NAV_GROUPS: VizNavGroup[] = [
   {
-    category: "ATTENTION",
-    items: [
-      { key: "self_attention", label: "Self-Attention" },
-      { key: "cross_attention", label: "Cross-Attention" },
-      { key: "per_head", label: "Per-Head" },
-      { key: "per_step_cross_attention", label: "Per-Step Cross" },
-    ],
-  },
-  {
     category: "GRADIENT",
     items: [
       { key: "saliency", label: "Saliency" },
@@ -30,6 +21,15 @@ const VIZ_NAV_GROUPS: VizNavGroup[] = [
       { key: "gradcam_connector", label: "GradCAM Connector" },
       { key: "gradcam_vlm_layers", label: "VLM Layers" },
       { key: "per_action_dim", label: "Per-Action Dim" },
+    ],
+  },
+  {
+    category: "ATTENTION",
+    items: [
+      { key: "self_attention", label: "Self-Attention" },
+      { key: "cross_attention", label: "Cross-Attention" },
+      { key: "per_head", label: "Per-Head" },
+      { key: "per_step_cross_attention", label: "Per-Step Cross" },
     ],
   },
   {
@@ -96,6 +96,26 @@ export default function RunSelector() {
 
   const handleSelectRun = (id: string) => {
     setSelectedRunId(id);
+
+    // Auto-select the first viz type that has data
+    const run = runs.find((r) => r.id === id);
+    const avail = run?.available_visualizations || {};
+    const isLeg = run?.is_legacy ?? false;
+
+    if (isLeg) {
+      setSelectedVizType("legacy_images");
+      return;
+    }
+
+    // Walk nav groups in display order to find the first available item
+    for (const group of VIZ_NAV_GROUPS) {
+      for (const item of group.items) {
+        if (avail[item.key]) {
+          setSelectedVizType(item.key);
+          return;
+        }
+      }
+    }
     setSelectedVizType(null);
   };
 
