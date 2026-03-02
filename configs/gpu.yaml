@@ -29,7 +29,7 @@ gradcam_vlm_layers: "4,8,12,16"
 per_step_cross_attention: true
 vision_vs_state: true
 per_action_dim: true
-language_diff: auto
+language_diff: "auto"
 
 # Model health analysis
 model_health: false

@@ -945,7 +945,9 @@ Examples:
         # F5: Language-conditional comparison
         if args.language_diff:
             feat_idx += 1
-            alt_task = None if args.language_diff == "auto" else args.language_diff
+            # Treat bool True (from YAML) the same as "auto"
+            ld = args.language_diff
+            alt_task = None if ld is True or ld == "auto" else ld
             print(f"\n  [{feat_idx}/{len(enabled_features)}] Language-conditional comparison...")
             language_diff_results = compute_language_conditional_maps(
                 policy=policy, dataset=dataset,
