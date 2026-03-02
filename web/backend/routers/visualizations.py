@@ -88,6 +88,7 @@ async def get_viz_data(run_id: str, viz_type: str):
         if vlm is None:
             raise HTTPException(404)
         return VizData(viz_type=viz_type, metadata=vlm,
+                       image_urls=_matching_images(run_dir, viz_type),
                        frames=list(vlm.keys()))
 
     if viz_type == "per_action_dim":
@@ -95,6 +96,7 @@ async def get_viz_data(run_id: str, viz_type: str):
         if dims is None:
             raise HTTPException(404)
         return VizData(viz_type=viz_type, metadata=dims,
+                       image_urls=_matching_images(run_dir, viz_type),
                        frames=list(dims.keys()))
 
     if viz_type == "language_diff":
@@ -102,6 +104,7 @@ async def get_viz_data(run_id: str, viz_type: str):
         if diff is None:
             raise HTTPException(404)
         return VizData(viz_type=viz_type, metadata=diff,
+                       image_urls=_matching_images(run_dir, viz_type),
                        frames=list(diff.keys()))
 
     if viz_type == "vision_vs_state":
@@ -112,6 +115,12 @@ async def get_viz_data(run_id: str, viz_type: str):
                        frames=list(range(len(vs))))
 
     raise HTTPException(404, f"Unknown viz type: {viz_type}")
+
+
+def _matching_images(run_dir, viz_type: str) -> list[str]:
+    """Return image URLs from the run that match the given viz type."""
+    images = data_loader.list_images(run_dir)
+    return [img for img in images if _image_matches_viz(img, viz_type)]
 
 
 def _image_matches_viz(image_path: str, viz_type: str) -> bool:

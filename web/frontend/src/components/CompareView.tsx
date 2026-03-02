@@ -13,6 +13,9 @@ const COMPARABLE_TYPES = [
   "cross_attention",
   "saliency",
   "gradcam_siglip",
+  "gradcam_connector",
+  "gradcam_vlm_layers",
+  "language_diff",
   "vision_vs_state",
 ];
 
