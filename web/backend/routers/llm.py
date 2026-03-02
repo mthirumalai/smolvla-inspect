@@ -316,7 +316,7 @@ _VIZ_IMAGE_MAPPING = {
     "per_step_cross_attention": ["per_step_cross_attn"],
     "gradcam_siglip": ["episode_dashboard"],
     "gradcam_connector": ["episode_dashboard"],
-    "saliency": ["episode_dashboard"]
+    "saliency": ["episode_dashboard"],
     "gradcam_vlm_layers": ["vlm_layers"],
     "per_action_dim": ["per_action_dim"],
     "language_diff": ["language_diff"],
