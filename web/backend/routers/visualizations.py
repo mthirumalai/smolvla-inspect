@@ -85,27 +85,31 @@ async def get_viz_data(run_id: str, viz_type: str):
 
     if viz_type == "gradcam_vlm_layers":
         vlm = data_loader.load_vlm_layers(run_dir)
-        if vlm is None:
+        images = _matching_images(run_dir, viz_type)
+        if vlm is None and not images:
             raise HTTPException(404)
-        return VizData(viz_type=viz_type, metadata=vlm,
-                       image_urls=_matching_images(run_dir, viz_type),
-                       frames=list(vlm.keys()))
+        return VizData(viz_type=viz_type, metadata=vlm or {},
+                       image_urls=images,
+                       frames=list(vlm.keys()) if vlm else [])
 
     if viz_type == "per_action_dim":
         dims = data_loader.load_per_action_dim(run_dir)
-        if dims is None:
+        images = _matching_images(run_dir, viz_type)
+        if dims is None and not images:
             raise HTTPException(404)
-        return VizData(viz_type=viz_type, metadata=dims,
-                       image_urls=_matching_images(run_dir, viz_type),
-                       frames=list(dims.keys()))
+        return VizData(viz_type=viz_type, metadata=dims or {},
+                       image_urls=images,
+                       frames=list(dims.keys()) if dims else [])
 
     if viz_type == "language_diff":
         diff = data_loader.load_language_diff(run_dir)
-        if diff is None:
+        images = _matching_images(run_dir, viz_type)
+        if diff is None and not images:
             raise HTTPException(404)
-        return VizData(viz_type=viz_type, metadata=diff,
-                       image_urls=_matching_images(run_dir, viz_type),
-                       frames=list(diff.keys()))
+        return VizData(viz_type=viz_type,
+                       metadata=diff or {},
+                       image_urls=images,
+                       frames=list(diff.keys()) if diff else [])
 
     if viz_type == "vision_vs_state":
         vs = data_loader.load_vision_vs_state(run_dir)

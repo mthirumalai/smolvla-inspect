@@ -171,18 +171,35 @@ def save_gradient_data(run_dir, saliency_maps=None, gradcam_maps=None,
 
     if language_diff_results:
         arrays = {}
+        # Map actual result keys to export keys
+        key_map = {
+            "original_cam": "original",
+            "alt_cam": "alternative",
+            "diff_cam": "diff",
+        }
+        metadata = {}
         for fi, result in enumerate(language_diff_results):
             if result is None:
                 continue
-            for key in ("original", "alternative", "diff"):
-                if key in result:
-                    arr = result[key]
+            for src_key, dst_key in key_map.items():
+                if src_key in result:
+                    arr = result[src_key]
                     if hasattr(arr, "numpy"):
                         arr = arr.numpy()
-                    arrays[f"frame{fi:03d}_{key}"] = np.asarray(arr, dtype=np.float32)
+                    arrays[f"frame{fi:03d}_{dst_key}"] = np.asarray(arr, dtype=np.float32)
+            # Save task strings as metadata
+            if "original_task" in result or "alt_task" in result:
+                metadata[f"frame{fi:03d}"] = {
+                    "original_task": result.get("original_task", ""),
+                    "alt_task": result.get("alt_task", ""),
+                    "tier": result.get("tier", 0),
+                }
         if arrays:
             np.savez_compressed(os.path.join(grad_dir, "language_diff.npz"),
                                 **arrays)
+        if metadata:
+            with open(os.path.join(grad_dir, "language_diff_meta.json"), "w") as f:
+                json.dump(metadata, f, indent=2)
 
     if vision_vs_state_results:
         vs_data = []
