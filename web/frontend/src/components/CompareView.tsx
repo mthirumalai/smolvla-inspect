@@ -3,6 +3,7 @@ import { useAppStore } from "../stores/appStore";
 import { getVizData, type VizData } from "../services/api";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ImageViz from "./ImageViz";
+import VisionVsStateChart from "./VisionVsStateChart";
 import LLMPanel from "./LLMPanel";
 
 const COMPARABLE_TYPES = [
@@ -36,15 +37,21 @@ export default function CompareView() {
     if (selectedIds.length < 2) return;
     setLoading(true);
     const result: Record<string, Record<string, VizData>> = {};
-    for (const runId of selectedIds) {
-      result[runId] = {};
-      for (const vt of selectedVizTypes) {
+    // Fetch ALL comparable types in parallel so toggling checkboxes is instant
+    const jobs = selectedIds.flatMap((runId) =>
+      COMPARABLE_TYPES.map(async (vt) => {
         try {
-          result[runId][vt] = await getVizData(runId, vt);
+          const data = await getVizData(runId, vt);
+          return { runId, vt, data };
         } catch {
-          // skip
+          return { runId, vt, data: null as VizData | null };
         }
-      }
+      })
+    );
+    const settled = await Promise.all(jobs);
+    for (const { runId, vt, data } of settled) {
+      if (!result[runId]) result[runId] = {};
+      if (data) result[runId][vt] = data;
     }
     setCompareData(result);
     setLoading(false);
@@ -140,6 +147,8 @@ export default function CompareView() {
                           />
                         ))}
                       </div>
+                    ) : data?.chart_data ? (
+                      <VisionVsStateChart data={data.chart_data} />
                     ) : data?.image_urls ? (
                       <ImageViz runId={runId} imagePaths={data.image_urls} />
                     ) : (

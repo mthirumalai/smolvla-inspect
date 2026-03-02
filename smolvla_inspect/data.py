@@ -196,15 +196,26 @@ def _resolve_task_string(sample, dataset=None, task_override=None):
     if task is not None:
         if isinstance(task, list):
             task = task[0]
-        return task
+        # LeRobot __getitem__ uses .name which returns the row index (int)
+        # instead of the task string — resolve via metadata if we got a non-str
+        if isinstance(task, str):
+            return task
 
-    # Try dataset metadata
+    # Try dataset metadata — resolve task_index to actual text
     if dataset is not None:
         try:
             tasks_df = dataset.meta.tasks
+            task_idx = sample.get("task_index")
+            if task_idx is not None:
+                import torch
+                if isinstance(task_idx, torch.Tensor):
+                    task_idx = task_idx.item()
+                row = tasks_df.loc[tasks_df["task_index"] == task_idx]
+                if len(row) > 0:
+                    return str(row.iloc[0]["task"])
             if len(tasks_df) > 0:
-                return tasks_df.iloc[0].name
-        except (AttributeError, IndexError):
+                return str(tasks_df.iloc[0]["task"])
+        except (AttributeError, IndexError, KeyError):
             pass
 
     return "manipulate object"
@@ -228,7 +239,7 @@ def get_alternative_task_string(original_task, dataset=None):
             tasks_df = dataset.meta.tasks
             if len(tasks_df) > 1:
                 for idx in range(len(tasks_df)):
-                    candidate = tasks_df.iloc[idx].name
+                    candidate = str(tasks_df.iloc[idx]["task"])
                     if candidate != original_task:
                         return candidate, 1
         except (AttributeError, IndexError):

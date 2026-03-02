@@ -132,11 +132,14 @@ def save_gradient_data(run_dir, saliency_maps=None, gradcam_maps=None,
 
     if vlm_layer_results:
         arrays = {}
-        for fi, frame_result in enumerate(vlm_layer_results):
-            if frame_result is None:
-                continue
-            for layer_idx, layer_data in frame_result.items():
+        # vlm_layer_results is {layer_idx: [list of per-frame dicts]}
+        for layer_idx, frame_list in vlm_layer_results.items():
+            for fi, layer_data in enumerate(frame_list):
+                if layer_data is None:
+                    continue
                 for modality, data in layer_data.items():
+                    if data is None:
+                        continue
                     arr = data.numpy() if hasattr(data, "numpy") else np.asarray(data)
                     arrays[f"frame{fi:03d}_layer{layer_idx:02d}_{modality}"] = arr.astype(np.float32)
         if arrays:

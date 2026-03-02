@@ -1,10 +1,10 @@
 # GPU-optimized defaults (RTX 3080 / similar).  CLI flags override these.
 
-model: lerobot/smolvla_base
-dataset: lerobot/svla_so101_pickplace
+model: mthirumalai/so101-picknplace3.smolvla-policy.2
+dataset: mthirumalai/so101.tp1.e161.c2
 episode: 0
 num_frames: 8
-device: auto
+device: cuda
 task: null
 output_dir: ./outputs
 save_individual: true
@@ -13,7 +13,7 @@ save_individual: true
 method: rollout
 cross_attention: true
 show_heads: true
-raw_attention: false
+raw_attention: true
 attn_threshold: 0.5
 
 # Gradient-based attribution
