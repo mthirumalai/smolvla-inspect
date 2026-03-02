@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useAppStore } from "../stores/appStore";
-import { getVizData, type VizData } from "../services/api";
+import { getVizData, frameUrl, type VizData } from "../services/api";
+import DisplayModeToggle from "./DisplayModeToggle";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ImageViz from "./ImageViz";
+import ZoomableWrapper from "./ZoomableWrapper";
 import VisionVsStateChart from "./VisionVsStateChart";
 import LLMPanel from "./LLMPanel";
 
@@ -15,7 +17,7 @@ const COMPARABLE_TYPES = [
 ];
 
 export default function CompareView() {
-  const { runs, selectedRunId } = useAppStore();
+  const { runs, selectedRunId, displayMode } = useAppStore();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedVizTypes, setSelectedVizTypes] = useState<string[]>([
     "self_attention",
@@ -116,13 +118,16 @@ export default function CompareView() {
           ))}
         </div>
 
-        <button
-          className="btn-primary"
-          onClick={handleCompare}
-          disabled={selectedIds.length < 2 || loading}
-        >
-          {loading ? "Loading..." : "Compare"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button
+            className="btn-primary"
+            onClick={handleCompare}
+            disabled={selectedIds.length < 2 || loading}
+          >
+            {loading ? "Loading..." : "Compare"}
+          </button>
+          {Object.keys(compareData).length > 0 && <DisplayModeToggle />}
+        </div>
       </div>
 
       {/* Side by side results */}
@@ -138,15 +143,12 @@ export default function CompareView() {
                   <div key={runId} className="compare-run-column">
                     <h4>{run?.name || runId}</h4>
                     {data?.heatmaps ? (
-                      <div className="heatmap-grid">
-                        {data.heatmaps.slice(0, 4).map((hm, i) => (
-                          <HeatmapCanvas
-                            key={i}
-                            heatmap={hm}
-                            label={`Frame ${i}`}
-                          />
-                        ))}
-                      </div>
+                      <CompareHeatmaps
+                        runId={runId}
+                        vizType={vt}
+                        heatmaps={data.heatmaps}
+                        displayMode={displayMode}
+                      />
                     ) : data?.chart_data ? (
                       <VisionVsStateChart data={data.chart_data} />
                     ) : data?.image_urls ? (
@@ -171,6 +173,61 @@ export default function CompareView() {
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function CompareHeatmaps({
+  runId,
+  vizType,
+  heatmaps,
+  displayMode,
+}: {
+  runId: string;
+  vizType: string;
+  heatmaps: number[][][];
+  displayMode: "map" | "overlay" | "original";
+}) {
+  const colormap =
+    vizType === "cross_attention"
+      ? "greens"
+      : vizType.includes("gradcam")
+        ? "magma"
+        : vizType === "saliency"
+          ? "inferno"
+          : "jet";
+
+  if (displayMode === "original") {
+    return (
+      <div className="heatmap-grid">
+        {heatmaps.slice(0, 4).map((_, i) => (
+          <div key={i} className="heatmap-cell">
+            <ZoomableWrapper>
+              <img
+                src={frameUrl(runId, i)}
+                alt={`Frame ${i}`}
+                draggable={false}
+                style={{ width: "100%", height: "auto", display: "block", borderRadius: 4 }}
+              />
+            </ZoomableWrapper>
+            <span className="frame-label">Frame {i}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="heatmap-grid">
+      {heatmaps.slice(0, 4).map((hm, i) => (
+        <HeatmapCanvas
+          key={`${i}-${displayMode}`}
+          heatmap={hm}
+          frameImageUrl={displayMode === "overlay" ? frameUrl(runId, i) : undefined}
+          colormap={colormap as "jet"}
+          label={`Frame ${i}`}
+        />
+      ))}
     </div>
   );
 }
