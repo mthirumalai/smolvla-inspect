@@ -82,3 +82,26 @@ class LLMAnalyzeRequest(BaseModel):
     include_images: bool = True
     include_stats: bool = True
     run_notes: dict[str, str] | None = None
+
+
+# -- LLM analysis cache (persisted to llm_analyses.json per run) --
+
+class SaveLLMAnalysisRequest(BaseModel):
+    analysis_type: str
+    response: str
+    model: str | None = None
+    provider: str | None = None
+    custom_prompt: bool = False
+
+
+class LLMAnalysisEntry(BaseModel):
+    response: str
+    model: str = ""
+    provider: str = ""
+    custom_prompt: bool = False
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class LLMAnalysesResponse(BaseModel):
+    analyses: dict[str, LLMAnalysisEntry] = {}

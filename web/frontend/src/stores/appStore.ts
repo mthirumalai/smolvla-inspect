@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { RunSummary, RunDetail, VizStats } from "../services/api";
+import type { RunSummary, RunDetail, VizStats, LLMAnalysisEntry } from "../services/api";
 
 interface AppState {
   // Runs
@@ -47,6 +47,14 @@ interface AppState {
   // LLM response cache (keyed by "runId:analysisType")
   llmResponses: Record<string, string>;
   setLlmResponse: (key: string, response: string) => void;
+
+  // LLM analysis cache hydration tracking
+  llmCacheLoaded: Record<string, boolean>;
+  setLlmCacheLoaded: (runId: string) => void;
+  hydrateLlmResponses: (runId: string, analyses: Record<string, LLMAnalysisEntry>) => void;
+
+  // LLM analysis metadata (keyed by "runId:analysisType")
+  llmAnalysesMeta: Record<string, LLMAnalysisEntry>;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -96,4 +104,26 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       llmResponses: { ...state.llmResponses, [key]: response },
     })),
+
+  llmCacheLoaded: {},
+  setLlmCacheLoaded: (runId) =>
+    set((state) => ({
+      llmCacheLoaded: { ...state.llmCacheLoaded, [runId]: true },
+    })),
+  hydrateLlmResponses: (runId, analyses) =>
+    set((state) => {
+      const newResponses = { ...state.llmResponses };
+      const newMeta = { ...state.llmAnalysesMeta };
+      for (const [analysisType, entry] of Object.entries(analyses)) {
+        const key = `${runId}:${analysisType}`;
+        // Don't overwrite in-memory values (e.g. from an active stream)
+        if (!newResponses[key]) {
+          newResponses[key] = entry.response;
+        }
+        newMeta[key] = entry;
+      }
+      return { llmResponses: newResponses, llmAnalysesMeta: newMeta };
+    }),
+
+  llmAnalysesMeta: {},
 }));

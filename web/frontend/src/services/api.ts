@@ -175,6 +175,39 @@ export async function* streamAnalysis(req: {
   }
 }
 
+// -- LLM Analysis Cache --
+export interface LLMAnalysisEntry {
+  response: string;
+  model: string;
+  provider: string;
+  custom_prompt: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLMAnalysesResponse {
+  analyses: Record<string, LLMAnalysisEntry>;
+}
+
+export const getLLMAnalyses = (runId: string) =>
+  fetchJson<LLMAnalysesResponse>(`/api/runs/${runId}/llm-analyses`);
+
+export const saveLLMAnalysis = (
+  runId: string,
+  analysisType: string,
+  response: string,
+  customPrompt: boolean
+) =>
+  fetchJson<LLMAnalysisEntry>(`/api/runs/${runId}/llm-analyses`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      analysis_type: analysisType,
+      response,
+      custom_prompt: customPrompt,
+    }),
+  });
+
 export const imageUrl = (runId: string, path: string) =>
   `${API_BASE}/api/runs/${runId}/image/${path}`;
 

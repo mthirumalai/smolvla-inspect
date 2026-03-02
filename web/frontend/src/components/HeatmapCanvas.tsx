@@ -40,6 +40,9 @@ export default function HeatmapCanvas({
       img.onload = () => {
         renderHeatmap(canvas, heatmap, img, colormap, alpha);
       };
+      img.onerror = () => {
+        renderRawHeatmap(canvas, heatmap, colormap);
+      };
       img.src = frameImageUrl;
     } else {
       renderRawHeatmap(canvas, heatmap, colormap);

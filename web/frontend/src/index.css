@@ -59,21 +59,24 @@ button {
   color: var(--on-primary);
   border: none;
 }
-.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-primary:disabled { background: #c4c4e8; color: #fff; cursor: not-allowed; }
 
 .btn-secondary {
   background: var(--secondary-bg);
   border: 1px solid var(--secondary-border);
   color: var(--secondary-text);
 }
-.btn-secondary:hover { background: #dddcf5; }
+.btn-secondary:hover:not(:disabled) { background: #dddcf5; }
+.btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .btn-tertiary {
   background: transparent;
   color: var(--primary);
   border: none;
 }
-.btn-tertiary:hover { background: #f0f0ff; }
+.btn-tertiary:hover:not(:disabled) { background: #f0f0ff; }
+.btn-tertiary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .display-mode-toggle {
   display: flex;

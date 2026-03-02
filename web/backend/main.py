@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routers import compare, health, llm, notes, runs, visualizations
+from .routers import compare, health, llm, llm_cache, notes, runs, visualizations
 
 _settings: Settings | None = None
 
@@ -62,6 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(compare.router)
     app.include_router(llm.router)
     app.include_router(notes.router)
+    app.include_router(llm_cache.router)
 
     @app.get("/api/health")
     async def api_health():

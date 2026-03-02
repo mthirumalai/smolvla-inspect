@@ -172,7 +172,7 @@ interface Badge {
 }
 
 function extractBadges(
-  vizType: string,
+  _vizType: string,
   aggregate: Record<string, unknown>
 ): Badge[] {
   const badges: Badge[] = [];

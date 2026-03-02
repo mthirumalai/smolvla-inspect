@@ -20,7 +20,6 @@ const VIZ_NAV_GROUPS: VizNavGroup[] = [
       { key: "gradcam_siglip", label: "GradCAM SigLIP" },
       { key: "gradcam_connector", label: "GradCAM Connector" },
       { key: "gradcam_vlm_layers", label: "VLM Layers" },
-      { key: "per_action_dim", label: "Per-Action Dim" },
     ],
   },
   {

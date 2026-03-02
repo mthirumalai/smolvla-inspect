@@ -34,9 +34,11 @@ The attached images show self-attention heatmaps from the SigLIP vision encoder 
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Spatial focus
 - What specific regions does the model attend to in each frame? Name them concretely (e.g., "left edge of the blue cube", "gripper fingers", "table surface near the target").
@@ -58,7 +60,7 @@ Please provide a structured analysis in two parts:
 - Signs of "texture bias" — attending to high-frequency patterns rather than semantically meaningful regions?
 - Attention collapse — all mass on a single patch or uniform distribution across all patches?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Confidence assessment
 - Rate your confidence in this model's visual grounding: strong / moderate / weak. Justify with specific evidence from the heatmaps and stats.
@@ -93,9 +95,11 @@ Each cell in the attached grid shows one of the 12 SigLIP attention heads' heatm
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Head specialization inventory
 For each of the 12 heads, provide a brief characterization:
@@ -116,7 +120,7 @@ For each of the 12 heads, provide a brief characterization:
 - In well-trained vision transformers, we expect: some heads for local features, some for global context, some for position encoding. Does this model follow that pattern?
 - Are there any unusual or surprising specializations?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Head health assessment
 - Rate the overall head utilization: excellent (>10 useful heads), good (7-9), concerning (4-6), poor (<4).
@@ -155,9 +159,11 @@ These heatmaps (green colormap) show cross-attention weights from the action exp
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Action-vision grounding
 - Where does the action expert look when generating actions? Map the focus regions to physical scene elements (gripper, object, target, obstacles).
@@ -178,7 +184,7 @@ Please provide a structured analysis in two parts:
 - Coverage: what fraction of the visual field is the expert using? For manipulation, moderate coverage (20-40%) is typical; very low suggests tunnel vision, very high suggests the expert hasn't learned to be selective.
 - Frame-to-frame stability vs. adaptiveness: the expert should be both stable within task phases and adaptive at phase transitions.
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Policy quality assessment
 - Based on the cross-attention patterns, rate the action expert's visual grounding: strong / moderate / weak.
@@ -217,9 +223,11 @@ GradCAM (Gradient-weighted Class Activation Mapping) shows which spatial regions
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Causal attribution mapping
 - Which regions have the strongest causal influence on actions? Name them concretely relative to the scene (object, gripper, surface, landmarks).
@@ -243,7 +251,7 @@ Please provide a structured analysis in two parts:
 - Use the entropy and Gini coefficient: high Gini (concentrated) on task-relevant regions is ideal. Low Gini (spread out) with background attribution is concerning.
 - Could the model be relying on visual shortcuts (e.g., "the object is always in the same position" rather than understanding the task)?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Causal grounding assessment
 - Rate the model's causal visual grounding: strong / moderate / weak. This is the most informative assessment of whether the model has learned the right visual features.
@@ -285,9 +293,11 @@ State inputs = robot proprioception (joint positions, velocities, gripper state)
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Modality balance overview
 - What is the mean vision share across the episode? A ratio near 50:50 means balanced; skewed ratios indicate modality dominance.
@@ -312,7 +322,7 @@ Please provide a structured analysis in two parts:
 - Beyond the ratio, what are the absolute gradient norms? Very small absolute norms for both modalities might indicate the model's actions are insensitive to its inputs (potential training issue).
 - Are there frames where both modalities have high gradients (model is integrating both) vs. frames where one is high and the other near-zero (switching between modalities)?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Balance assessment
 - Rate the modality balance as: appropriate / vision-heavy / state-heavy / disconnected. Justify.
@@ -365,9 +375,11 @@ This is a critical test of language grounding: a model that truly understands la
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Language grounding assessment
 - How large are the differences between the two instruction conditions? Quantify: are we seeing large spatial shifts, or just subtle intensity changes in the same region?
@@ -390,7 +402,7 @@ Classify the model into one of these categories:
 - Is the language grounding consistent across all frames, or does it degrade in certain phases?
 - Are there frames where the model appears to "lose" the language instruction and revert to a default strategy?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### If strong grounding:
 - What are the limits of this grounding? Recommend testing with:
@@ -435,9 +447,11 @@ Each sub-image shows GradCAM attribution for a single action dimension. In robot
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Per-dimension attribution inventory
 For each action dimension, describe:
@@ -463,7 +477,7 @@ For each action dimension, describe:
 - Which dimensions have the strongest visual dependence? These are the dims the model relies on vision for most heavily.
 - Which have the weakest? Are these dimensions that could reasonably be computed from proprioception alone, or is the model failing to use useful visual information?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Motor decomposition assessment
 - Rate the model's visual-motor decomposition: well-decomposed / partially-decomposed / monolithic.
@@ -507,9 +521,11 @@ The VLM processes a prefix of [vision tokens (64 after connector) | language tok
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Layer progression
 - Describe how the attribution pattern evolves from layer 0 (earliest) to layer 15 (latest):
@@ -532,7 +548,7 @@ Please provide a structured analysis in two parts:
 - Does the connector compression (1024 → 64 tokens) cause visible spatial coarsening in early layers?
 - How do the final-layer attributions compare to the SigLIP GradCAM? Differences indicate how the VLM transforms the visual representation.
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Representation quality assessment
 - Rate the VLM's visual representation pipeline: strong / moderate / weak, based on whether it builds a clear, task-relevant representation across layers.
@@ -571,9 +587,11 @@ This is analogous to how diffusion models refine images — early steps establis
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Denoising progression
 - How does the cross-attention pattern change from step 0 (noisiest) to the final step (cleanest)?
@@ -598,7 +616,7 @@ Please provide a structured analysis in two parts:
 - Are there steps where the model appears to "hesitate" (attention oscillates between two regions)?
 - Is the final step's attention pattern always consistent, or is there step-to-step noise even at the end?
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Denoising quality assessment
 - Rate the denoising visual grounding: strong (clear progression from diffuse to focused), moderate (some progression but noisy), weak (no clear progression or attention doesn't converge).
@@ -645,9 +663,11 @@ Unlike GradCAM (which highlights *regions*), saliency can reveal pixel-level sen
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Spatial saliency patterns
 - Which regions show the highest saliency? Are they concentrated on task-relevant objects or scattered across the scene?
@@ -676,7 +696,7 @@ Please provide a structured analysis in two parts:
 - Is there high saliency on image compression artifacts, JPEG boundaries, or other non-semantic features?
 - Does SmoothGrad (if used) significantly clean up the pattern? If so, the raw saliency has high noise.
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Saliency quality assessment
 - Rate the saliency quality: clean and informative / somewhat noisy but interpretable / too noisy to be useful.
@@ -719,9 +739,11 @@ GradCAM at the connector shows which spatial regions survive this compression an
 
 ---
 
+**Response constraint: ≤350 words total. Be terse — 1-2 sentences per bullet. Skip sub-questions you lack data for.**
+
 Please provide a structured analysis in two parts:
 
-## Part 1: Descriptive Analysis
+## Observations
 
 ### Spatial survival analysis
 - Which regions have strong connector GradCAM? These are the spatial regions whose information successfully passes through the 16x compression bottleneck.
@@ -744,7 +766,7 @@ Please provide a structured analysis in two parts:
 - Does the connector consistently preserve the same regions across frames, or does what survives the bottleneck change?
 - Are there frames where task-critical information appears to be lost? These would be the most dangerous frames for action quality.
 
-## Part 2: Prescriptive Recommendations
+## Recommendations
 
 ### Bottleneck severity assessment
 - Rate the connector bottleneck: minimal impact (task-relevant info preserved) / moderate impact (some loss) / severe impact (critical information lost).
@@ -802,6 +824,8 @@ Please provide a structured analysis in two parts:
 
 ---
 
+**Response constraint: ≤400 words total. Be terse — flag issues only where metrics are clearly out of range.**
+
 Please provide a structured health assessment:
 
 ## Component-by-Component Diagnosis
@@ -829,7 +853,7 @@ Please provide a structured health assessment:
 - Are there signs of training imbalance (one component overtrained while another is undertrained)?
 - Does the spectral profile suggest the components were trained jointly or separately?
 
-## Prescriptive Recommendations
+## Recommendations
 
 ### Immediate actions (if critical issues found)
 - Specific layers or heads that need intervention (re-initialization, pruning, focused fine-tuning).
@@ -854,6 +878,8 @@ Runs being compared:
 {run_descriptions}
 
 {computed_stats}
+
+**Response constraint: ≤250 words total. Reference specific numbers. Be direct.**
 
 Please analyze:
 1. Key differences between runs (attention patterns, GradCAM, health metrics). Reference specific numerical deltas.
@@ -880,9 +906,11 @@ The attached images show representative visualizations from this run.
 
 ---
 
+**Response constraint: ≤500 words total. Synthesize across methods — don't repeat findings per method. Be specific, not exhaustive.**
+
 Please provide a comprehensive three-part analysis:
 
-## Part 1: Descriptive Summary
+## Observations
 
 ### Visual grounding quality
 - How well does the model attend to task-relevant regions? Synthesize evidence from attention heatmaps, GradCAM, and saliency.
@@ -908,14 +936,14 @@ Please provide a comprehensive three-part analysis:
 - Do the per-head patterns suggest good capacity utilization?
 - Are there concerning spectral properties in any layers?
 
-## Part 2: Key Findings and Red Flags
+## Key Findings
 
 Summarize the 3-5 most important findings from this inspection run. For each:
 - What was observed (reference specific metrics and visualizations).
 - Why it matters for model quality and deployment readiness.
 - Severity: critical / important / informational.
 
-## Part 3: Prescriptive Recommendations
+## Recommendations
 
 ### Training improvements
 - What specific training changes would most improve this model? Rank by expected impact.
@@ -951,18 +979,20 @@ Be specific and reference numerical statistics throughout the analysis.""",
 **Researcher notes:**
 {run_notes}
 
+**Response constraint: ≤300 words total. Focus on concrete deltas and the one most actionable recommendation.**
+
 Please provide a three-part analysis:
 
-## Part 1: Descriptive Comparison
+## Comparison
 - What changed between runs? Reference specific numerical deltas for each visualization type.
 - Which metrics improved and which degraded?
 
-## Part 2: Trajectory Analysis
+## Trajectory Analysis
 - Is the model improving or degrading overall? What's the trajectory?
 - Which configuration changes (if any) likely caused which behavioral changes?
 - Are there trade-offs (e.g., more focused attention but less temporal stability)?
 
-## Part 3: Prescriptive Next Steps
+## Next steps
 - Based on the trajectory, what should the researcher try next?
 - Which changes had the most positive/negative impact?
 - Specific hyperparameter or architecture recommendations.
