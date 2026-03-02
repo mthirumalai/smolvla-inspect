@@ -12,6 +12,7 @@ export default function LLMConfigModal({ onClose }: Props) {
     provider: "anthropic",
     model: "claude-sonnet-4-20250514",
     api_key: "",
+    base_url: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -22,6 +23,7 @@ export default function LLMConfigModal({ onClose }: Props) {
           provider: c.provider,
           model: c.model,
           api_key: c.api_key === "***" ? "" : c.api_key,
+          base_url: c.base_url || "",
         })
       )
       .catch(() => {});
@@ -73,6 +75,23 @@ export default function LLMConfigModal({ onClose }: Props) {
             onChange={(e) => setConfig({ ...config, model: e.target.value })}
           />
         </div>
+
+        {config.provider === "openai" && (
+          <div className="form-group">
+            <label>Base URL</label>
+            <input
+              type="text"
+              value={config.base_url}
+              onChange={(e) =>
+                setConfig({ ...config, base_url: e.target.value })
+              }
+              placeholder="https://api.openai.com/v1 (leave empty for default)"
+            />
+            <p style={{ fontSize: 11, marginTop: 4 }}>
+              For OpenAI-compatible servers (vLLM, Ollama, LM Studio, etc.)
+            </p>
+          </div>
+        )}
 
         <div className="form-group">
           <label>API Key</label>

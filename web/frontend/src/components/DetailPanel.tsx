@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../stores/appStore";
-import { getVizData, type VizData } from "../services/api";
+import { getVizData, frameUrl, type VizData } from "../services/api";
 import FrameSelector from "./FrameSelector";
+import DisplayModeToggle from "./DisplayModeToggle";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ImageViz from "./ImageViz";
+import ZoomableWrapper from "./ZoomableWrapper";
 import VisionVsStateChart from "./VisionVsStateChart";
 import CompareView from "./CompareView";
 import HealthView from "./HealthView";
@@ -32,7 +34,7 @@ const HEATMAP_VIZ_TYPES = new Set([
 ]);
 
 export default function DetailPanel() {
-  const { selectedRunId, selectedRunDetail, selectedVizType } = useAppStore();
+  const { selectedRunId, selectedRunDetail, selectedVizType, displayMode } = useAppStore();
   const [vizData, setVizData] = useState<VizData | null>(null);
   const [selectedFrames, setSelectedFrames] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,12 +116,13 @@ export default function DetailPanel() {
             <h3 className="detail-viz-title">{vizLabel}</h3>
 
             {showFrameSelector && (
-              <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
                 <FrameSelector
                   totalFrames={numFrames}
                   selectedFrames={selectedFrames}
                   onChange={setSelectedFrames}
                 />
+                <DisplayModeToggle />
               </div>
             )}
 
@@ -132,6 +135,7 @@ export default function DetailPanel() {
                 selectedFrames={selectedFrames}
                 runId={selectedRunId}
                 imagePaths={imagePaths}
+                displayMode={displayMode}
               />
             )}
 
@@ -201,12 +205,14 @@ function VizContent({
   selectedFrames,
   runId,
   imagePaths,
+  displayMode,
 }: {
   vizType: string;
   data: VizData;
   selectedFrames: number[];
   runId: string;
   imagePaths: string[];
+  displayMode: "map" | "overlay" | "original";
 }) {
   if (data.image_urls && data.image_urls.length > 0) {
     return <ImageViz runId={runId} imagePaths={data.image_urls} />;
@@ -222,13 +228,36 @@ function VizContent({
             ? "inferno"
             : "jet";
 
+    if (displayMode === "original") {
+      return (
+        <div className="heatmap-grid">
+          {data.heatmaps.map((_, i) =>
+            selectedFrames.includes(i) ? (
+              <div key={i} className="heatmap-cell">
+                <ZoomableWrapper>
+                  <img
+                    src={frameUrl(runId, i)}
+                    alt={`Frame ${i}`}
+                    draggable={false}
+                    style={{ width: "100%", height: "auto", display: "block", borderRadius: 4 }}
+                  />
+                </ZoomableWrapper>
+                <span className="frame-label">Frame {i}</span>
+              </div>
+            ) : null
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="heatmap-grid">
         {data.heatmaps.map((hm, i) =>
           selectedFrames.includes(i) ? (
             <HeatmapCanvas
-              key={i}
+              key={`${i}-${displayMode}`}
               heatmap={hm}
+              frameImageUrl={displayMode === "overlay" ? frameUrl(runId, i) : undefined}
               colormap={colormap as "jet"}
               label={`Frame ${i}`}
             />

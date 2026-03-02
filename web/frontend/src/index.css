@@ -75,6 +75,18 @@ button {
 }
 .btn-tertiary:hover { background: #f0f0ff; }
 
+.display-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.display-mode-toggle .toggle-label {
+  font-size: 12px;
+  color: var(--text-body);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
 code {
   font-family: "SF Mono", "Fira Code", monospace;
   font-size: 12px;

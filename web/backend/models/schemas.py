@@ -63,6 +63,7 @@ class LLMConfig(BaseModel):
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-20250514"
     api_key: str = ""
+    base_url: str = ""
 
 
 class LLMAnalyzeRequest(BaseModel):

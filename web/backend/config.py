@@ -21,8 +21,14 @@ class Settings(BaseSettings):
     llm_provider: str = "anthropic"  # "anthropic" or "openai"
     llm_model: str = "claude-sonnet-4-20250514"
     llm_api_key: str = ""
+    llm_base_url: str = ""  # custom base URL for OpenAI-compatible servers
 
     # Static files (built frontend)
     static_dir: Path | None = None
 
-    model_config = {"env_prefix": "SMOLVLA_"}
+    model_config = {
+        "env_prefix": "SMOLVLA_",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }

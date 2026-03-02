@@ -62,7 +62,10 @@ async def _stream_openai(prompt: str, images: list[dict],
         yield "[ERROR] No OpenAI API key configured."
         return
 
-    client = openai.AsyncOpenAI(api_key=api_key)
+    kwargs: dict = {"api_key": api_key}
+    if settings.llm_base_url:
+        kwargs["base_url"] = settings.llm_base_url
+    client = openai.AsyncOpenAI(**kwargs)
 
     content: list[dict] = []
     for img in images:

@@ -26,6 +26,7 @@ async def get_llm_config():
         provider=s.llm_provider,
         model=s.llm_model,
         api_key="***" if s.llm_api_key else "",
+        base_url=s.llm_base_url,
     )
 
 
@@ -36,6 +37,7 @@ async def set_llm_config(config: LLMConfig):
     s.llm_model = config.model
     if config.api_key and config.api_key != "***":
         s.llm_api_key = config.api_key
+    s.llm_base_url = config.base_url
     return {"status": "ok"}
 
 

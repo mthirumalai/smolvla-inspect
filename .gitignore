@@ -5,3 +5,4 @@ outputs/
 *.egg-info/
 .mplconfig/
 test_results/
+.env

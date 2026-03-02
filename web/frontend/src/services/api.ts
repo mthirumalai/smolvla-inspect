@@ -83,6 +83,7 @@ export interface LLMConfig {
   provider: string;
   model: string;
   api_key: string;
+  base_url: string;
 }
 
 export const getLLMConfig = () => fetchJson<LLMConfig>("/api/llm/config");
@@ -139,3 +140,6 @@ export async function* streamAnalysis(req: {
 
 export const imageUrl = (runId: string, path: string) =>
   `${API_BASE}/api/runs/${runId}/image/${path}`;
+
+export const frameUrl = (runId: string, frameIdx: number) =>
+  `${API_BASE}/api/runs/${runId}/frame/${frameIdx}`;

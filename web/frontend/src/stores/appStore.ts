@@ -28,6 +28,10 @@ interface AppState {
   baseDir: string;
   setBaseDir: (dir: string) => void;
 
+  // Display mode for canvas-based heatmaps
+  displayMode: "map" | "overlay" | "original";
+  setDisplayMode: (mode: "map" | "overlay" | "original") => void;
+
   // LLM config
   llmConfigured: boolean;
   setLlmConfigured: (v: boolean) => void;
@@ -53,6 +57,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   baseDir: "./outputs",
   setBaseDir: (dir) => set({ baseDir: dir }),
+
+  displayMode: "overlay",
+  setDisplayMode: (mode) => set({ displayMode: mode }),
 
   llmConfigured: false,
   setLlmConfigured: (v) => set({ llmConfigured: v }),

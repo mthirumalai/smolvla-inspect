@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from PIL import Image
 
 from ..config import Settings
 from ..models.schemas import RunDetail, RunSummary
@@ -74,6 +77,32 @@ async def get_frames(run_id: str):
     # Also include rendered frame images if available
     images = data_loader.list_images(run_dir)
     return {"frames": result, "images": images}
+
+
+@router.get("/{run_id}/frame/{frame_idx}")
+async def serve_frame_png(run_id: str, frame_idx: int):
+    """Serve a stored frame .npz as a PNG image."""
+    settings = _settings()
+    try:
+        run_dir, _ = run_scanner.load_manifest(settings.base_dir, run_id)
+    except FileNotFoundError:
+        raise HTTPException(404)
+
+    npz_path = run_dir / "data" / "frames" / f"frame_{frame_idx:03d}.npz"
+    if not npz_path.exists():
+        raise HTTPException(404, f"Frame {frame_idx} not found")
+
+    data = np.load(npz_path, allow_pickle=False)
+    arr = data[list(data.keys())[0]]  # uint8 RGB (H, W, 3)
+    img = Image.fromarray(arr)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Cache-Control": "max-age=3600"},
+    )
 
 
 @router.get("/{run_id}/image/{path:path}")
