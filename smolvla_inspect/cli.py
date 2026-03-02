@@ -520,6 +520,9 @@ Examples:
                         choices=["auto", "cpu", "cuda", "mps"])
     parser.add_argument("--save-individual", action="store_true",
                         default=defaults.get("save_individual", False))
+    parser.add_argument("--skip-attention", action="store_true",
+                        default=False,
+                        help="Skip hook-based attention extraction (Step 3); only run gradient features")
     parser.add_argument("--export-data", action="store_true",
                         default=defaults.get("export_data", True),
                         help="Save structured .npz + JSON alongside PNGs (default: true)")
@@ -723,48 +726,58 @@ Examples:
         return
 
     # --- Extract attention maps ---
-    print(f"\n[Step 3] Extracting attention maps...")
-
     cross_attn_heatmaps = None
     per_step_cross_attn = None
-    try:
-        frames, heatmaps, actions, cross_attn_heatmaps, per_step_cross_attn = extract_attention_maps(
-            policy=policy,
-            dataset=dataset,
-            episode_idx=args.episode,
-            num_frames=args.num_frames,
-            image_key=args.image_key,
-            device=args.device,
-            method=args.method,
-            cross_attention=args.cross_attention,
-            show_heads=args.show_heads,
-            output_dir=args.output_dir,
-            raw_attention=args.raw_attention,
-            attn_threshold=args.attn_threshold,
-            task_override=args.task,
-            per_step_cross_attention=args.per_step_cross_attention,
-            image_map=image_map,
-        )
-    except Exception as e:
-        print(f"\n  Attention extraction failed: {e}")
-        print("  Falling back to input-gradient saliency maps...")
 
-        # Fallback to gradient-based saliency
+    if args.skip_attention:
+        # Load frames only (no hook-based attention extraction)
+        print(f"\n[Step 3] Skipping attention extraction (--skip-attention)")
         image_key = args.image_key or find_image_keys(dataset)[0]
         frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
-
-        frames = []
-        heatmaps = []
-        for frame_idx, img_tensor in frame_pairs:
-            frames.append(img_tensor)
-            saliency = gradient_attention_map(policy, dataset, frame_idx, image_key, args.device,
-                                                task_override=args.task, image_map=image_map)
-            if saliency is not None:
-                heatmaps.append(saliency)
-            else:
-                heatmaps.append(np.ones((img_tensor.shape[1], img_tensor.shape[2])) * 0.5)
-
+        frames = [img for _, img in frame_pairs]
+        heatmaps = [np.ones((f.shape[1], f.shape[2])) * 0.5 for f in frames]
         actions = []
+        print(f"  Loaded {len(frames)} frames (attention maps placeholder only)")
+    else:
+        print(f"\n[Step 3] Extracting attention maps...")
+        try:
+            frames, heatmaps, actions, cross_attn_heatmaps, per_step_cross_attn = extract_attention_maps(
+                policy=policy,
+                dataset=dataset,
+                episode_idx=args.episode,
+                num_frames=args.num_frames,
+                image_key=args.image_key,
+                device=args.device,
+                method=args.method,
+                cross_attention=args.cross_attention,
+                show_heads=args.show_heads,
+                output_dir=args.output_dir,
+                raw_attention=args.raw_attention,
+                attn_threshold=args.attn_threshold,
+                task_override=args.task,
+                per_step_cross_attention=args.per_step_cross_attention,
+                image_map=image_map,
+            )
+        except Exception as e:
+            print(f"\n  Attention extraction failed: {e}")
+            print("  Falling back to input-gradient saliency maps...")
+
+            # Fallback to gradient-based saliency
+            image_key = args.image_key or find_image_keys(dataset)[0]
+            frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
+
+            frames = []
+            heatmaps = []
+            for frame_idx, img_tensor in frame_pairs:
+                frames.append(img_tensor)
+                saliency = gradient_attention_map(policy, dataset, frame_idx, image_key, args.device,
+                                                    task_override=args.task, image_map=image_map)
+                if saliency is not None:
+                    heatmaps.append(saliency)
+                else:
+                    heatmaps.append(np.ones((img_tensor.shape[1], img_tensor.shape[2])) * 0.5)
+
+            actions = []
 
     if not frames:
         print("\nERROR: No frames extracted. Check episode index and dataset.")
