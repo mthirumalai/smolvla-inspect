@@ -149,7 +149,15 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The web viewer also requires **Node.js ≥ 18** (for `npm`). On macOS: `brew install node`. On Ubuntu: `apt install nodejs npm` or use [nvm](https://github.com/nvm-sh/nvm).
+The web viewer also requires **Node.js ≥ 18** (for `npm`):
+
+- **macOS:** `brew install node`
+- **Ubuntu:** The default `apt install nodejs` often gives an older version (Node 12-16). Use the [NodeSource](https://github.com/nodesource/distributions) repo instead:
+  ```bash
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  ```
+  Or use [nvm](https://github.com/nvm-sh/nvm) if you manage multiple Node versions. `setup-gpu.sh` handles this automatically.
 
 ### GPU setup (Ubuntu + CUDA)
 

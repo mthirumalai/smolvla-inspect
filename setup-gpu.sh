@@ -40,7 +40,31 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 echo "Installing project dependencies..."
 pip install -r requirements.txt
 
-# 5. Verify
+# 5. Install Node.js >= 18 (needed for web viewer frontend)
+NODE_REQUIRED=18
+INSTALL_NODE=false
+
+if command -v node &>/dev/null; then
+    NODE_VERSION=$(node --version | sed 's/v//' | cut -d. -f1)
+    if [ "$NODE_VERSION" -lt "$NODE_REQUIRED" ]; then
+        echo "Node.js v$NODE_VERSION found, but >= $NODE_REQUIRED required."
+        INSTALL_NODE=true
+    else
+        echo "Node.js $(node --version) already installed."
+    fi
+else
+    echo "Node.js not found."
+    INSTALL_NODE=true
+fi
+
+if [ "$INSTALL_NODE" = true ]; then
+    echo "Installing Node.js 20 LTS via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    echo "Node.js $(node --version) installed."
+fi
+
+# 6. Verify
 echo ""
 echo "=== Verification ==="
 python -c "
