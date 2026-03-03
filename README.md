@@ -7,6 +7,20 @@ See what SmolVLA's vision encoder and action expert are looking at when the mode
 
 ---
 
+## Table of contents
+
+- [What this does](#what-this-does) — attention, gradients, extended attribution, model health
+- [How it works](#how-it-works) — pipeline architecture, per-head analysis
+- [Setup](#setup) — Python, FFmpeg, Node.js, GPU
+- [Run](#run) — config files, CLI examples
+- [Web Viewer](#web-viewer) — interactive explorer with LLM analysis
+- [CLI reference](#cli-reference) — all flags and options
+- [Interpreting results](#interpreting-results) — what patterns mean
+- [Project layout](#project-layout)
+- [Roadmap](#roadmap)
+
+---
+
 ## What this does
 
 SmolVLA is a **vision-language-action** policy: it takes camera images and a language instruction, then outputs robot actions. This tool has three modes:
@@ -332,7 +346,7 @@ Click **LLM configured** in the top-right corner to choose the model and customi
 
 ---
 
-### CLI flags
+## CLI reference
 
 **General:**
 
@@ -394,7 +408,7 @@ Click **LLM configured** in the top-right corner to choose the model and customi
 
 ---
 
-## What to look for
+## Interpreting results
 
 ### Self-attention (SigLIP vision encoder -- rows 2-3)
 
