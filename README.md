@@ -135,6 +135,8 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+The web viewer also requires **Node.js ≥ 18** (for `npm`). On macOS: `brew install node`. On Ubuntu: `apt install nodejs npm` or use [nvm](https://github.com/nvm-sh/nvm).
+
 ### GPU setup (Ubuntu + CUDA)
 
 For an Ubuntu machine with an NVIDIA GPU (e.g. RTX 3080), use the setup script:
@@ -263,6 +265,72 @@ Two configs are provided:
 ```
 
 Results land in `outputs/`.
+
+---
+
+## Web Viewer
+
+The web viewer lets you explore runs interactively — browse frames, switch between visualization types, compare two runs side by side, and read LLM-generated analysis of the model's attention behavior.
+
+![Main visualization view](assets/web_viewer_main.png)
+*Browsing saliency maps across 8 frames of a pick-and-place episode. The left sidebar shows all available runs and visualization types.*
+
+![Run Insights with LLM analysis](assets/web_viewer_insights.png)
+*Run Insights view: summary statistics across all visualization types, followed by LLM-generated analysis of visual grounding, information flow, and key findings.*
+
+![Compare Runs](assets/web_viewer_compare.png)
+*Compare two runs (e.g. base model vs. fine-tuned) side by side for any visualization type.*
+
+### Launch (development)
+
+The quickest way to start both backend and frontend together:
+
+```bash
+source .venv/bin/activate
+./start_servers.sh
+# or with a custom outputs folder:
+./start_servers.sh --base-dir ./my_outputs
+```
+
+This starts:
+- **Backend** (FastAPI) at `http://localhost:8080`
+- **Frontend** (Vite dev server) at `http://localhost:5173`
+
+### Launch (production — built frontend)
+
+Build the frontend once, then serve everything from a single server:
+
+```bash
+cd web/frontend && npm install && npm run build && cd ../..
+python inspect_attention.py serve --port 8080 --base-dir ./outputs
+```
+
+The built frontend is served statically by FastAPI — no separate frontend process needed.
+
+### LLM analysis setup
+
+The Run Insights view uses an LLM to analyze attention patterns. Set one of these environment variables before launching:
+
+```bash
+# Anthropic (Claude)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI (GPT-4o)
+export OPENAI_API_KEY=sk-...
+```
+
+Click **LLM configured** in the top-right corner to choose the model and customize the analysis prompt.
+
+### `serve` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | `8080` | Server port |
+| `--host` | `0.0.0.0` | Server host |
+| `--base-dir` | `./outputs` | Root folder to scan for run folders |
+| `--no-open` | off | Don't auto-open browser |
+
+---
 
 ### CLI flags
 
@@ -441,14 +509,33 @@ smolvla-inspect/
 │   ├── data.py                 # Dataset helpers, batch building, image key mapping
 │   ├── viz.py                  # Visualization grid, overlays, per-head grids
 │   ├── health.py               # Model health diagnostics (spectral, entropy, redundancy)
+│   ├── serve.py                # `smolvla-inspect serve` subcommand launcher
 │   └── _compat.py              # Resize/pad compatibility helpers
+├── web/
+│   ├── backend/                # FastAPI backend
+│   │   ├── main.py             # App factory, CORS, static file serving
+│   │   ├── config.py           # Settings (base_dir, host, port, CORS origins)
+│   │   ├── routers/            # API routes (runs, visualizations, health, compare, LLM, notes)
+│   │   ├── services/           # Business logic (run scanner, image loader)
+│   │   └── models/             # Pydantic request/response schemas
+│   └── frontend/               # React + Vite + TypeScript frontend
+│       ├── src/
+│       │   ├── App.tsx
+│       │   ├── components/     # UI components (RunSelector, HeatmapCanvas, LLMPanel, ...)
+│       │   ├── stores/         # Zustand state stores
+│       │   ├── services/       # API client
+│       │   └── hooks/
+│       └── package.json
 ├── assets/
 │   ├── architecture.md         # Architecture diagrams and report reference
 │   ├── gradcam_walkthrough.md  # GradCAM worked example with numerical walkthrough
 │   ├── how_it_works_architecture.png
 │   ├── example_grid.png
 │   ├── example_per_head.png
-│   └── example_health_report.png
+│   ├── example_health_report.png
+│   ├── web_viewer_main.png     # Web viewer: main visualization view
+│   ├── web_viewer_insights.png # Web viewer: Run Insights with LLM analysis
+│   └── web_viewer_compare.png  # Web viewer: Compare Runs view
 ├── configs/
 │   ├── defaults.yaml           # Conservative defaults (no gradients, CPU-friendly)
 │   └── gpu.yaml                # GPU config: all features enabled (CUDA, SmoothGrad N=20)
@@ -459,7 +546,8 @@ smolvla-inspect/
 │   └── TESTING.md              # CLI test commands and expected output
 ├── clone-and-setup.sh          # One-command clone + GPU setup
 ├── setup-gpu.sh                # GPU setup (Ubuntu + CUDA, creates venv, installs deps)
-├── run.sh                      # Wrapper that sets FFmpeg lib path (macOS)
+├── start_servers.sh            # Dev launcher: starts FastAPI backend + Vite frontend together
+├── run.sh                      # CLI wrapper that sets FFmpeg lib path (macOS)
 ├── requirements.txt
 ├── outputs/                    # Generated images and reports (gitignored)
 └── README.md
@@ -473,6 +561,7 @@ smolvla-inspect/
 - [x] **SmoothGrad** -- average saliency over N noisy inputs for cleaner maps (`--smooth-grad`)
 - [x] **Extended attribution** -- per-step cross-attention, connector GradCAM, VLM layer GradCAM, vision vs state, per-action-dim GradCAM, language-conditional comparison
 - [x] **Config file support** -- `--config` flag to load alternate YAML configs (e.g. `configs/gpu.yaml`)
+- [x] **Interactive web viewer** -- FastAPI + React frontend with run browser, per-visualization heatmap explorer, side-by-side run comparison, and LLM-powered analysis (`./start_servers.sh` or `python inspect_attention.py serve`)
 - [ ] **Occlusion / perturbation sensitivity** -- mask out image regions or zero out specific prefix tokens (vision, language, state) and measure action MSE change; model-agnostic and directly answers "if I cover the gripper, does the model break?"
 - [ ] **Representation probing** -- train small linear classifiers on intermediate layer representations to test what information is encoded at each stage (e.g., can layer N predict object position? does the Expert encode gripper state?)
 - [ ] **Causal tracing / activation patching** -- replace activations at specific (layer, token) positions with corrupted versions and measure output change; builds a causal map of information flow through the model
