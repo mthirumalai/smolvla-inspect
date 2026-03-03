@@ -99,6 +99,11 @@ export default function DetailPanel() {
     (selectedVizType === "legacy_images" ? "Generated Images" : selectedVizType);
 
   const showFrameSelector = HEATMAP_VIZ_TYPES.has(selectedVizType);
+  // Only show the display mode toggle when the loaded data actually has interactive
+  // heatmaps. If the backend returned pre-rendered image_urls (legacy runs or
+  // image-only viz types), switching Map/Overlay/Original has no effect.
+  const hasInteractiveHeatmaps =
+    !loading && !!vizData?.heatmaps && vizData.heatmaps.length > 0;
 
   return (
     <div className="detail-panel">
@@ -134,7 +139,7 @@ export default function DetailPanel() {
                   selectedFrames={selectedFrames}
                   onChange={setSelectedFrames}
                 />
-                <DisplayModeToggle />
+                {hasInteractiveHeatmaps && <DisplayModeToggle />}
               </div>
             )}
 
@@ -209,7 +214,7 @@ function RunHeader({
           {(datasetInfo.task_string as string) || "\u2014"}
         </span>
       </div>
-      <div className="meta-item" style={{ marginLeft: "auto" }}>
+      <div className="meta-item">
         <span className="meta-label">Note</span>
         <RunNotesEditor runId={runId} />
       </div>

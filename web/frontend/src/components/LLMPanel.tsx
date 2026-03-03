@@ -185,7 +185,7 @@ export default function LLMPanel({ analysisType, runId, vizType, compareRunIds, 
         disabled={loading}
         style={{ fontSize: 12 }}
       >
-        {loading ? "Analyzing..." : displayResponse ? "Regenerate" : "Analyze with LLM"}
+        {loading ? "Analyzing..." : displayResponse ? "Regenerate" : "✨ Analyze"}
       </button>
       <button
         className="btn-tertiary"
@@ -376,7 +376,7 @@ export default function LLMPanel({ analysisType, runId, vizType, compareRunIds, 
                 )
               ) : (
                 <div style={{ color: "var(--text-body)", fontSize: 13, padding: 16 }}>
-                  Click "Analyze with LLM" to generate analysis.
+                  Click "✨ Analyze" to generate analysis.
                 </div>
               )}
             </div>

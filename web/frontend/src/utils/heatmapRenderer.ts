@@ -171,7 +171,9 @@ export function renderHeatmap(
   const w = canvas.width;
   const h = canvas.height;
 
-  // Draw frame image as background
+  // Draw frame image as background (this may taint the canvas, but we never
+  // call getImageData on it — we use an offscreen canvas for the heatmap layer
+  // to avoid SecurityError from tainted canvases entirely).
   if (frameImage) {
     ctx.drawImage(frameImage, 0, 0, w, h);
   } else {
@@ -179,27 +181,36 @@ export function renderHeatmap(
     ctx.fillRect(0, 0, w, h);
   }
 
-  // Interpolate heatmap to canvas resolution
-  const interpolated = bilinearInterpolate(heatmap, h, w);
+  // Render colormap into an offscreen canvas so we never read pixels back
+  // from the (potentially tainted) main canvas.
+  const offscreen = document.createElement("canvas");
+  offscreen.width = w;
+  offscreen.height = h;
+  const offCtx = offscreen.getContext("2d");
+  if (!offCtx) return;
 
-  // Apply colormap
+  const interpolated = bilinearInterpolate(heatmap, h, w);
   const cmap = COLORMAPS[colormap] || COLORMAPS.jet;
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const pixels = imageData.data;
+  const offData = offCtx.createImageData(w, h);
+  const pixels = offData.data;
 
   for (let i = 0; i < interpolated.length; i++) {
     const val = Math.max(0, Math.min(1, interpolated[i]));
     const cmapIdx = Math.round(val * 255);
-    const [cr, cg, cb, ca] = cmap[cmapIdx];
-    const a = (ca / 255) * alpha * val; // Scale alpha by value for transparency at low values
-
+    const [cr, cg, cb] = cmap[cmapIdx];
     const px = i * 4;
-    pixels[px] = pixels[px] * (1 - a) + cr * a;
-    pixels[px + 1] = pixels[px + 1] * (1 - a) + cg * a;
-    pixels[px + 2] = pixels[px + 2] * (1 - a) + cb * a;
+    pixels[px]     = cr;
+    pixels[px + 1] = cg;
+    pixels[px + 2] = cb;
+    pixels[px + 3] = Math.round(val * 255); // transparent where attention is low
   }
 
-  ctx.putImageData(imageData, 0, 0);
+  offCtx.putImageData(offData, 0, 0);
+
+  // Composite the heatmap layer over the frame using globalAlpha
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(offscreen, 0, 0);
+  ctx.globalAlpha = 1.0;
 }
 
 /**

@@ -6,13 +6,19 @@ const MODES = [
   { key: "original", label: "Original" },
 ] as const;
 
-export default function DisplayModeToggle() {
+interface Props {
+  hideOverlay?: boolean;
+}
+
+export default function DisplayModeToggle({ hideOverlay = false }: Props) {
   const { displayMode, setDisplayMode } = useAppStore();
+
+  const visibleModes = hideOverlay ? MODES.filter((m) => m.key !== "overlay") : MODES;
 
   return (
     <div className="display-mode-toggle">
       <span className="toggle-label">Display:</span>
-      {MODES.map((m) => (
+      {visibleModes.map((m) => (
         <button
           key={m.key}
           className={displayMode === m.key ? "btn-secondary" : "btn-tertiary"}

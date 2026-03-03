@@ -9,6 +9,26 @@ import VisionVsStateChart from "./VisionVsStateChart";
 import ConfigDiffCard from "./ConfigDiffCard";
 import RunNotesEditor from "./RunNotesEditor";
 import LLMPanel from "./LLMPanel";
+import InfoPopover from "./InfoPopover";
+
+const COMPARISON_TERMS_ITEMS = [
+  {
+    label: "Coverage / Spatial coverage",
+    desc: "What fraction of the image has meaningful attention (above 30% of peak weight). A positive change means the model is looking at a broader area; negative means it's narrowing in.",
+  },
+  {
+    label: "Temporal stability",
+    desc: "How consistent the attention focus is across consecutive frames. Higher is more stable — the model's gaze doesn't jump around between frames.",
+  },
+  {
+    label: "Centroid drift / Drift",
+    desc: "How much the center of attention shifts between the two runs. Lower drift means the model focuses on the same region as before; higher drift means it's attending to a different part of the image.",
+  },
+  {
+    label: "Gini",
+    desc: "How concentrated the attention is. Near 1 = almost all weight on one small region. Near 0 = evenly spread. A rising Gini after fine-tuning can mean the model is over-fixating on one spot.",
+  },
+];
 
 const COMPARABLE_TYPES = [
   "self_attention",
@@ -30,6 +50,8 @@ export default function CompareView() {
   const [compareData, setCompareData] = useState<Record<string, Record<string, VizData>>>({});
   const [runDetails, setRunDetails] = useState<Record<string, RunDetail>>({});
   const [loading, setLoading] = useState(false);
+  // Track which runs have frame images available (for overlay mode)
+  const [frameAvailability, setFrameAvailability] = useState<Record<string, boolean>>({});
 
   const toggleRun = (id: string) => {
     setSelectedIds((prev) =>
@@ -74,6 +96,23 @@ export default function CompareView() {
     }
     setCompareData(result);
     setLoading(false);
+
+    // Probe frame availability for each run so overlay mode can be consistent.
+    // Use an Image object (same mechanism as HeatmapCanvas) so the result is
+    // accurate and the loaded image is pre-cached by the browser.
+    const availability: Record<string, boolean> = {};
+    await Promise.all(
+      selectedIds.map(
+        (runId) =>
+          new Promise<void>((resolve) => {
+            const img = new window.Image();
+            img.onload = () => { availability[runId] = true; resolve(); };
+            img.onerror = () => { availability[runId] = false; resolve(); };
+            img.src = frameUrl(runId, 0);
+          })
+      )
+    );
+    setFrameAvailability(availability);
   };
 
   // Build config diff data
@@ -88,6 +127,14 @@ export default function CompareView() {
       }));
   }, [selectedIds, runDetails, compareData, runs]);
 
+  // Overlay mode is only consistent when every selected run has frame images.
+  // If any run is missing frames, force all columns to map mode.
+  const allRunsHaveFrames =
+    Object.keys(frameAvailability).length > 0 &&
+    selectedIds.every((id) => frameAvailability[id] === true);
+  const effectiveDisplayMode =
+    displayMode === "overlay" && !allRunsHaveFrames ? "map" : displayMode;
+
   // Collect run notes for selected runs
   const selectedRunNotes = useMemo(() => {
     const notes: Record<string, string> = {};
@@ -100,7 +147,7 @@ export default function CompareView() {
   return (
     <div>
       <div className="card">
-        <h3 style={{ marginBottom: 12 }}>Select 2-3 runs to compare</h3>
+        <h3 style={{ marginBottom: 12 }}>Select runs to compare</h3>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
           {runs.map((run) => (
             <label
@@ -164,7 +211,9 @@ export default function CompareView() {
           >
             {loading ? "Loading..." : "Compare"}
           </button>
-          {Object.keys(compareData).length > 0 && <DisplayModeToggle />}
+          {Object.values(compareData).some((runData) =>
+            Object.values(runData).some((vd) => vd.heatmaps && vd.heatmaps.length > 0)
+          ) && <DisplayModeToggle hideOverlay={!allRunsHaveFrames} />}
         </div>
       </div>
 
@@ -186,12 +235,17 @@ export default function CompareView() {
                       <h4 style={{ margin: 0 }}>{run?.name || runId}</h4>
                       <RunNotesEditor runId={runId} compact />
                     </div>
+                    {frameAvailability[runId] === false && (
+                      <p style={{ fontSize: 11, color: "var(--text-body)", marginBottom: 8, opacity: 0.8 }}>
+                        Frame images unavailable — overlay mode disabled for consistency.
+                      </p>
+                    )}
                     {data?.heatmaps ? (
                       <CompareHeatmaps
                         runId={runId}
                         vizType={vt}
                         heatmaps={data.heatmaps}
-                        displayMode={displayMode}
+                        displayMode={effectiveDisplayMode}
                       />
                     ) : data?.chart_data ? (
                       <VisionVsStateChart data={data.chart_data} />
@@ -211,6 +265,10 @@ export default function CompareView() {
 
       {Object.keys(compareData).length > 0 && selectedRunId && (
         <div className="card">
+          <h4 style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+            AI Analysis
+            <InfoPopover items={COMPARISON_TERMS_ITEMS} />
+          </h4>
           <LLMPanel
             analysisType="multi_run_comparison"
             runId={selectedRunId}

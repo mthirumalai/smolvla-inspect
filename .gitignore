@@ -6,3 +6,6 @@ outputs/
 .mplconfig/
 test_results/
 .env
+demo/
+demo_output/
+scratch/

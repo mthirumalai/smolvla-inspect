@@ -20,9 +20,6 @@ export default function Header({ onLLMConfig }: Props) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <h1 style={{ fontSize: 18, fontWeight: 700 }}>smolvla-inspect</h1>
-        <span style={{ fontSize: 12, color: "var(--text-body)" }}>
-          Attention Visualizer
-        </span>
       </div>
       <button className="btn-secondary" onClick={onLLMConfig}>
         {llmConfigured ? "LLM configured" : "Configure LLM"}
