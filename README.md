@@ -149,7 +149,7 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The web viewer also requires **Node.js ≥ 18** (for `npm`):
+The web viewer also requires **Node.js ≥ 20.19** (for `npm` and Vite):
 
 - **macOS:** `brew install node`
 - **Ubuntu:** The default `apt install nodejs` often gives an older version (Node 12-16). Use the [NodeSource](https://github.com/nodesource/distributions) repo instead:
