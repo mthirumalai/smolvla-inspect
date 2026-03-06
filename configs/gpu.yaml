@@ -31,9 +31,10 @@ vision_vs_state: true
 per_action_dim: true
 language_diff: "auto"
 
-# Model health analysis
-model_health: false
-health_frames: 5
+# Model internals report
+internals_only: false
+with_internals: false
+internals_frames: 5
 entropy_warn: 0.8
 entropy_critical: 0.95
 entropy_low: 0.1

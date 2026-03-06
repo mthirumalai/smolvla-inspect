@@ -198,7 +198,10 @@ def _image_matches_viz(image_path: str, viz_type: str) -> bool:
         "per_action_dim": ["per_action_dim"],
         "language_diff": ["language_diff"],
         "vision_vs_state": ["vision_vs_state"],
-        "model_health": ["model_health"],
+        "model_internals": ["model_internals", "model_health"],
+        "model_health": ["model_internals", "model_health"],
+        "internals": ["model_internals", "model_health"],
+        "health": ["model_internals", "model_health"],
     }
     prefixes = mapping.get(viz_type, [])
     return any(name.startswith(p) for p in prefixes)

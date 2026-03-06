@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the attention visualizer with FFmpeg libs visible to TorchCodec.
+# Run the inspector with FFmpeg libs visible to TorchCodec.
 # TorchCodec supports FFmpeg 4–7; macOS Homebrew often has FFmpeg 8 (libavutil.60).
 # If you have ffmpeg@6 installed, we point the loader at it so video decoding works.
 

@@ -1,4 +1,4 @@
-"""SmolVLA Attention Visualizer — package entry point."""
+"""SmolVLA Inspector — package entry point."""
 
 import sys
 

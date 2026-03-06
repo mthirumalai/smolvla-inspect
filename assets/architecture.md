@@ -1,7 +1,7 @@
 # SmolVLA Architecture Diagrams
 
 Reference diagrams for understanding the SmolVLA model structure and what
-the `--model-health` report measures.
+the `--internals-only` / `--with-internals` report measures.
 
 ---
 
@@ -75,7 +75,7 @@ the `--model-health` report measures.
 
 ## 2. The three attention components
 
-These are the three distinct attention operations that the health report
+These are the three distinct attention operations that the model internals report
 measures for entropy and head redundancy.
 
 ### A. SigLIP Vision (12 layers, 12 heads)
@@ -206,7 +206,7 @@ k_proj and v_proj. Repeats 10 times (one per action token).
 
 ---
 
-## 4. What the health report measures
+## 4. What the model internals report measures
 
 ### Section 1: Weight Spectral Analysis (alpha)
 

@@ -432,30 +432,30 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Health charts */
-.health-grid {
+/* Model internals charts */
+.internals-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
   gap: 16px;
 }
 
-.health-card {
+.internals-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
 }
 
-.health-badge {
+.internals-badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 12px;
   font-size: 11px;
   font-weight: 600;
 }
-.health-badge.healthy { background: #e6f7e6; color: #1a7a1a; }
-.health-badge.warning { background: #fff3e0; color: #b36b00; }
-.health-badge.critical { background: #fce4e4; color: #c41e1e; }
+.internals-badge.ok { background: #e6f7e6; color: #1a7a1a; }
+.internals-badge.warning { background: #fff3e0; color: #b36b00; }
+.internals-badge.critical { background: #fce4e4; color: #c41e1e; }
 
 /* Modal */
 .modal-overlay {

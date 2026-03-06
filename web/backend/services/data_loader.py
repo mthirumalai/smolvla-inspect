@@ -128,17 +128,24 @@ def load_vision_vs_state(run_dir: Path) -> list[dict] | None:
         return json.load(f)
 
 
-def load_health_data(run_dir: Path) -> dict:
+def load_model_internals_data(run_dir: Path) -> dict:
     result = {}
-    health_dir = run_dir / "data" / "health"
-    if not health_dir.is_dir():
+    internals_dir = run_dir / "data" / "model_internals"
+    legacy_dir = run_dir / "data" / "health"
+    data_dir = internals_dir if internals_dir.is_dir() else legacy_dir
+    if not data_dir.is_dir():
         return result
     for name in ("weightwatcher", "entropy", "redundancy"):
-        path = health_dir / f"{name}.json"
+        path = data_dir / f"{name}.json"
         if path.exists():
             with open(path) as f:
                 result[name] = json.load(f)
     return result
+
+
+def load_health_data(run_dir: Path) -> dict:
+    """Backward-compatible alias for older call sites."""
+    return load_model_internals_data(run_dir)
 
 
 def list_images(run_dir: Path) -> list[str]:

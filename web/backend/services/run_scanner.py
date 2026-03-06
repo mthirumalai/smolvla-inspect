@@ -19,9 +19,26 @@ _LEGACY_MARKERS = {
     "per_action_dim_ep",
     "language_diff_ep",
     "vision_vs_state_ep",
+    "model_internals_report",
     "model_health_report",
     "positional_baseline",
 }
+
+
+def normalize_available_visualizations(viz: dict | None) -> dict[str, bool]:
+    """Normalize visualization keys across manifest generations."""
+    normalized = dict(viz or {})
+    if normalized.pop("model_health", False):
+        normalized["model_internals"] = True
+    return normalized
+
+
+def _normalize_manifest(manifest: dict) -> dict:
+    manifest = dict(manifest)
+    manifest["available_visualizations"] = normalize_available_visualizations(
+        manifest.get("available_visualizations")
+    )
+    return manifest
 
 
 def _run_id_from_path(path: Path) -> str:
@@ -65,10 +82,10 @@ def _build_legacy_manifest(directory: Path) -> dict:
             viz["language_diff"] = True
         elif name.startswith("vision_vs_state"):
             viz["vision_vs_state"] = True
-        elif name.startswith("model_health"):
-            viz["model_health"] = True
+        elif name.startswith("model_internals") or name.startswith("model_health"):
+            viz["model_internals"] = True
 
-    return {
+    return _normalize_manifest({
         "version": 0,
         "created_at": None,
         "cli_args": {},
@@ -78,7 +95,7 @@ def _build_legacy_manifest(directory: Path) -> dict:
         "images": images,
         "_legacy": True,
         "_dir": str(directory),
-    }
+    })
 
 
 def scan_directory(base_dir: Path) -> list[RunSummary]:
@@ -99,7 +116,7 @@ def scan_directory(base_dir: Path) -> list[RunSummary]:
         manifest_path = child / "run_manifest.json"
         if manifest_path.exists():
             try:
-                manifest = json.loads(manifest_path.read_text())
+                manifest = _normalize_manifest(json.loads(manifest_path.read_text()))
             except (json.JSONDecodeError, OSError):
                 continue
             runs.append(RunSummary(
@@ -144,14 +161,14 @@ def load_manifest(base_dir: Path, run_id: str) -> tuple[Path, dict]:
         if _run_id_from_path(child) == run_id:
             manifest_path = child / "run_manifest.json"
             if manifest_path.exists():
-                return child, json.loads(manifest_path.read_text())
+                return child, _normalize_manifest(json.loads(manifest_path.read_text()))
             if _is_legacy_run(child):
                 return child, _build_legacy_manifest(child)
 
     # Check if base itself matches
     if _run_id_from_path(base) == run_id:
         if (base / "run_manifest.json").exists():
-            return base, json.loads((base / "run_manifest.json").read_text())
+            return base, _normalize_manifest(json.loads((base / "run_manifest.json").read_text()))
         if _is_legacy_run(base):
             return base, _build_legacy_manifest(base)
 

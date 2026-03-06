@@ -8,7 +8,7 @@ import ImageViz from "./ImageViz";
 import ZoomableWrapper from "./ZoomableWrapper";
 import VisionVsStateChart from "./VisionVsStateChart";
 import CompareView from "./CompareView";
-import HealthView from "./HealthView";
+import ModelInternalsView from "./ModelInternalsView";
 import RunInsightsView from "./RunInsightsView";
 import RunNotesEditor from "./RunNotesEditor";
 import LLMPanel from "./LLMPanel";
@@ -35,7 +35,7 @@ const HEATMAP_VIZ_TYPES = new Set([
   "gradcam_connector",
 ]);
 
-const SKIP_VIZ_FETCH = new Set(["compare", "health", "legacy_images", "run_insights"]);
+const SKIP_VIZ_FETCH = new Set(["compare", "model_internals", "legacy_images", "run_insights"]);
 
 export default function DetailPanel() {
   const { selectedRunId, selectedRunDetail, selectedVizType, displayMode } = useAppStore();
@@ -116,7 +116,7 @@ export default function DetailPanel() {
 
       {/* Special views */}
       {selectedVizType === "compare" && <CompareView />}
-      {selectedVizType === "health" && <HealthView />}
+      {selectedVizType === "model_internals" && <ModelInternalsView />}
       {selectedVizType === "run_insights" && <RunInsightsView />}
 
       {/* Legacy images */}

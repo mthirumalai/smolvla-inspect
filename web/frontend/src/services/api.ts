@@ -85,15 +85,15 @@ export const setRunNotes = (runId: string, notes: string) =>
     body: JSON.stringify({ notes }),
   });
 
-// -- Health --
-export interface HealthData {
+// -- Model internals --
+export interface ModelInternalsData {
   weightwatcher: Record<string, unknown> | null;
   entropy: Record<string, unknown> | null;
   redundancy: Record<string, unknown> | null;
 }
 
-export const getHealthData = (runId: string) =>
-  fetchJson<HealthData>(`/api/runs/${runId}/health`);
+export const getModelInternalsData = (runId: string) =>
+  fetchJson<ModelInternalsData>(`/api/runs/${runId}/internals`);
 
 // -- Compare --
 export const compareRuns = (

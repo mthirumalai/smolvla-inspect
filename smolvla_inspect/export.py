@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 
 def _ensure_dir(path):
@@ -216,22 +216,27 @@ def save_gradient_data(run_dir, saliency_maps=None, gradcam_maps=None,
             json.dump(vs_data, f, indent=2)
 
 
+def save_model_internals_data(run_dir, internals_results):
+    """Save model internals report data as JSON files."""
+    internals_dir = os.path.join(run_dir, "data", "model_internals")
+    os.makedirs(internals_dir, exist_ok=True)
+
+    if "weightwatcher" in internals_results:
+        with open(os.path.join(internals_dir, "weightwatcher.json"), "w") as f:
+            json.dump(internals_results["weightwatcher"], f, indent=2)
+
+    if "entropy" in internals_results:
+        with open(os.path.join(internals_dir, "entropy.json"), "w") as f:
+            json.dump(internals_results["entropy"], f, indent=2)
+
+    if "redundancy" in internals_results:
+        with open(os.path.join(internals_dir, "redundancy.json"), "w") as f:
+            json.dump(internals_results["redundancy"], f, indent=2)
+
+
 def save_health_data(run_dir, health_results):
-    """Save model health report data as JSON files."""
-    health_dir = os.path.join(run_dir, "data", "health")
-    os.makedirs(health_dir, exist_ok=True)
-
-    if "weightwatcher" in health_results:
-        with open(os.path.join(health_dir, "weightwatcher.json"), "w") as f:
-            json.dump(health_results["weightwatcher"], f, indent=2)
-
-    if "entropy" in health_results:
-        with open(os.path.join(health_dir, "entropy.json"), "w") as f:
-            json.dump(health_results["entropy"], f, indent=2)
-
-    if "redundancy" in health_results:
-        with open(os.path.join(health_dir, "redundancy.json"), "w") as f:
-            json.dump(health_results["redundancy"], f, indent=2)
+    """Backward-compatible alias for older imports."""
+    save_model_internals_data(run_dir, health_results)
 
 
 def build_manifest(run_dir, args, model_info=None, dataset_info=None,
@@ -359,7 +364,7 @@ def build_available_viz(args, heatmaps=None, cross_attn_heatmaps=None,
                         connector_maps=None, vlm_layer_results=None,
                         per_step_cross_attn=None, per_action_dim_maps=None,
                         language_diff_results=None,
-                        vision_vs_state_results=None, health_ran=False):
+                        vision_vs_state_results=None, model_internals_ran=False):
     """Build a boolean map of which viz types exist in this run."""
     viz = {
         "self_attention": heatmaps is not None and len(heatmaps) > 0,
@@ -379,6 +384,6 @@ def build_available_viz(args, heatmaps=None, cross_attn_heatmaps=None,
                           and any(r is not None for r in language_diff_results)),
         "vision_vs_state": (vision_vs_state_results is not None
                             and len(vision_vs_state_results) > 0),
-        "model_health": health_ran,
+        "model_internals": model_internals_ran,
     }
     return viz

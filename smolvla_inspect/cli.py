@@ -51,7 +51,7 @@ from .viz import (
     create_vision_vs_state_chart,
     overlay_heatmap,
 )
-from .health import run_model_health_report
+from .internals import run_model_internals_report
 from .gradient import (
     compute_gradient_maps,
     compute_saliency_map,
@@ -67,7 +67,7 @@ from .export import (
     save_self_attention,
     save_cross_attention,
     save_gradient_data,
-    save_health_data,
+    save_model_internals_data,
     build_manifest,
     collect_model_info,
     collect_dataset_info,
@@ -475,6 +475,14 @@ def load_defaults(config_path=None):
     return {}
 
 
+def _default_value(defaults, *keys, fallback=None):
+    """Return the first configured key present in *defaults*."""
+    for key in keys:
+        if key in defaults:
+            return defaults[key]
+    return fallback
+
+
 def main():
     # Pre-parse --config so we can load defaults before building the full parser
     pre_parser = argparse.ArgumentParser(add_help=False)
@@ -484,13 +492,15 @@ def main():
     defaults = load_defaults(pre_args.config)
 
     parser = argparse.ArgumentParser(
-        description="See what SmolVLA's vision encoder is looking at.",
+        description="Inspect SmolVLA attention, attribution, and model internals.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python inspect_attention.py
   python inspect_attention.py --episode 3 --num-frames 12 --device cuda
   python inspect_attention.py --model path/to/finetuned_checkpoint
+  python inspect_attention.py --internals-only
+  python inspect_attention.py --with-internals
   python inspect_attention.py --config configs/gpu.yaml
         """
     )
@@ -548,13 +558,22 @@ Examples:
                         default=defaults.get("attn_threshold", 0.5),
                         help="Percentile threshold (0-1) below which attention values are zeroed")
 
-    # Model health diagnostics
-    parser.add_argument("--model-health", action="store_true",
-                        default=defaults.get("model_health", False),
-                        help="Run health diagnostics instead of attention heatmaps")
-    parser.add_argument("--health-frames", type=int,
-                        default=defaults.get("health_frames", 5),
-                        help="Number of sample frames for entropy/redundancy (default: 5)")
+    # Model internals report
+    parser.add_argument("--internals-only", action="store_true",
+                        default=_default_value(defaults, "internals_only", "model_health", fallback=False),
+                        help="Run the model internals report instead of attention or gradient analysis")
+    parser.add_argument("--with-internals", action="store_true",
+                        default=defaults.get("with_internals", False),
+                        help="Also run the model internals report after the standard analysis")
+    parser.add_argument("--internals-frames", type=int,
+                        default=_default_value(defaults, "internals_frames", "health_frames", fallback=5),
+                        help="Number of sample frames for entropy/redundancy in the internals report (default: 5)")
+    parser.add_argument("--model-health", action="store_true", dest="internals_only",
+                        default=argparse.SUPPRESS,
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--health-frames", type=int, dest="internals_frames",
+                        default=argparse.SUPPRESS,
+                        help=argparse.SUPPRESS)
     parser.add_argument("--entropy-warn", type=float,
                         default=defaults.get("entropy_warn", 0.8),
                         help="Entropy ratio threshold for 'unfocused' warning (default: 0.8)")
@@ -612,6 +631,14 @@ Examples:
 
     args = parser.parse_args()
 
+    if args.internals_only and args.with_internals:
+        parser.error("--internals-only and --with-internals are mutually exclusive")
+
+    if "--model-health" in sys.argv[1:]:
+        print("  NOTE: --model-health is deprecated; use --internals-only")
+    if "--health-frames" in sys.argv[1:]:
+        print("  NOTE: --health-frames is deprecated; use --internals-frames")
+
     # Auto-enable cross-attention if per-step is requested
     if args.per_step_cross_attention and not args.cross_attention:
         args.cross_attention = True
@@ -651,7 +678,7 @@ Examples:
 
     # -----------------------------------------------------------------------
     print("=" * 70)
-    print("SmolVLA Attention Visualizer")
+    print("SmolVLA Inspector")
     print("=" * 70)
     print(f"  Device: {args.device}")
     if args.gradient and grad_device_str != args.device:
@@ -720,110 +747,15 @@ Examples:
     if image_map:
         print(f"\n  Image map overrides: {image_map}")
 
-    # --- Model health mode (early exit) ---
-    if args.model_health:
-        run_model_health_report(policy, dataset, args)
-        return
-
-    # --- Extract attention maps ---
+    internals_results = None
+    model_internals_ran = False
+    frames = None
+    heatmaps = None
+    actions = None
     cross_attn_heatmaps = None
     per_step_cross_attn = None
-
-    if args.skip_attention:
-        # Load frames only (no hook-based attention extraction)
-        print(f"\n[Step 3] Skipping attention extraction (--skip-attention)")
-        image_key = args.image_key or find_image_keys(dataset)[0]
-        frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
-        frames = [img for _, img in frame_pairs]
-        heatmaps = [np.ones((f.shape[1], f.shape[2])) * 0.5 for f in frames]
-        actions = []
-        print(f"  Loaded {len(frames)} frames (attention maps placeholder only)")
-    else:
-        print(f"\n[Step 3] Extracting attention maps...")
-        try:
-            frames, heatmaps, actions, cross_attn_heatmaps, per_step_cross_attn = extract_attention_maps(
-                policy=policy,
-                dataset=dataset,
-                episode_idx=args.episode,
-                num_frames=args.num_frames,
-                image_key=args.image_key,
-                device=args.device,
-                method=args.method,
-                cross_attention=args.cross_attention,
-                show_heads=args.show_heads,
-                output_dir=args.output_dir,
-                raw_attention=args.raw_attention,
-                attn_threshold=args.attn_threshold,
-                task_override=args.task,
-                per_step_cross_attention=args.per_step_cross_attention,
-                image_map=image_map,
-            )
-        except Exception as e:
-            print(f"\n  Attention extraction failed: {e}")
-            print("  Falling back to input-gradient saliency maps...")
-
-            # Fallback to gradient-based saliency
-            image_key = args.image_key or find_image_keys(dataset)[0]
-            frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
-
-            frames = []
-            heatmaps = []
-            for frame_idx, img_tensor in frame_pairs:
-                frames.append(img_tensor)
-                saliency = gradient_attention_map(policy, dataset, frame_idx, image_key, args.device,
-                                                    task_override=args.task, image_map=image_map)
-                if saliency is not None:
-                    heatmaps.append(saliency)
-                else:
-                    heatmaps.append(np.ones((img_tensor.shape[1], img_tensor.shape[2])) * 0.5)
-
-            actions = []
-
-    if not frames:
-        print("\nERROR: No frames extracted. Check episode index and dataset.")
-        sys.exit(1)
-
-    # --- Export attention data ---
-    if run_dir:
-        save_frames(run_dir, frames)
-        save_self_attention(run_dir, heatmaps)
-        if cross_attn_heatmaps:
-            save_cross_attention(run_dir, cross_attn_heatmaps,
-                                per_step_data=per_step_cross_attn)
-
-    # --- Gradient-based attribution (after attention hooks are cleaned up) ---
     saliency_maps = None
     gradcam_maps = None
-    if args.gradient:
-        image_key_for_grad = args.image_key or find_image_keys(dataset)[0]
-
-        # Move model to gradient device if different from main device
-        if grad_device != device:
-            print(f"\n  Moving model from {device} to {grad_device} for gradient computation...")
-            policy.to(grad_device)
-
-        print(f"\n[Step 3b] Computing gradient attribution (method={args.gradient}, device={grad_device_str})...")
-        saliency_maps, gradcam_maps = compute_gradient_maps(
-            policy=policy,
-            dataset=dataset,
-            episode_idx=args.episode,
-            num_frames=args.num_frames,
-            image_key=image_key_for_grad,
-            device=grad_device_str,
-            method=args.gradient,
-            noise_seed=args.gradient_seed,
-            task_override=args.task,
-            smooth_n=args.smooth_grad,
-            smooth_sigma=args.smooth_grad_sigma,
-            image_map=image_map,
-        )
-        sal_label = f"SmoothGrad (N={args.smooth_grad})" if args.smooth_grad > 1 else "Saliency"
-        if saliency_maps:
-            print(f"  {sal_label} maps: {len(saliency_maps)} frames")
-        if gradcam_maps:
-            print(f"  GradCAM maps: {len(gradcam_maps)} frames")
-
-    # --- Extended attribution features ---
     connector_gradcam_maps = None
     vlm_layer_results = None
     vlm_layer_indices = None
@@ -832,261 +764,398 @@ Examples:
     per_action_dim_mags = None
     language_diff_results = None
     action_dim_names = None
+    grid_path = None
+    model_on_gradient_device = False
 
-    has_extended = any([
-        args.gradcam_connector,
-        args.gradcam_vlm_layers,
-        args.vision_vs_state,
-        args.per_action_dim,
-        args.language_diff,
-    ])
+    if args.internals_only:
+        internals_results = run_model_internals_report(policy, dataset, args)
+        model_internals_ran = True
+    else:
+        # --- Extract attention maps ---
+        if args.skip_attention:
+            # Load frames only (no hook-based attention extraction)
+            print(f"\n[Step 3] Skipping attention extraction (--skip-attention)")
+            image_key = args.image_key or find_image_keys(dataset)[0]
+            frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
+            frames = [img for _, img in frame_pairs]
+            heatmaps = [np.ones((f.shape[1], f.shape[2])) * 0.5 for f in frames]
+            actions = []
+            print(f"  Loaded {len(frames)} frames (attention maps placeholder only)")
+        else:
+            print(f"\n[Step 3] Extracting attention maps...")
+            try:
+                frames, heatmaps, actions, cross_attn_heatmaps, per_step_cross_attn = extract_attention_maps(
+                    policy=policy,
+                    dataset=dataset,
+                    episode_idx=args.episode,
+                    num_frames=args.num_frames,
+                    image_key=args.image_key,
+                    device=args.device,
+                    method=args.method,
+                    cross_attention=args.cross_attention,
+                    show_heads=args.show_heads,
+                    output_dir=args.output_dir,
+                    raw_attention=args.raw_attention,
+                    attn_threshold=args.attn_threshold,
+                    task_override=args.task,
+                    per_step_cross_attention=args.per_step_cross_attention,
+                    image_map=image_map,
+                )
+            except Exception as e:
+                print(f"\n  Attention extraction failed: {e}")
+                print("  Falling back to input-gradient saliency maps...")
 
-    if has_extended:
-        image_key_for_grad = args.image_key or find_image_keys(dataset)[0]
+                # Fallback to gradient-based saliency
+                image_key = args.image_key or find_image_keys(dataset)[0]
+                frame_pairs = get_episode_frames(dataset, args.episode, args.num_frames, image_key)
 
-        # Ensure model is on gradient device
-        if grad_device != device and not args.gradient:
-            print(f"\n  Moving model from {device} to {grad_device} for gradient computation...")
-            policy.to(grad_device)
+                frames = []
+                heatmaps = []
+                for frame_idx, img_tensor in frame_pairs:
+                    frames.append(img_tensor)
+                    saliency = gradient_attention_map(
+                        policy, dataset, frame_idx, image_key, args.device,
+                        task_override=args.task, image_map=image_map,
+                    )
+                    if saliency is not None:
+                        heatmaps.append(saliency)
+                    else:
+                        heatmaps.append(np.ones((img_tensor.shape[1], img_tensor.shape[2])) * 0.5)
 
-        enabled_features = []
-        if args.gradcam_connector:
-            enabled_features.append("Connector GradCAM")
-        if args.gradcam_vlm_layers:
-            enabled_features.append("VLM layer GradCAM")
-        if args.vision_vs_state:
-            enabled_features.append("Vision vs State")
-        if args.per_action_dim:
-            enabled_features.append("Per-action-dim")
-        if args.language_diff:
-            enabled_features.append("Language diff")
-        print(f"\n[Step 3c] Extended attribution ({len(enabled_features)} features: "
-              f"{', '.join(enabled_features)})...")
+                actions = []
 
-        feat_idx = 0
-        # F1: Connector GradCAM
-        if args.gradcam_connector:
-            feat_idx += 1
-            print(f"\n  [{feat_idx}/{len(enabled_features)}] Connector GradCAM...")
-            connector_gradcam_maps = compute_gradcam_connector_maps(
-                policy=policy, dataset=dataset,
-                episode_idx=args.episode, num_frames=args.num_frames,
-                image_key=image_key_for_grad, device=grad_device_str,
-                noise_seed=args.gradient_seed, task_override=args.task,
+        if not frames:
+            print("\nERROR: No frames extracted. Check episode index and dataset.")
+            sys.exit(1)
+
+        # --- Export attention data ---
+        if run_dir:
+            save_frames(run_dir, frames)
+            save_self_attention(run_dir, heatmaps)
+            if cross_attn_heatmaps:
+                save_cross_attention(
+                    run_dir,
+                    cross_attn_heatmaps,
+                    per_step_data=per_step_cross_attn,
+                )
+
+        # --- Gradient-based attribution (after attention hooks are cleaned up) ---
+        if args.gradient:
+            image_key_for_grad = args.image_key or find_image_keys(dataset)[0]
+
+            # Move model to gradient device if different from main device
+            if grad_device != device:
+                print(f"\n  Moving model from {device} to {grad_device} for gradient computation...")
+                policy.to(grad_device)
+                model_on_gradient_device = True
+
+            print(f"\n[Step 3b] Computing gradient attribution (method={args.gradient}, device={grad_device_str})...")
+            saliency_maps, gradcam_maps = compute_gradient_maps(
+                policy=policy,
+                dataset=dataset,
+                episode_idx=args.episode,
+                num_frames=args.num_frames,
+                image_key=image_key_for_grad,
+                device=grad_device_str,
+                method=args.gradient,
+                noise_seed=args.gradient_seed,
+                task_override=args.task,
+                smooth_n=args.smooth_grad,
+                smooth_sigma=args.smooth_grad_sigma,
                 image_map=image_map,
             )
-            if connector_gradcam_maps:
-                print(f"  Connector GradCAM: {len(connector_gradcam_maps)} frames")
+            sal_label = f"SmoothGrad (N={args.smooth_grad})" if args.smooth_grad > 1 else "Saliency"
+            if saliency_maps:
+                print(f"  {sal_label} maps: {len(saliency_maps)} frames")
+            if gradcam_maps:
+                print(f"  GradCAM maps: {len(gradcam_maps)} frames")
 
-        # F2: VLM layer GradCAM
-        if args.gradcam_vlm_layers:
-            feat_idx += 1
-            layer_str = args.gradcam_vlm_layers
-            vlm_layer_indices = [int(x.strip()) - 1 for x in layer_str.split(",")]
+        # --- Extended attribution features ---
+        has_extended = any([
+            args.gradcam_connector,
+            args.gradcam_vlm_layers,
+            args.vision_vs_state,
+            args.per_action_dim,
+            args.language_diff,
+        ])
 
-            # Auto-detect layer count and filter out-of-range indices
-            try:
-                text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
-                num_layers = len(text_model.layers)
-                invalid = [i + 1 for i in vlm_layer_indices if i >= num_layers]
-                if invalid:
-                    print(f"  WARNING: Model has {num_layers} VLM layers — "
-                          f"skipping out-of-range layers {invalid} (1-indexed)")
-                    vlm_layer_indices = [i for i in vlm_layer_indices if i < num_layers]
-                if not vlm_layer_indices:
-                    print(f"  WARNING: No valid VLM layers to compute, skipping")
-                    vlm_layer_results = None
-                    # skip past the compute call
-            except AttributeError:
-                pass
+        if has_extended:
+            image_key_for_grad = args.image_key or find_image_keys(dataset)[0]
 
-            if vlm_layer_indices:
-                valid_str = ",".join(str(i + 1) for i in vlm_layer_indices)
-                print(f"\n  [{feat_idx}/{len(enabled_features)}] VLM layer GradCAM (layers {valid_str})...")
-                vlm_layer_results = compute_gradcam_vlm_layers_maps(
-                    policy=policy, dataset=dataset,
-                    episode_idx=args.episode, num_frames=args.num_frames,
-                    image_key=image_key_for_grad, device=grad_device_str,
-                    layer_indices=vlm_layer_indices,
-                    noise_seed=args.gradient_seed, task_override=args.task,
+            # Ensure model is on gradient device
+            if grad_device != device and not args.gradient:
+                print(f"\n  Moving model from {device} to {grad_device} for gradient computation...")
+                policy.to(grad_device)
+                model_on_gradient_device = True
+
+            enabled_features = []
+            if args.gradcam_connector:
+                enabled_features.append("Connector GradCAM")
+            if args.gradcam_vlm_layers:
+                enabled_features.append("VLM layer GradCAM")
+            if args.vision_vs_state:
+                enabled_features.append("Vision vs State")
+            if args.per_action_dim:
+                enabled_features.append("Per-action-dim")
+            if args.language_diff:
+                enabled_features.append("Language diff")
+            print(f"\n[Step 3c] Extended attribution ({len(enabled_features)} features: "
+                  f"{', '.join(enabled_features)})...")
+
+            feat_idx = 0
+            # F1: Connector GradCAM
+            if args.gradcam_connector:
+                feat_idx += 1
+                print(f"\n  [{feat_idx}/{len(enabled_features)}] Connector GradCAM...")
+                connector_gradcam_maps = compute_gradcam_connector_maps(
+                    policy=policy,
+                    dataset=dataset,
+                    episode_idx=args.episode,
+                    num_frames=args.num_frames,
+                    image_key=image_key_for_grad,
+                    device=grad_device_str,
+                    noise_seed=args.gradient_seed,
+                    task_override=args.task,
+                    image_map=image_map,
+                )
+                if connector_gradcam_maps:
+                    print(f"  Connector GradCAM: {len(connector_gradcam_maps)} frames")
+
+            # F2: VLM layer GradCAM
+            if args.gradcam_vlm_layers:
+                feat_idx += 1
+                layer_str = args.gradcam_vlm_layers
+                vlm_layer_indices = [int(x.strip()) - 1 for x in layer_str.split(",")]
+
+                # Auto-detect layer count and filter out-of-range indices
+                try:
+                    text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
+                    num_layers = len(text_model.layers)
+                    invalid = [i + 1 for i in vlm_layer_indices if i >= num_layers]
+                    if invalid:
+                        print(f"  WARNING: Model has {num_layers} VLM layers — "
+                              f"skipping out-of-range layers {invalid} (1-indexed)")
+                        vlm_layer_indices = [i for i in vlm_layer_indices if i < num_layers]
+                    if not vlm_layer_indices:
+                        print("  WARNING: No valid VLM layers to compute, skipping")
+                        vlm_layer_results = None
+                except AttributeError:
+                    pass
+
+                if vlm_layer_indices:
+                    valid_str = ",".join(str(i + 1) for i in vlm_layer_indices)
+                    print(f"\n  [{feat_idx}/{len(enabled_features)}] VLM layer GradCAM (layers {valid_str})...")
+                    vlm_layer_results = compute_gradcam_vlm_layers_maps(
+                        policy=policy,
+                        dataset=dataset,
+                        episode_idx=args.episode,
+                        num_frames=args.num_frames,
+                        image_key=image_key_for_grad,
+                        device=grad_device_str,
+                        layer_indices=vlm_layer_indices,
+                        noise_seed=args.gradient_seed,
+                        task_override=args.task,
+                        image_map=image_map,
+                    )
+
+            # F4: Vision vs. State
+            if args.vision_vs_state:
+                feat_idx += 1
+                print(f"\n  [{feat_idx}/{len(enabled_features)}] Vision vs. state attribution...")
+                vision_vs_state_results = compute_vision_vs_state_maps(
+                    policy=policy,
+                    dataset=dataset,
+                    episode_idx=args.episode,
+                    num_frames=args.num_frames,
+                    image_key=image_key_for_grad,
+                    device=grad_device_str,
+                    noise_seed=args.gradient_seed,
+                    task_override=args.task,
                     image_map=image_map,
                 )
 
-        # F4: Vision vs. State
-        if args.vision_vs_state:
-            feat_idx += 1
-            print(f"\n  [{feat_idx}/{len(enabled_features)}] Vision vs. state attribution...")
-            vision_vs_state_results = compute_vision_vs_state_maps(
-                policy=policy, dataset=dataset,
-                episode_idx=args.episode, num_frames=args.num_frames,
-                image_key=image_key_for_grad, device=grad_device_str,
-                noise_seed=args.gradient_seed, task_override=args.task,
-                image_map=image_map,
+            # F6: Per-action-dim GradCAM
+            if args.per_action_dim:
+                feat_idx += 1
+                print(f"\n  [{feat_idx}/{len(enabled_features)}] Per-action-dim GradCAM (retain_graph — GPU recommended)...")
+                try:
+                    action_dim_names = list(dataset.meta.names.get("action", []))
+                except (AttributeError, TypeError):
+                    action_dim_names = None
+                print("  Computing per-action-dim GradCAM...")
+                per_action_dim_maps, per_action_dim_mags = compute_per_action_dim_maps(
+                    policy=policy,
+                    dataset=dataset,
+                    episode_idx=args.episode,
+                    num_frames=args.num_frames,
+                    image_key=image_key_for_grad,
+                    device=grad_device_str,
+                    noise_seed=args.gradient_seed,
+                    task_override=args.task,
+                    action_dim_names=action_dim_names,
+                    image_map=image_map,
+                )
+
+            # F5: Language-conditional comparison
+            if args.language_diff:
+                feat_idx += 1
+                ld = args.language_diff
+                alt_task = None if ld is True or ld == "auto" else ld
+                print(f"\n  [{feat_idx}/{len(enabled_features)}] Language-conditional comparison...")
+                language_diff_results = compute_language_conditional_maps(
+                    policy=policy,
+                    dataset=dataset,
+                    episode_idx=args.episode,
+                    num_frames=args.num_frames,
+                    image_key=image_key_for_grad,
+                    device=grad_device_str,
+                    noise_seed=args.gradient_seed,
+                    task_override=args.task,
+                    alt_task=alt_task,
+                    image_map=image_map,
+                )
+
+        # --- Export gradient data ---
+        if run_dir and (
+            saliency_maps or gradcam_maps or connector_gradcam_maps
+            or vlm_layer_results or per_action_dim_maps
+            or language_diff_results or vision_vs_state_results
+        ):
+            save_gradient_data(
+                run_dir,
+                saliency_maps=saliency_maps,
+                gradcam_maps=gradcam_maps,
+                connector_maps=connector_gradcam_maps,
+                vlm_layer_results=vlm_layer_results,
+                per_action_dim_maps=per_action_dim_maps,
+                per_action_dim_mags=per_action_dim_mags,
+                language_diff_results=language_diff_results,
+                vision_vs_state_results=vision_vs_state_results,
             )
 
-        # F6: Per-action-dim GradCAM
-        if args.per_action_dim:
-            feat_idx += 1
-            print(f"\n  [{feat_idx}/{len(enabled_features)}] Per-action-dim GradCAM (retain_graph — GPU recommended)...")
-            try:
-                action_dim_names = list(dataset.meta.names.get("action", []))
-            except (AttributeError, TypeError):
-                action_dim_names = None
-            print(f"  Computing per-action-dim GradCAM...")
-            per_action_dim_maps, per_action_dim_mags = compute_per_action_dim_maps(
-                policy=policy, dataset=dataset,
-                episode_idx=args.episode, num_frames=args.num_frames,
-                image_key=image_key_for_grad, device=grad_device_str,
-                noise_seed=args.gradient_seed, task_override=args.task,
-                action_dim_names=action_dim_names,
-                image_map=image_map,
-            )
+        # --- Generate visualizations ---
+        print(f"\n[Step 4] Generating visualizations...")
 
-        # F5: Language-conditional comparison
-        if args.language_diff:
-            feat_idx += 1
-            # Treat bool True (from YAML) the same as "auto"
-            ld = args.language_diff
-            alt_task = None if ld is True or ld == "auto" else ld
-            print(f"\n  [{feat_idx}/{len(enabled_features)}] Language-conditional comparison...")
-            language_diff_results = compute_language_conditional_maps(
-                policy=policy, dataset=dataset,
-                episode_idx=args.episode, num_frames=args.num_frames,
-                image_key=image_key_for_grad, device=grad_device_str,
-                noise_seed=args.gradient_seed, task_override=args.task,
-                alt_task=alt_task, image_map=image_map,
-            )
-
-    # --- Export gradient data ---
-    if run_dir and (saliency_maps or gradcam_maps or connector_gradcam_maps
-                    or vlm_layer_results or per_action_dim_maps
-                    or language_diff_results or vision_vs_state_results):
-        save_gradient_data(
-            run_dir,
-            saliency_maps=saliency_maps,
-            gradcam_maps=gradcam_maps,
-            connector_maps=connector_gradcam_maps,
-            vlm_layer_results=vlm_layer_results,
-            per_action_dim_maps=per_action_dim_maps,
-            per_action_dim_mags=per_action_dim_mags,
-            language_diff_results=language_diff_results,
-            vision_vs_state_results=vision_vs_state_results,
-        )
-
-    # --- Generate visualizations ---
-    print(f"\n[Step 4] Generating visualizations...")
-
-    grid_path = os.path.join(args.output_dir, f"episode_dashboard_ep{args.episode:03d}.png")
-    create_visualization_grid(
-        frames=frames,
-        heatmaps=heatmaps,
-        actions=actions,
-        cross_attn_heatmaps=cross_attn_heatmaps,
-        saliency_maps=saliency_maps,
-        gradcam_maps=gradcam_maps,
-        connector_gradcam_maps=connector_gradcam_maps,
-        language_diff_maps=language_diff_results,
-        episode_idx=args.episode,
-        output_path=grid_path,
-        smooth_n=args.smooth_grad,
-    )
-
-    # F3: Per-step cross-attention grid
-    if per_step_cross_attn and any(len(s) > 0 for s in per_step_cross_attn):
-        psc_path = os.path.join(args.output_dir, f"per_step_cross_attn_ep{args.episode:03d}.png")
-        create_per_step_cross_attn_grid(
-            frames=frames,
-            per_step_maps=per_step_cross_attn,
-            episode_idx=args.episode,
-            output_path=psc_path,
-        )
-
-    # F2: VLM layer GradCAM grid
-    if vlm_layer_results and vlm_layer_indices:
-        vlm_path = os.path.join(args.output_dir, f"vlm_layers_ep{args.episode:03d}.png")
-        # Extract language tokens for bar chart labels
-        vlm_lang_tokens = None
-        try:
-            tokenizer = policy.model.vlm_with_expert.processor.tokenizer
-            _img_key = args.image_key or find_image_keys(dataset)[0]
-            first_sample = dataset[get_episode_frames(dataset, args.episode, 1, _img_key)[0][0]]
-            task_str = _resolve_task_string(first_sample, dataset, task_override=args.task)
-            token_ids = tokenizer.encode(task_str, add_special_tokens=False)
-            vlm_lang_tokens = [tokenizer.decode([tid]) for tid in token_ids]
-        except Exception:
-            pass
-        create_vlm_layer_grid(
-            frames=frames,
-            vlm_layer_results=vlm_layer_results,
-            layer_indices=vlm_layer_indices,
-            episode_idx=args.episode,
-            output_path=vlm_path,
-            lang_tokens=vlm_lang_tokens,
-        )
-
-    # F6: Per-action-dim GradCAM grid
-    if per_action_dim_maps and any(m is not None for m in per_action_dim_maps):
-        pad_path = os.path.join(args.output_dir, f"per_action_dim_ep{args.episode:03d}.png")
-        create_per_action_dim_grid(
-            frames=frames,
-            per_dim_maps=per_action_dim_maps,
-            action_dim_names=action_dim_names,
-            episode_idx=args.episode,
-            output_path=pad_path,
-            magnitudes=per_action_dim_mags,
-        )
-
-    # F5: Language-conditional comparison grid
-    if language_diff_results and any(r is not None for r in language_diff_results):
-        ld_path = os.path.join(args.output_dir, f"language_diff_ep{args.episode:03d}.png")
-        create_language_diff_grid(
-            frames=frames,
-            lang_diff_results=language_diff_results,
-            episode_idx=args.episode,
-            output_path=ld_path,
-        )
-
-    # F4: Vision vs. State — save text report
-    if vision_vs_state_results:
-        vs_path = os.path.join(args.output_dir, f"vision_vs_state_ep{args.episode:03d}.txt")
-        lines = []
-        v_total = s_total = 0
-        n_valid = 0
-        for fi, r in enumerate(vision_vs_state_results):
-            if r is not None:
-                lines.append(f"Frame {fi}: vision={r['vision_norm']:.2f} "
-                             f"({r['vision_share']:.0%}), "
-                             f"state={r['state_norm']:.2f} "
-                             f"({1-r['vision_share']:.0%})")
-                v_total += r['vision_share']
-                s_total += 1 - r['vision_share']
-                n_valid += 1
-            else:
-                lines.append(f"Frame {fi}: failed")
-        if n_valid > 0:
-            avg_v = v_total / n_valid
-            lines.append(f"Average: {avg_v:.0%} vision / {1-avg_v:.0%} state")
-        report = "\n".join(lines)
-        with open(vs_path, "w") as f:
-            f.write(report + "\n")
-        print(f"\n  Vision vs. State report:\n    " + "\n    ".join(lines))
-        print(f"  Saved: {vs_path}")
-
-        # Stacked bar chart
-        vs_chart_path = os.path.join(args.output_dir, f"vision_vs_state_ep{args.episode:03d}.png")
-        create_vision_vs_state_chart(
-            vision_vs_state_results=vision_vs_state_results,
-            episode_idx=args.episode,
-            output_path=vs_chart_path,
-        )
-
-    if args.save_individual:
-        save_individual_frames(
+        grid_path = os.path.join(args.output_dir, f"episode_dashboard_ep{args.episode:03d}.png")
+        create_visualization_grid(
             frames=frames,
             heatmaps=heatmaps,
-            output_dir=os.path.join(args.output_dir, f"episode_{args.episode:03d}"),
+            actions=actions,
+            cross_attn_heatmaps=cross_attn_heatmaps,
+            saliency_maps=saliency_maps,
+            gradcam_maps=gradcam_maps,
+            connector_gradcam_maps=connector_gradcam_maps,
+            language_diff_maps=language_diff_results,
             episode_idx=args.episode,
+            output_path=grid_path,
+            smooth_n=args.smooth_grad,
         )
+
+        # F3: Per-step cross-attention grid
+        if per_step_cross_attn and any(len(s) > 0 for s in per_step_cross_attn):
+            psc_path = os.path.join(args.output_dir, f"per_step_cross_attn_ep{args.episode:03d}.png")
+            create_per_step_cross_attn_grid(
+                frames=frames,
+                per_step_maps=per_step_cross_attn,
+                episode_idx=args.episode,
+                output_path=psc_path,
+            )
+
+        # F2: VLM layer GradCAM grid
+        if vlm_layer_results and vlm_layer_indices:
+            vlm_path = os.path.join(args.output_dir, f"vlm_layers_ep{args.episode:03d}.png")
+            vlm_lang_tokens = None
+            try:
+                tokenizer = policy.model.vlm_with_expert.processor.tokenizer
+                _img_key = args.image_key or find_image_keys(dataset)[0]
+                first_sample = dataset[get_episode_frames(dataset, args.episode, 1, _img_key)[0][0]]
+                task_str = _resolve_task_string(first_sample, dataset, task_override=args.task)
+                token_ids = tokenizer.encode(task_str, add_special_tokens=False)
+                vlm_lang_tokens = [tokenizer.decode([tid]) for tid in token_ids]
+            except Exception:
+                pass
+            create_vlm_layer_grid(
+                frames=frames,
+                vlm_layer_results=vlm_layer_results,
+                layer_indices=vlm_layer_indices,
+                episode_idx=args.episode,
+                output_path=vlm_path,
+                lang_tokens=vlm_lang_tokens,
+            )
+
+        # F6: Per-action-dim GradCAM grid
+        if per_action_dim_maps and any(m is not None for m in per_action_dim_maps):
+            pad_path = os.path.join(args.output_dir, f"per_action_dim_ep{args.episode:03d}.png")
+            create_per_action_dim_grid(
+                frames=frames,
+                per_dim_maps=per_action_dim_maps,
+                action_dim_names=action_dim_names,
+                episode_idx=args.episode,
+                output_path=pad_path,
+                magnitudes=per_action_dim_mags,
+            )
+
+        # F5: Language-conditional comparison grid
+        if language_diff_results and any(r is not None for r in language_diff_results):
+            ld_path = os.path.join(args.output_dir, f"language_diff_ep{args.episode:03d}.png")
+            create_language_diff_grid(
+                frames=frames,
+                lang_diff_results=language_diff_results,
+                episode_idx=args.episode,
+                output_path=ld_path,
+            )
+
+        # F4: Vision vs. State — save text report
+        if vision_vs_state_results:
+            vs_path = os.path.join(args.output_dir, f"vision_vs_state_ep{args.episode:03d}.txt")
+            lines = []
+            v_total = 0
+            n_valid = 0
+            for fi, r in enumerate(vision_vs_state_results):
+                if r is not None:
+                    lines.append(f"Frame {fi}: vision={r['vision_norm']:.2f} "
+                                 f"({r['vision_share']:.0%}), "
+                                 f"state={r['state_norm']:.2f} "
+                                 f"({1-r['vision_share']:.0%})")
+                    v_total += r["vision_share"]
+                    n_valid += 1
+                else:
+                    lines.append(f"Frame {fi}: failed")
+            if n_valid > 0:
+                avg_v = v_total / n_valid
+                lines.append(f"Average: {avg_v:.0%} vision / {1 - avg_v:.0%} state")
+            report = "\n".join(lines)
+            with open(vs_path, "w") as f:
+                f.write(report + "\n")
+            print(f"\n  Vision vs. State report:\n    " + "\n    ".join(lines))
+            print(f"  Saved: {vs_path}")
+
+            vs_chart_path = os.path.join(args.output_dir, f"vision_vs_state_ep{args.episode:03d}.png")
+            create_vision_vs_state_chart(
+                vision_vs_state_results=vision_vs_state_results,
+                episode_idx=args.episode,
+                output_path=vs_chart_path,
+            )
+
+        if args.save_individual:
+            save_individual_frames(
+                frames=frames,
+                heatmaps=heatmaps,
+                output_dir=os.path.join(args.output_dir, f"episode_{args.episode:03d}"),
+                episode_idx=args.episode,
+            )
+
+        if args.with_internals:
+            if model_on_gradient_device:
+                print(f"\n  Moving model from {grad_device} back to {device} for model internals...")
+                policy.to(device)
+                model_on_gradient_device = False
+            print("\n[Step 5] Running model internals report...")
+            internals_results = run_model_internals_report(policy, dataset, args)
+            model_internals_ran = True
+
+    if run_dir and model_internals_ran and internals_results is not None:
+        save_model_internals_data(run_dir, internals_results)
 
     # --- Build and save manifest ---
     if run_dir:
@@ -1106,8 +1175,9 @@ Examples:
         _image_keys = find_image_keys(dataset) if dataset else None
 
         model_info = collect_model_info(policy)
+        manifest_frame_count = args.internals_frames if args.internals_only else args.num_frames
         dataset_info_dict = collect_dataset_info(
-            dataset, args.episode, args.num_frames, _manifest_task,
+            dataset, args.episode, manifest_frame_count, _manifest_task,
             action_dim_names=_action_names, image_keys=_image_keys,
         )
         available_viz = build_available_viz(
@@ -1122,6 +1192,7 @@ Examples:
             per_action_dim_maps=per_action_dim_maps,
             language_diff_results=language_diff_results,
             vision_vs_state_results=vision_vs_state_results,
+            model_internals_ran=model_internals_ran,
         )
         image_paths = collect_image_paths(run_dir)
         build_manifest(run_dir, args, model_info=model_info,
@@ -1136,8 +1207,9 @@ Examples:
     print("DONE!")
     print(f"{'=' * 70}")
     print(f"\nOutputs saved to: {output_label}/")
-    print(f"  Episode dashboard:  {grid_path}")
-    if args.save_individual:
+    if grid_path:
+        print(f"  Episode dashboard:  {grid_path}")
+    if args.save_individual and grid_path:
         print(f"  Individual frames:  {args.output_dir}/episode_{args.episode:03d}/")
     if per_step_cross_attn and any(len(s) > 0 for s in per_step_cross_attn):
         print(f"  Per-step cross-attn: per_step_cross_attn_ep{args.episode:03d}.png")
@@ -1152,6 +1224,9 @@ Examples:
     if vision_vs_state_results:
         print(f"  Vision vs state:     vision_vs_state_ep{args.episode:03d}.txt")
         print(f"  Vision vs state chart: vision_vs_state_ep{args.episode:03d}.png")
+    if model_internals_ran:
+        print("  Model internals report: model_internals_report.md")
+        print("  Model internals plot:   model_internals_report.png")
     if run_dir:
         print(f"\n  Run directory: {run_dir}")
         print(f"  Export data:   {os.path.join(run_dir, 'data')}/")

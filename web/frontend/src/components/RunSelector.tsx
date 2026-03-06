@@ -12,6 +12,24 @@ interface VizNavGroup {
   items: VizNavItem[];
 }
 
+function pickDefaultVizType(
+  run: { is_legacy?: boolean; available_visualizations?: Record<string, boolean> } | undefined
+): string | null {
+  if (!run) return null;
+  if (run.is_legacy) return "legacy_images";
+
+  const avail = run.available_visualizations || {};
+  for (const group of VIZ_NAV_GROUPS) {
+    for (const item of group.items) {
+      if (item.key === "compare" || item.key === "run_insights") continue;
+      if (avail[item.key]) return item.key;
+    }
+  }
+
+  if (Object.values(avail).some(Boolean)) return "run_insights";
+  return "compare";
+}
+
 const VIZ_NAV_GROUPS: VizNavGroup[] = [
   {
     category: "GRADIENT",
@@ -48,7 +66,7 @@ const VIZ_NAV_GROUPS: VizNavGroup[] = [
     category: "TOOLS",
     items: [
       { key: "compare", label: "Compare Runs" },
-      { key: "health", label: "Model Health" },
+      { key: "model_internals", label: "Model Internals" },
     ],
   },
 ];
@@ -92,8 +110,8 @@ export default function RunSelector() {
     return VIZ_NAV_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        // Tools and insights are always available
-        if (item.key === "compare" || item.key === "health" || item.key === "run_insights") return true;
+        // Compare and run insights are always available.
+        if (item.key === "compare" || item.key === "run_insights") return true;
         return availViz[item.key];
       }),
     })).filter((group) => group.items.length > 0);
@@ -105,44 +123,18 @@ export default function RunSelector() {
     if (!selectedRunId || selectedVizType) return;
     const run = runs.find((r) => r.id === selectedRunId);
     if (!run) return;
-    if (run.is_legacy) {
-      setSelectedVizType("legacy_images");
+    const defaultViz = pickDefaultVizType(run);
+    if (defaultViz) {
+      setSelectedVizType(defaultViz);
       return;
-    }
-    const avail = run.available_visualizations || {};
-    for (const group of VIZ_NAV_GROUPS) {
-      for (const item of group.items) {
-        if (avail[item.key]) {
-          setSelectedVizType(item.key);
-          return;
-        }
-      }
     }
   }, [selectedRunId, selectedVizType, runs, setSelectedVizType]);
 
   const handleSelectRun = (id: string) => {
     setSelectedRunId(id);
 
-    // Auto-select the first viz type that has data
     const run = runs.find((r) => r.id === id);
-    const avail = run?.available_visualizations || {};
-    const isLeg = run?.is_legacy ?? false;
-
-    if (isLeg) {
-      setSelectedVizType("legacy_images");
-      return;
-    }
-
-    // Walk nav groups in display order to find the first available item
-    for (const group of VIZ_NAV_GROUPS) {
-      for (const item of group.items) {
-        if (avail[item.key]) {
-          setSelectedVizType(item.key);
-          return;
-        }
-      }
-    }
-    setSelectedVizType(null);
+    setSelectedVizType(pickDefaultVizType(run));
   };
 
   return (

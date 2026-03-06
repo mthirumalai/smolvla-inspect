@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
-from .routers import compare, health, llm, llm_cache, notes, runs, visualizations
+from .routers import compare, internals, llm, llm_cache, notes, runs, visualizations
 
 _settings: Settings | None = None
 
@@ -42,7 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="smolvla-inspect",
-        description="Web viewer for SmolVLA attention visualizations",
+        description="Web viewer for SmolVLA inspection runs",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -58,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(runs.router)
     app.include_router(visualizations.router)
-    app.include_router(health.router)
+    app.include_router(internals.router)
     app.include_router(compare.router)
     app.include_router(llm.router)
     app.include_router(notes.router)

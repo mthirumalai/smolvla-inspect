@@ -6,7 +6,7 @@ episode: 0
 num_frames: 8
 device: auto                             # auto | cpu | cuda | mps
 task: null                               # override task/language instruction (default: from dataset)
-output_dir: ./outputs
+output_dir: ./outputs/mthirumalai/
 save_individual: true                   # true to also save each frame separately
 image_map: null                        # dataset→policy image key mapping, e.g. "front=camera2,side=camera3"
 
@@ -25,20 +25,21 @@ smooth_grad: 1                         # SmoothGrad samples (1 = vanilla salienc
 smooth_grad_sigma: 0.15                # Gaussian noise std for SmoothGrad
 
 # Extended attribution features
-gradcam_connector: false
+gradcam_connector: true
 gradcam_vlm_layers: null
-per_step_cross_attention: false
-vision_vs_state: false
+per_step_cross_attention: true
+vision_vs_state: true
 per_action_dim: false
-language_diff: null
+language_diff: true
 
 # Data export (for web viewer)
 export_data: true                      # save structured .npz + JSON alongside PNGs
 run_name: null                         # run folder name (default: timestamped run_YYYY-MM-DD_HH-MM-SS)
 
-# Model health analysis
-model_health: false
-health_frames: 5
+# Model internals report
+internals_only: false
+with_internals: false
+internals_frames: 5
 entropy_warn: 0.8
 entropy_critical: 0.95
 entropy_low: 0.1

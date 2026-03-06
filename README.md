@@ -9,7 +9,7 @@ See what SmolVLA's vision encoder and action expert are looking at when the mode
 
 ## Table of contents
 
-- [What this does](#what-this-does) — attention, gradients, extended attribution, model health
+- [What this does](#what-this-does) — attention, gradients, extended attribution, model internals
 - [How it works](#how-it-works) — pipeline architecture, per-head analysis
 - [Setup](#setup) — Python, FFmpeg, Node.js, GPU
 - [Run](#run) — config files, CLI examples
@@ -27,7 +27,7 @@ SmolVLA is a **vision-language-action** policy: it takes camera images and a lan
 
 1. **Attention visualization** (default) -- extracts and visualizes attention heatmaps showing where the model looks
 2. **Gradient-based attribution** (`--gradient`) -- computes saliency maps and GradCAM to show which pixels *causally influence* the predicted action
-3. **Model health diagnostics** (`--model-health`) -- runs spectral analysis, attention entropy, and head redundancy checks across all model components
+3. **Model internals report** (`--internals-only`) -- runs spectral analysis, attention entropy, and head redundancy checks across all model components
 
 ### Attention visualization
 
@@ -68,7 +68,7 @@ Beyond basic saliency and GradCAM, six extended attribution features provide dee
 | Per-action-dim GradCAM | `--per-action-dim` | `per_action_dim_ep*.png` | Separate GradCAM per action dimension (shoulder_pan, gripper, etc.) -- shows which image regions drive each joint. Uses `retain_graph`, GPU recommended |
 | Language-conditional diff | `--language-diff [alt_task]` | `language_diff_ep*.png` + extra row in main grid | Compares GradCAM between two task instructions to show how language changes the model's visual attention |
 
-### Model health diagnostics
+### Model internals report
 
 Runs three diagnostic checks across all model components (SigLIP vision encoder, VLM text model, action expert, connector, and projection heads):
 
@@ -76,10 +76,12 @@ Runs three diagnostic checks across all model components (SigLIP vision encoder,
 2. **Attention entropy** -- measures how focused or diffuse each attention head is across three attention operations: SigLIP self-attention, VLM+Expert joint self-attention, and Expert-to-VLM cross-attention.
 3. **Head redundancy** -- measures pairwise cosine similarity between attention heads within each layer. High similarity means wasted capacity.
 
-**Output:** Terminal report, markdown report (`model_health_report.md`), and a 3-panel plot (`model_health_report.png`).
+Use `--internals-only` for the report by itself, or `--with-internals` to add it to a normal attention/gradient run.
 
-![Example health report](assets/example_health_report.png)
-*Example 3-panel health report: spectral alpha distribution, attention entropy by layer, and head redundancy matrix. See the full [markdown report](assets/example_health_report.md) for per-layer details.*
+**Output:** Terminal report, markdown report (`model_internals_report.md`), and a 3-panel plot (`model_internals_report.png`).
+
+![Example model internals report](assets/example_model_internals_report.png)
+*Example 3-panel model internals report: spectral alpha distribution, attention entropy by layer, and head redundancy matrix. See the full [markdown report](assets/example_model_internals_report.md) for per-layer details.*
 
 For a detailed visual walkthrough of the architecture and how it maps to the report, see **[Architecture Diagrams](assets/architecture.md)**.
 
@@ -273,14 +275,17 @@ Two configs are provided:
 # Extended: compare attention between two task instructions
 ./run.sh --language-diff "pick up the blue cube"
 
-# Model health diagnostics (spectral analysis + entropy + redundancy)
-./run.sh --model-health
+# Model internals report only (spectral analysis + entropy + redundancy)
+./run.sh --internals-only
 
-# Health check with more sample frames for stable entropy estimates
-./run.sh --model-health --health-frames 10
+# Add model internals to a standard run
+./run.sh --with-internals
 
-# Custom thresholds for health warnings
-./run.sh --model-health --entropy-warn 0.85 --redundancy-warn 0.75
+# More sample frames for stable internals estimates
+./run.sh --internals-only --internals-frames 10
+
+# Custom thresholds for internals warnings
+./run.sh --internals-only --entropy-warn 0.85 --redundancy-warn 0.75
 
 # Explicit device override (auto-detected by default: mps > cuda > cpu)
 ./run.sh --device cuda
@@ -402,12 +407,13 @@ Click **LLM configured** in the top-right corner to choose the model and customi
 | `--per-action-dim` | `false` | Per-action-dimension GradCAM (uses `retain_graph` -- GPU recommended) |
 | `--language-diff` | off | Language-conditional comparison (`auto` to auto-generate alt task, or provide a string) |
 
-**Model health diagnostics:**
+**Model internals report:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model-health` | `false` | Run health diagnostics instead of attention heatmaps |
-| `--health-frames` | `5` | Number of sample frames for entropy/redundancy |
+| `--internals-only` | `false` | Run the model internals report instead of attention or gradient analysis |
+| `--with-internals` | `false` | Also run the model internals report after the standard analysis |
+| `--internals-frames` | `5` | Number of sample frames for entropy/redundancy |
 | `--entropy-warn` | `0.8` | Entropy ratio threshold for "unfocused" warning |
 | `--entropy-critical` | `0.95` | Entropy ratio threshold for "dead" heads |
 | `--entropy-low` | `0.1` | Entropy ratio threshold for "collapsed" heads |
@@ -497,7 +503,7 @@ The model is moved to the gradient device after attention extraction finishes. S
 
 Look for heads that specialize: one head tracking the gripper, another tracking the object, another attending globally. Specialization is a sign of a well-trained encoder. Heads that all look identical suggest the model hasn't learned diverse attention strategies.
 
-### Model health report
+### Model internals report
 
 | Metric | Healthy | Warning | Critical |
 |--------|---------|---------|----------|
@@ -530,14 +536,14 @@ smolvla-inspect/
 │   ├── gradient.py             # Gradient attribution (saliency, GradCAM, extended features)
 │   ├── data.py                 # Dataset helpers, batch building, image key mapping
 │   ├── viz.py                  # Visualization grid, overlays, per-head grids
-│   ├── health.py               # Model health diagnostics (spectral, entropy, redundancy)
+│   ├── internals.py            # Model internals report (spectral, entropy, redundancy)
 │   ├── serve.py                # `smolvla-inspect serve` subcommand launcher
 │   └── _compat.py              # Resize/pad compatibility helpers
 ├── web/
 │   ├── backend/                # FastAPI backend
 │   │   ├── main.py             # App factory, CORS, static file serving
 │   │   ├── config.py           # Settings (base_dir, host, port, CORS origins)
-│   │   ├── routers/            # API routes (runs, visualizations, health, compare, LLM, notes)
+│   │   ├── routers/            # API routes (runs, visualizations, internals, compare, LLM, notes)
 │   │   ├── services/           # Business logic (run scanner, image loader)
 │   │   └── models/             # Pydantic request/response schemas
 │   └── frontend/               # React + Vite + TypeScript frontend
@@ -554,7 +560,7 @@ smolvla-inspect/
 │   ├── how_it_works_architecture.png
 │   ├── example_grid.png
 │   ├── example_per_head.png
-│   ├── example_health_report.png
+│   ├── example_model_internals_report.png
 │   ├── web_viewer_main.png     # Web viewer: main visualization view
 │   ├── web_viewer_insights.png # Web viewer: Run Insights with LLM analysis
 │   └── web_viewer_compare.png  # Web viewer: Compare Runs view

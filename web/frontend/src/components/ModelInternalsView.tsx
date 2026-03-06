@@ -10,12 +10,15 @@ import {
   ReferenceLine,
 } from "recharts";
 import { useAppStore } from "../stores/appStore";
-import { getHealthData, type HealthData } from "../services/api";
+import {
+  getModelInternalsData,
+  type ModelInternalsData,
+} from "../services/api";
 import LLMPanel from "./LLMPanel";
 
-export default function HealthView() {
+export default function ModelInternalsView() {
   const { selectedRunId, selectedRunDetail } = useAppStore();
-  const [health, setHealth] = useState<HealthData | null>(null);
+  const [internals, setInternals] = useState<ModelInternalsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -25,14 +28,14 @@ export default function HealthView() {
     )?.available_visualizations as Record<string, boolean> | undefined;
 
   useEffect(() => {
-    if (!selectedRunId || !avail?.model_health) {
-      setHealth(null);
+    if (!selectedRunId || !avail?.model_internals) {
+      setInternals(null);
       return;
     }
     setLoading(true);
     setError("");
-    getHealthData(selectedRunId)
-      .then(setHealth)
+    getModelInternalsData(selectedRunId)
+      .then(setInternals)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   }, [selectedRunId, avail]);
@@ -41,39 +44,42 @@ export default function HealthView() {
     return <div className="empty-state">Select a run.</div>;
   }
 
-  if (!avail?.model_health) {
+  if (!avail?.model_internals) {
     return (
       <div className="empty-state">
-        <h3>No health data</h3>
+        <h3>No model internals data</h3>
         <p>
-          Run the CLI with <code>--model-health</code> and{" "}
-          <code>--export-data</code> to generate health diagnostics.
+          Run the CLI with <code>--internals-only</code> or{" "}
+          <code>--with-internals</code>, plus <code>--export-data</code>.
         </p>
       </div>
     );
   }
 
-  if (loading) return <div className="empty-state">Loading health data...</div>;
-  if (error)
-    return <div className="empty-state">Error loading health data: {error}</div>;
-  if (!health) return null;
+  if (loading) return <div className="empty-state">Loading model internals...</div>;
+  if (error) {
+    return <div className="empty-state">Error loading model internals: {error}</div>;
+  }
+  if (!internals) return null;
 
   return (
     <div>
-      {/* Summary badges */}
+      <h3 className="detail-viz-title" style={{ marginBottom: 16 }}>
+        Model Internals
+      </h3>
+
       <div className="card" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <HealthBadge label="Entropy" data={health.entropy} />
-        <HealthBadge label="Redundancy" data={health.redundancy} />
-        <HealthBadge label="WeightWatcher" data={health.weightwatcher} />
+        <InternalsBadge label="Entropy" data={internals.entropy} />
+        <InternalsBadge label="Redundancy" data={internals.redundancy} />
+        <InternalsBadge label="WeightWatcher" data={internals.weightwatcher} />
       </div>
 
-      <div className="health-grid">
-        {/* Entropy chart */}
-        {health.entropy && (
-          <div className="health-card">
+      <div className="internals-grid">
+        {internals.entropy && (
+          <div className="internals-card">
             <h3 style={{ marginBottom: 12 }}>Attention Entropy</h3>
             <GenericBarChart
-              data={health.entropy}
+              data={internals.entropy}
               dataKey="entropy_ratio"
               label="Entropy Ratio"
               warnLine={0.8}
@@ -82,13 +88,12 @@ export default function HealthView() {
           </div>
         )}
 
-        {/* Redundancy chart */}
-        {health.redundancy && (
-          <div className="health-card">
+        {internals.redundancy && (
+          <div className="internals-card">
             <h3 style={{ marginBottom: 12 }}>Head Redundancy</h3>
             <GenericBarChart
-              data={health.redundancy}
-              dataKey="max_cosine_sim"
+              data={internals.redundancy}
+              dataKey="max_redundancy"
               label="Max Cosine Similarity"
               warnLine={0.7}
               critLine={0.9}
@@ -96,12 +101,11 @@ export default function HealthView() {
           </div>
         )}
 
-        {/* Spectral alpha chart */}
-        {health.weightwatcher && (
-          <div className="health-card">
+        {internals.weightwatcher && (
+          <div className="internals-card">
             <h3 style={{ marginBottom: 12 }}>Spectral Alpha (WeightWatcher)</h3>
             <GenericBarChart
-              data={health.weightwatcher}
+              data={internals.weightwatcher}
               dataKey="alpha"
               label="Alpha"
             />
@@ -111,14 +115,14 @@ export default function HealthView() {
 
       {selectedRunId && (
         <div className="card" style={{ marginTop: 16 }}>
-          <LLMPanel analysisType="health" runId={selectedRunId} />
+          <LLMPanel analysisType="model_internals" runId={selectedRunId} />
         </div>
       )}
     </div>
   );
 }
 
-function HealthBadge({
+function InternalsBadge({
   label,
   data,
 }: {
@@ -128,14 +132,13 @@ function HealthBadge({
   if (!data) {
     return (
       <div>
-        <span className="health-badge" style={{ background: "#f0f0f0", color: "#666" }}>
+        <span className="internals-badge" style={{ background: "#f0f0f0", color: "#666" }}>
           {label}: N/A
         </span>
       </div>
     );
   }
 
-  // Simple heuristic: check if any "status" field exists
   const status =
     (data as Record<string, unknown>).overall_status ||
     (data as Record<string, unknown>).status ||
@@ -145,11 +148,11 @@ function HealthBadge({
     ? "critical"
     : statusStr.includes("warn")
       ? "warning"
-      : "healthy";
+      : "ok";
 
   return (
     <div>
-      <span className={`health-badge ${severity}`}>
+      <span className={`internals-badge ${severity}`}>
         {label}: {statusStr}
       </span>
     </div>
@@ -169,27 +172,40 @@ function GenericBarChart({
   warnLine?: number;
   critLine?: number;
 }) {
-  // Try to extract per-layer or per-component data
   let chartData: { name: string; value: number }[] = [];
 
   if (Array.isArray(data)) {
     chartData = data.map((d: Record<string, unknown>, i: number) => ({
-      name: (d.name as string) || (d.layer as string) || `${i}`,
-      value: (d[dataKey] as number) || (d.value as number) || 0,
+      name: (d.name as string) || String(d.layer ?? i),
+      value: Number(d[dataKey] ?? d.value ?? 0),
     }));
   } else if (typeof data === "object") {
-    // Try "layers" or "components" key
+    const groupedEntries = Object.entries(data).filter(([, value]) => Array.isArray(value));
+    if (groupedEntries.length > 0) {
+      chartData = groupedEntries.flatMap(([groupName, values]) =>
+        (values as unknown[]).map((d: unknown, i: number) => {
+          const obj = d as Record<string, unknown>;
+          const layerLabel =
+            obj.layer !== undefined ? `L${String(obj.layer)}` : String(i);
+          return {
+            name: `${shortLabel(groupName)} ${layerLabel}`,
+            value: Number(obj[dataKey] ?? obj.value ?? 0),
+          };
+        })
+      );
+    }
+
     const items =
       (data.layers as unknown[]) ||
       (data.components as unknown[]) ||
       (data.heads as unknown[]) ||
       [];
-    if (Array.isArray(items)) {
+    if (chartData.length === 0 && Array.isArray(items)) {
       chartData = items.map((d: unknown, i: number) => {
         const obj = d as Record<string, unknown>;
         return {
-          name: (obj.name as string) || (obj.layer as string) || `${i}`,
-          value: (obj[dataKey] as number) || (obj.value as number) || 0,
+          name: (obj.name as string) || String(obj.layer ?? i),
+          value: Number(obj[dataKey] ?? obj.value ?? 0),
         };
       });
     }
@@ -220,4 +236,15 @@ function GenericBarChart({
       </BarChart>
     </ResponsiveContainer>
   );
+}
+
+function shortLabel(label: string): string {
+  if (label.startsWith("SigLIP")) return "SigLIP";
+  if (label.startsWith("VLM+Expert")) return "VLM+Expert";
+  if (label.startsWith("Expert-to-VLM")) return "Expert XA";
+  if (label.startsWith("Vision Encoder")) return "Vision";
+  if (label.startsWith("VLM Text Model")) return "VLM";
+  if (label.startsWith("Expert")) return "Expert";
+  if (label.startsWith("Connector")) return "Connector";
+  return label;
 }

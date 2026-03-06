@@ -79,27 +79,29 @@ def compare_runs(run_dirs: list[Path],
         }
         avail = mf.get("available_visualizations", {})
         for vt in viz_types:
-            if not avail.get(vt, False):
+            canonical_vt = "model_internals" if vt in ("model_internals", "model_health") else vt
+            if not avail.get(canonical_vt, False):
                 continue
-            if vt == "self_attention":
-                entry["viz"][vt] = data_loader.load_self_attention_heatmaps(rd)
-            elif vt == "cross_attention":
-                entry["viz"][vt] = data_loader.load_cross_attention_heatmaps(rd)
-            elif vt == "vision_vs_state":
-                entry["viz"][vt] = data_loader.load_vision_vs_state(rd)
-            elif vt == "model_health":
-                entry["viz"][vt] = data_loader.load_health_data(rd)
+            if canonical_vt == "self_attention":
+                entry["viz"][canonical_vt] = data_loader.load_self_attention_heatmaps(rd)
+            elif canonical_vt == "cross_attention":
+                entry["viz"][canonical_vt] = data_loader.load_cross_attention_heatmaps(rd)
+            elif canonical_vt == "vision_vs_state":
+                entry["viz"][canonical_vt] = data_loader.load_vision_vs_state(rd)
+            elif canonical_vt == "model_internals":
+                entry["viz"][canonical_vt] = data_loader.load_model_internals_data(rd)
         runs_data.append(entry)
 
     # Compute diffs where both runs have the same viz type
     diffs: dict = {}
     if len(runs_data) >= 2:
         for vt in viz_types:
-            a_data = runs_data[0].get("viz", {}).get(vt)
-            b_data = runs_data[1].get("viz", {}).get(vt)
+            canonical_vt = "model_internals" if vt in ("model_internals", "model_health") else vt
+            a_data = runs_data[0].get("viz", {}).get(canonical_vt)
+            b_data = runs_data[1].get("viz", {}).get(canonical_vt)
             if a_data is None or b_data is None:
                 continue
-            if vt in ("self_attention", "cross_attention"):
-                diffs[vt] = _diff_heatmaps(a_data, b_data)
+            if canonical_vt in ("self_attention", "cross_attention"):
+                diffs[canonical_vt] = _diff_heatmaps(a_data, b_data)
 
     return {"runs": runs_data, "diffs": diffs}

@@ -122,7 +122,7 @@ For each of the 12 heads, provide a brief characterization:
 
 ## Recommendations
 
-### Head health assessment
+### Head status assessment
 - Rate the overall head utilization: excellent (>10 useful heads), good (7-9), concerning (4-6), poor (<4).
 - Identify the most and least valuable heads by number.
 
@@ -791,15 +791,15 @@ Please provide a structured analysis in two parts:
 - Recommend measuring action prediction quality with different connector compression ratios (ablation study).
 - Test whether adding spatial noise after the connector degrades performance differently in preserved vs. lost regions.""",
 
-    # -- Health report prompt --
-    "health": """You are an expert ML diagnostics specialist interpreting a model health report for a SmolVLA vision-language-action model.
+    # -- Model internals prompt --
+    "model_internals": """You are an expert ML diagnostics specialist interpreting a model internals report for a SmolVLA vision-language-action model.
 
 **Model**: {model_id}
 
 **Architecture context:**
 """ + _ARCH_CONTEXT + """
 
-**Health metrics being evaluated:**
+**Internal metrics being evaluated:**
 
 1. **WeightWatcher spectral alpha** (per layer): Measures the power-law distribution of singular values in weight matrices.
    - alpha 2-4: healthy, well-trained layer with good generalization capacity.
@@ -820,31 +820,31 @@ Please provide a structured analysis in two parts:
    - > 0.9: effectively wasted capacity.
 
 **Data:**
-{health_data}
+{computed_stats}
 
 ---
 
 **Response constraint: ≤400 words total. Be terse — flag issues only where metrics are clearly out of range.**
 
-Please provide a structured health assessment:
+Please provide a structured model internals assessment:
 
 ## Component-by-Component Diagnosis
 
 ### SigLIP Vision Encoder (12 layers, 12 heads)
-- Spectral health: Are layer alphas in the healthy 2-4 range? Flag any layers outside this range.
-- Attention health: Which heads are well-specialized vs. dead vs. collapsed?
+- Spectral status: Are layer alphas in the healthy 2-4 range? Flag any layers outside this range.
+- Attention patterns: Which heads are well-specialized vs. dead vs. collapsed?
 - Redundancy: Are the 12 heads diverse or are many redundant?
 - Overall vision encoder grade: healthy / warning / critical.
 
 ### VLM Text Model (16 layers, 15 heads)
-- Spectral health across layers. Are early/late layers differently affected?
+- Spectral status across layers. Are early/late layers differently affected?
 - Attention patterns: Is the VLM building useful contextual representations?
 - Head diversity within layers.
 - Overall VLM grade: healthy / warning / critical.
 
 ### Action Expert (16 layers, 8 heads)
-- Spectral health. Since this is the action generation component, overtrained layers are especially concerning.
-- Attention health: Are heads focused (good for action generation) or diffuse?
+- Spectral status. Since this is the action generation component, overtrained layers are especially concerning.
+- Attention patterns: Are heads focused (good for action generation) or diffuse?
 - With only 8 heads, any dead or redundant heads represent significant wasted capacity.
 - Overall expert grade: healthy / warning / critical.
 
@@ -868,7 +868,7 @@ Please provide a structured health assessment:
 - Which metrics should be tracked during future training?
 - What thresholds should trigger re-evaluation?
 
-## Overall Health Score
+## Overall Status
 Provide a summary score: HEALTHY / WARNING / CRITICAL, with the primary justification.""",
 
     # -- Comparison prompt --
@@ -882,7 +882,7 @@ Runs being compared:
 **Response constraint: ≤250 words total. Reference specific numbers. Be direct.**
 
 Please analyze:
-1. Key differences between runs (attention patterns, GradCAM, health metrics). Reference specific numerical deltas.
+1. Key differences between runs (attention patterns, GradCAM, model internals metrics). Reference specific numerical deltas.
 2. Which run shows better task understanding and why
 3. What might explain the differences (training data, fine-tuning, model architecture)
 4. Specific recommendations for improvement based on the comparison""",
@@ -931,7 +931,7 @@ Please provide a comprehensive three-part analysis:
 - Does language grounding appear effective (if language diff data is available)?
 - Is the vision/state balance appropriate for this task?
 
-### Head and layer health
+### Head and layer status
 - Are there dead or redundant heads in any component?
 - Do the per-head patterns suggest good capacity utilization?
 - Are there concerning spectral properties in any layers?
@@ -1002,6 +1002,8 @@ Be specific and reference the numbers throughout. If researcher notes provide co
 
 
 def get_template(analysis_type: str) -> str:
+    if analysis_type in ("health", "model_health"):
+        analysis_type = "model_internals"
     return TEMPLATES.get(analysis_type, "")
 
 

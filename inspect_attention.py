@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SmolVLA Attention Visualizer — thin entry point.
+"""SmolVLA Inspector — thin entry point.
 
 All logic lives in the ``smolvla_inspect`` package.
 """

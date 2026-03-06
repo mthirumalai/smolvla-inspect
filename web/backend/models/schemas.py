@@ -42,10 +42,13 @@ class VizData(BaseModel):
     metadata: dict = {}
 
 
-class HealthData(BaseModel):
+class ModelInternalsData(BaseModel):
     weightwatcher: dict | None = None
     entropy: dict | None = None
     redundancy: dict | None = None
+
+
+HealthData = ModelInternalsData
 
 
 class CompareRequest(BaseModel):
@@ -74,7 +77,7 @@ class VizStats(BaseModel):
 
 class LLMAnalyzeRequest(BaseModel):
     run_id: str
-    analysis_type: str  # e.g. "self_attention", "health", "comparison"
+    analysis_type: str  # e.g. "self_attention", "model_internals", "comparison"
     prompt: str | None = None  # user-edited prompt overrides default
     viz_type: str | None = None
     frame_indices: list[int] | None = None

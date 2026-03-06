@@ -1,5 +1,5 @@
 """
-Model health diagnostics — spectral alpha, attention entropy, head redundancy.
+Model internals report — spectral alpha, attention entropy, head redundancy.
 
 Imports from ``capture`` and ``data``.
 """
@@ -162,7 +162,7 @@ def compute_head_redundancy(attn_maps):
     return results
 
 
-def classify_health(alpha=None, entropy=None, redundancy=None, thresholds=None):
+def classify_status(alpha=None, entropy=None, redundancy=None, thresholds=None):
     """
     Classify a single metric value into a status string and ANSI color.
 
@@ -219,7 +219,7 @@ def classify_health(alpha=None, entropy=None, redundancy=None, thresholds=None):
 
 
 def _status_emoji(label):
-    """Map a plain health label to a markdown-friendly status indicator."""
+    """Map a plain status label to a markdown-friendly indicator."""
     if label in ("healthy", "diverse"):
         return "OK"
     elif label in ("undertrained", "unfocused", "high redundancy"):
@@ -228,7 +228,7 @@ def _status_emoji(label):
         return "CRITICAL"
 
 
-def print_health_report(ww_results, entropy_results, redundancy_results, thresholds):
+def print_model_internals_report(ww_results, entropy_results, redundancy_results, thresholds):
     """
     Print a formatted terminal table with ANSI color-coded status per
     layer/component.
@@ -238,7 +238,7 @@ def print_health_report(ww_results, entropy_results, redundancy_results, thresho
     DIM = "\033[2m"
 
     print(f"\n{'=' * 78}")
-    print(f"{BOLD}MODEL HEALTH REPORT{RESET}")
+    print(f"{BOLD}MODEL INTERNALS REPORT{RESET}")
     print(f"{'=' * 78}")
 
     # --- Section 1: Weight Spectral Analysis ---
@@ -263,7 +263,7 @@ def print_health_report(ww_results, entropy_results, redundancy_results, thresho
             mean_a = sum(alphas) / len(alphas)
             min_a = min(alphas)
             max_a = max(alphas)
-            status, _, _ = classify_health(alpha=mean_a)
+            status, _, _ = classify_status(alpha=mean_a)
             print(f"   {comp_name:<35} {len(layers):>11}  {mean_a:>8.2f}  {min_a:>8.2f}  {max_a:>8.2f}  {status}")
     else:
         print(f"\n{BOLD}1. Weight Spectral Analysis{RESET}")
@@ -294,7 +294,7 @@ def print_health_report(ww_results, entropy_results, redundancy_results, thresho
                 mean_e = sum(vals) / len(vals)
                 min_e = min(vals)
                 max_e = max(vals)
-                status, _, _ = classify_health(entropy=mean_e, thresholds=thresholds)
+                status, _, _ = classify_status(entropy=mean_e, thresholds=thresholds)
                 print(f"   {layer:>6}  {mean_e:>10.4f}  {min_e:>10.4f}  {max_e:>10.4f}  {status}")
     else:
         print(f"\n{BOLD}2. Attention Entropy{RESET}")
@@ -316,7 +316,7 @@ def print_health_report(ww_results, entropy_results, redundancy_results, thresho
             print(f"   {'Layer':>6}  {'Mean Sim':>10}  {'Max Sim':>10}  Status")
             print(f"   {'-' * 46}")
             for r in comp_entries:
-                status, _, _ = classify_health(redundancy=r["mean_redundancy"], thresholds=thresholds)
+                status, _, _ = classify_status(redundancy=r["mean_redundancy"], thresholds=thresholds)
                 print(f"   {r['layer']:>6}  {r['mean_redundancy']:>10.4f}  {r['max_redundancy']:>10.4f}  {status}")
     else:
         print(f"\n{BOLD}3. Head Redundancy{RESET}")
@@ -325,14 +325,14 @@ def print_health_report(ww_results, entropy_results, redundancy_results, thresho
     print(f"\n{'=' * 78}\n")
 
 
-def generate_health_markdown(ww_results, entropy_results, redundancy_results, thresholds):
+def generate_model_internals_markdown(ww_results, entropy_results, redundancy_results, thresholds):
     """
-    Build a Markdown report string from health diagnostics results.
+    Build a Markdown report string from model internals results.
     """
     lines = []
     w = lines.append
 
-    w("# Model Health Report\n")
+    w("# Model Internals Report\n")
 
     # --- Section 1: Weight Spectral Analysis ---
     w("## 1. Weight Spectral Analysis (alpha)\n")
@@ -352,7 +352,7 @@ def generate_health_markdown(ww_results, entropy_results, redundancy_results, th
             mean_a = sum(alphas) / len(alphas)
             min_a = min(alphas)
             max_a = max(alphas)
-            _, _, label = classify_health(alpha=mean_a)
+            _, _, label = classify_status(alpha=mean_a)
             badge = _status_emoji(label)
             w(f"| {comp_name} | {len(layers)} | {mean_a:.2f} | {min_a:.2f} | {max_a:.2f} | {badge} {label} |")
     else:
@@ -383,7 +383,7 @@ def generate_health_markdown(ww_results, entropy_results, redundancy_results, th
                 mean_e = sum(vals) / len(vals)
                 min_e = min(vals)
                 max_e = max(vals)
-                _, _, label = classify_health(entropy=mean_e, thresholds=thresholds)
+                _, _, label = classify_status(entropy=mean_e, thresholds=thresholds)
                 badge = _status_emoji(label)
                 w(f"| {layer} | {mean_e:.4f} | {min_e:.4f} | {max_e:.4f} | {badge} {label} |")
     else:
@@ -405,7 +405,7 @@ def generate_health_markdown(ww_results, entropy_results, redundancy_results, th
             w("| Layer | Mean Sim | Max Sim | Status |")
             w("|------:|---------:|--------:|--------|")
             for r in comp_entries:
-                _, _, label = classify_health(redundancy=r["mean_redundancy"], thresholds=thresholds)
+                _, _, label = classify_status(redundancy=r["mean_redundancy"], thresholds=thresholds)
                 badge = _status_emoji(label)
                 w(f"| {r['layer']} | {r['mean_redundancy']:.4f} | {r['max_redundancy']:.4f} | {badge} {label} |")
     else:
@@ -414,7 +414,7 @@ def generate_health_markdown(ww_results, entropy_results, redundancy_results, th
     return "\n".join(lines)
 
 
-def plot_health_report(ww_results, entropy_results, redundancy_results, output_path):
+def plot_model_internals_report(ww_results, entropy_results, redundancy_results, output_path):
     """
     3-panel vertical matplotlib figure saved to *output_path*.
 
@@ -621,12 +621,12 @@ def plot_health_report(ww_results, entropy_results, redundancy_results, output_p
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
-    print(f"  Saved health report plot: {output_path}")
+    print(f"  Saved model internals plot: {output_path}")
 
 
-def run_model_health_report(policy, dataset, args):
+def run_model_internals_report(policy, dataset, args):
     """
-    Orchestrator for ``--model-health`` mode.
+    Orchestrator for model internals reporting.
 
     Step 1: Spectral alpha via WeightWatcher (no data needed).
     Step 2: Sample frames, run forward passes, compute entropy + redundancy.
@@ -646,7 +646,7 @@ def run_model_health_report(policy, dataset, args):
     # Step 1: WeightWatcher spectral analysis
     # ------------------------------------------------------------------
     print(f"\n{'=' * 70}")
-    print("MODEL HEALTH DIAGNOSTICS")
+    print("MODEL INTERNALS REPORT")
     print(f"{'=' * 70}")
     print("\n[1/3] Running WeightWatcher spectral analysis...")
     ww_results = compute_weightwatcher_alpha(policy)
@@ -654,7 +654,7 @@ def run_model_health_report(policy, dataset, args):
     # ------------------------------------------------------------------
     # Step 2: Sample frames, capture per-head attention, compute metrics
     # ------------------------------------------------------------------
-    print(f"\n[2/3] Capturing attention maps over {args.health_frames} frames...")
+    print(f"\n[2/3] Capturing attention maps over {args.internals_frames} frames...")
 
     # Find vision encoder and set up hooks
     vision_encoder = find_vision_encoder(policy)
@@ -708,7 +708,7 @@ def run_model_health_report(policy, dataset, args):
         if image_key is not None:
             # Sample frames
             frame_pairs = get_episode_frames(
-                dataset, args.episode, args.health_frames, image_key,
+                dataset, args.episode, args.internals_frames, image_key,
             )
 
             # Determine SigLIP patch grid for entropy normalisation
@@ -848,17 +848,24 @@ def run_model_health_report(policy, dataset, args):
     # Step 3: Print report and save plot
     # ------------------------------------------------------------------
     print(f"\n[3/3] Generating report...")
-    print_health_report(ww_results, entropy_results, redundancy_results, thresholds)
+    print_model_internals_report(ww_results, entropy_results, redundancy_results, thresholds)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    md_path = os.path.join(args.output_dir, "model_health_report.md")
-    md_text = generate_health_markdown(ww_results, entropy_results, redundancy_results, thresholds)
+    md_path = os.path.join(args.output_dir, "model_internals_report.md")
+    md_text = generate_model_internals_markdown(ww_results, entropy_results, redundancy_results, thresholds)
     with open(md_path, "w") as f:
         f.write(md_text)
     print(f"  Saved markdown report: {md_path}")
 
-    plot_path = os.path.join(args.output_dir, "model_health_report.png")
-    plot_health_report(ww_results, entropy_results, redundancy_results, plot_path)
+    plot_path = os.path.join(args.output_dir, "model_internals_report.png")
+    plot_model_internals_report(ww_results, entropy_results, redundancy_results, plot_path)
 
     print(f"Done! Reports saved to {args.output_dir}/")
+    return {
+        "weightwatcher": ww_results,
+        "entropy": entropy_results,
+        "redundancy": redundancy_results,
+        "markdown_path": md_path,
+        "plot_path": plot_path,
+    }

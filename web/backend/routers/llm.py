@@ -132,6 +132,10 @@ def _compute_stats_text(req: LLMAnalyzeRequest, run_dir: Path,
             return stats_engine.format_stats_for_prompt(cross.get("deltas", {}))
         return ""
 
+    if req.analysis_type in ("model_internals", "model_health", "health"):
+        data = data_loader.load_model_internals_data(run_dir)
+        return json.dumps(data, indent=2) if data else ""
+
     # Per-viz stats
     viz_type = req.viz_type or req.analysis_type.replace("single_viz_", "")
     stats = _compute_single_viz_stats(run_dir, viz_type)
@@ -328,8 +332,10 @@ def _image_relevant(image_path: str, viz_type: str) -> bool:
     name = image_path.split("/")[-1].lower()
     mapping = {
         **_VIZ_IMAGE_MAPPING,
-        "model_health": ["model_health"],
-        "health": ["model_health"],
+        "model_internals": ["model_internals", "model_health"],
+        "model_health": ["model_internals", "model_health"],
+        "internals": ["model_internals", "model_health"],
+        "health": ["model_internals", "model_health"],
     }
     prefixes = mapping.get(viz_type, [])
     return any(name.startswith(p) for p in prefixes)
