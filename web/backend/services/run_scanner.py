@@ -99,77 +99,75 @@ def _build_legacy_manifest(directory: Path) -> dict:
 
 
 def scan_directory(base_dir: Path) -> list[RunSummary]:
-    """Scan *base_dir* (non-recursively) for run folders.
+    """Recursively scan *base_dir* for run folders.
 
-    A run folder is any child directory containing ``run_manifest.json``
-    or known legacy PNGs.
+    A run folder is any directory containing ``run_manifest.json``
+    or known legacy PNGs.  Walks the full tree so runs in nested
+    subdirectories (e.g. ``outputs/user/run_xxx``) are discovered.
     """
     runs: list[RunSummary] = []
     base = Path(base_dir)
     if not base.is_dir():
         return runs
 
-    for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
+    seen_ids: set[str] = set()
 
-        manifest_path = child / "run_manifest.json"
-        if manifest_path.exists():
+    for dirpath, dirnames, filenames in os.walk(base):
+        current = Path(dirpath)
+
+        if "run_manifest.json" in filenames:
             try:
-                manifest = _normalize_manifest(json.loads(manifest_path.read_text()))
+                manifest = _normalize_manifest(
+                    json.loads((current / "run_manifest.json").read_text())
+                )
             except (json.JSONDecodeError, OSError):
                 continue
-            runs.append(RunSummary(
-                id=_run_id_from_path(child),
-                name=child.name,
-                created_at=manifest.get("created_at"),
-                model_id=(manifest.get("model_info") or {}).get("model_id"),
-                dataset_id=(manifest.get("dataset_info") or {}).get("dataset_id"),
-                episode_idx=(manifest.get("dataset_info") or {}).get("episode_idx"),
-                num_frames=(manifest.get("dataset_info") or {}).get("num_frames"),
-                available_visualizations=manifest.get("available_visualizations", {}),
-                is_legacy=False,
-            ))
-        elif _is_legacy_run(child):
-            runs.append(RunSummary(
-                id=_run_id_from_path(child),
-                name=child.name,
-                is_legacy=True,
-                available_visualizations=_build_legacy_manifest(child).get(
-                    "available_visualizations", {}),
-            ))
-
-    # Also check if base_dir itself is a legacy run (flat layout)
-    if not runs and _is_legacy_run(base):
-        runs.append(RunSummary(
-            id=_run_id_from_path(base),
-            name=base.name,
-            is_legacy=True,
-            available_visualizations=_build_legacy_manifest(base).get(
-                "available_visualizations", {}),
-        ))
+            rid = _run_id_from_path(current)
+            if rid not in seen_ids:
+                seen_ids.add(rid)
+                runs.append(RunSummary(
+                    id=rid,
+                    name=current.name,
+                    created_at=manifest.get("created_at"),
+                    model_id=(manifest.get("model_info") or {}).get("model_id"),
+                    dataset_id=(manifest.get("dataset_info") or {}).get("dataset_id"),
+                    episode_idx=(manifest.get("dataset_info") or {}).get("episode_idx"),
+                    num_frames=(manifest.get("dataset_info") or {}).get("num_frames"),
+                    available_visualizations=manifest.get("available_visualizations", {}),
+                    is_legacy=False,
+                ))
+            # Don't descend into run directories
+            dirnames.clear()
+        elif _is_legacy_run(current):
+            rid = _run_id_from_path(current)
+            if rid not in seen_ids:
+                seen_ids.add(rid)
+                runs.append(RunSummary(
+                    id=rid,
+                    name=current.name,
+                    is_legacy=True,
+                    available_visualizations=_build_legacy_manifest(current).get(
+                        "available_visualizations", {}),
+                ))
+            dirnames.clear()
 
     return runs
 
 
 def load_manifest(base_dir: Path, run_id: str) -> tuple[Path, dict]:
-    """Find the run folder matching *run_id* and return (path, manifest)."""
+    """Find the run folder matching *run_id* (recursively) and return (path, manifest)."""
     base = Path(base_dir)
-    for child in base.iterdir():
-        if not child.is_dir():
-            continue
-        if _run_id_from_path(child) == run_id:
-            manifest_path = child / "run_manifest.json"
-            if manifest_path.exists():
-                return child, _normalize_manifest(json.loads(manifest_path.read_text()))
-            if _is_legacy_run(child):
-                return child, _build_legacy_manifest(child)
 
-    # Check if base itself matches
-    if _run_id_from_path(base) == run_id:
-        if (base / "run_manifest.json").exists():
-            return base, _normalize_manifest(json.loads((base / "run_manifest.json").read_text()))
-        if _is_legacy_run(base):
-            return base, _build_legacy_manifest(base)
+    for dirpath, dirnames, filenames in os.walk(base):
+        current = Path(dirpath)
+        if _run_id_from_path(current) != run_id:
+            continue
+
+        if "run_manifest.json" in filenames:
+            return current, _normalize_manifest(
+                json.loads((current / "run_manifest.json").read_text())
+            )
+        if _is_legacy_run(current):
+            return current, _build_legacy_manifest(current)
 
     raise FileNotFoundError(f"Run {run_id} not found under {base_dir}")

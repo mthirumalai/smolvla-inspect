@@ -1,12 +1,12 @@
 # GPU-optimized defaults (RTX 3080 / similar).  CLI flags override these.
 
-model: mthirumalai/so101-picknplace3.smolvla-policy.2
-dataset: mthirumalai/so101.tp1.e161.c2
+model: mthirumalai/so101.pnp.1.policy.s1
+dataset: mthirumalai/so101.pnp.1
 episode: 0
 num_frames: 8
 device: cuda
 task: null
-output_dir: ./outputs
+output_dir: ./outputs/mthirumalai/
 save_individual: true
 
 # Attention analysis options
@@ -29,11 +29,14 @@ gradcam_vlm_layers: "4,8,12,16"
 per_step_cross_attention: true
 vision_vs_state: true
 per_action_dim: true
-language_diff: "auto"
+language_diff: true
+
+# Data export (for web viewer)
+export_data: true
 
 # Model internals report
 internals_only: false
-with_internals: false
+with_internals: true
 internals_frames: 5
 entropy_warn: 0.8
 entropy_critical: 0.95
