@@ -63,6 +63,12 @@ const VIZ_NAV_GROUPS: VizNavGroup[] = [
     ],
   },
   {
+    category: "DIAGNOSTIC",
+    items: [
+      { key: "diagnostic", label: "Diagnostic Agent" },
+    ],
+  },
+  {
     category: "TOOLS",
     items: [
       { key: "compare", label: "Compare Runs" },
@@ -110,8 +116,8 @@ export default function RunSelector() {
     return VIZ_NAV_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        // Compare and run insights are always available.
-        if (item.key === "compare" || item.key === "run_insights") return true;
+        // Compare, run insights, and diagnostic are always available.
+        if (item.key === "compare" || item.key === "run_insights" || item.key === "diagnostic") return true;
         return availViz[item.key];
       }),
     })).filter((group) => group.items.length > 0);

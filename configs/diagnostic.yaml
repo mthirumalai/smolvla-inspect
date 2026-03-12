@@ -1,0 +1,20 @@
+# Diagnostic agent configuration
+# Usage: python inspect_attention.py diagnose --config configs/diagnostic.yaml
+
+# Scene understanding
+scene_model: "google/owlv2-base-patch16-ensemble"
+segmentation_model: "facebook/sam-vit-base"
+detection_confidence: 0.1
+
+# Dataset diversity analysis
+diversity_episodes: 20
+diversity_frames_per_episode: 3
+
+# Agent settings
+max_hypotheses: 5
+max_counterfactuals: 3
+num_frames: 4
+
+# LLM settings (can also use env vars SMOLVLA_LLM_*)
+# llm_provider: "anthropic"
+# llm_model: "claude-sonnet-4-20250514"

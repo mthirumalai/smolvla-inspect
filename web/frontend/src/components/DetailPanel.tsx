@@ -12,6 +12,7 @@ import ModelInternalsView from "./ModelInternalsView";
 import RunInsightsView from "./RunInsightsView";
 import RunNotesEditor from "./RunNotesEditor";
 import LLMPanel from "./LLMPanel";
+import DiagnosticPanel from "./DiagnosticPanel";
 
 const VIZ_TYPES: { key: string; label: string }[] = [
   { key: "self_attention", label: "Self-Attention Heatmaps" },
@@ -35,7 +36,7 @@ const HEATMAP_VIZ_TYPES = new Set([
   "gradcam_connector",
 ]);
 
-const SKIP_VIZ_FETCH = new Set(["compare", "model_internals", "legacy_images", "run_insights"]);
+const SKIP_VIZ_FETCH = new Set(["compare", "model_internals", "legacy_images", "run_insights", "diagnostic"]);
 
 export default function DetailPanel() {
   const { selectedRunId, selectedRunDetail, selectedVizType, displayMode } = useAppStore();
@@ -118,6 +119,7 @@ export default function DetailPanel() {
       {selectedVizType === "compare" && <CompareView />}
       {selectedVizType === "model_internals" && <ModelInternalsView />}
       {selectedVizType === "run_insights" && <RunInsightsView />}
+      {selectedVizType === "diagnostic" && <DiagnosticPanel />}
 
       {/* Legacy images */}
       {selectedVizType === "legacy_images" && (
