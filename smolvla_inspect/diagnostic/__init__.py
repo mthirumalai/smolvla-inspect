@@ -6,6 +6,10 @@ from .agent import DiagnosticAgent
 from .models import DiagnosticReport
 from .report import save_diagnostic_report, load_diagnostic_report
 
+# Import modules with @register_primitive decorators so they register on load.
+from . import scene as _scene  # noqa: F401
+from . import counterfactual as _counterfactual  # noqa: F401
+
 __all__ = [
     "DiagnosticAgent",
     "DiagnosticReport",

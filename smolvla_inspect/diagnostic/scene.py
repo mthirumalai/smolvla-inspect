@@ -82,10 +82,57 @@ def parse_task_objects(task_string: str) -> list[str]:
     requires_scene_models=True,
     description="Detect objects in an image using OWL-ViT v2.",
 )
+def _box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """Compute IoU between two (x1, y1, x2, y2) boxes."""
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _per_class_nms(
+    detections: list[DetectedObject],
+    iou_threshold: float = 0.5,
+    max_per_class: int = 3,
+) -> list[DetectedObject]:
+    """Per-class greedy NMS: suppress overlapping boxes, keep top-K per class."""
+    # Group by label
+    by_label: dict[str, list[DetectedObject]] = {}
+    for det in detections:
+        by_label.setdefault(det.label, []).append(det)
+
+    kept: list[DetectedObject] = []
+    for label, dets in by_label.items():
+        # Already sorted by score descending from caller
+        survivors: list[DetectedObject] = []
+        for det in dets:
+            suppressed = False
+            for survivor in survivors:
+                if _box_iou(det.box, survivor.box) > iou_threshold:
+                    suppressed = True
+                    break
+            if not suppressed:
+                survivors.append(det)
+            if len(survivors) >= max_per_class:
+                break
+        kept.extend(survivors)
+
+    # Re-sort by score
+    kept.sort(key=lambda d: d.score, reverse=True)
+    return kept
+
+
 def detect_objects(
     image: np.ndarray,
     object_queries: list[str],
     confidence_threshold: float = 0.1,
+    nms_iou_threshold: float = 0.5,
+    max_per_class: int = 3,
     device: str = "cpu",
 ) -> list[DetectedObject]:
     """Run open-vocabulary object detection using OWL-ViT v2.
@@ -98,6 +145,10 @@ def detect_objects(
         Text queries describing objects to detect.
     confidence_threshold : float
         Minimum confidence score to keep a detection.
+    nms_iou_threshold : float
+        IoU threshold for per-class non-maximum suppression.
+    max_per_class : int
+        Maximum detections to keep per object class.
     device : str
         ``"cpu"`` or ``"cuda"``.
 
@@ -158,8 +209,14 @@ def detect_objects(
         # Sort by confidence descending
         detections.sort(key=lambda d: d.score, reverse=True)
 
+        raw_count = len(detections)
+
+        # Per-class NMS to remove overlapping duplicates
+        detections = _per_class_nms(detections, iou_threshold=nms_iou_threshold,
+                                     max_per_class=max_per_class)
+
         det_summary = ", ".join(f"{d.label} ({d.score:.2f})" for d in detections)
-        print(f"  Detected {len(detections)} objects: {det_summary}")
+        print(f"  Detected {raw_count} raw → {len(detections)} after NMS: {det_summary}")
 
     except Exception as e:
         print(f"  WARNING: OWL-ViT detection failed: {e}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import numpy as np
 
 from .models import (
@@ -18,6 +19,121 @@ from .prompts import (
     format_diversity_summary, format_anomalies_json, format_hypotheses_with_results,
 )
 from ..data import _resolve_task_string, get_episode_frames, build_policy_batch_from_sample
+
+
+# ---------------------------------------------------------------------------
+# Robust JSON extraction — handles common LLM output quirks
+# ---------------------------------------------------------------------------
+
+def _extract_json_array(text: str) -> list[dict]:
+    """Extract a JSON array from LLM output, repairing common formatting issues.
+
+    Handles: markdown code fences, trailing commas, unescaped newlines inside
+    string values, single quotes, // comments, and control characters.
+    """
+    # 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
+    text = re.sub(r"```(?:json)?\s*\n?", "", text)
+
+    # 2. Locate the outermost [ ... ]
+    start = text.find("[")
+    end = text.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    blob = text[start:end + 1]
+
+    # 3. Try parsing as-is first (fast path)
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Repair pass
+    # Remove single-line // comments
+    blob = re.sub(r"//[^\n]*", "", blob)
+    # Remove C-style /* ... */ comments
+    blob = re.sub(r"/\*.*?\*/", "", blob, flags=re.DOTALL)
+    # Replace single quotes used as string delimiters with double quotes
+    # (only outside of already-double-quoted strings)
+    blob = _single_to_double_quotes(blob)
+    # Remove trailing commas before } or ]
+    blob = re.sub(r",\s*([}\]])", r"\1", blob)
+    # Escape literal newlines inside string values
+    blob = _escape_newlines_in_strings(blob)
+    # Strip control characters (except \n \r \t)
+    blob = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", blob)
+
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        pass
+
+    # 5. Last resort: try to parse individual objects with per-object repair
+    return _parse_objects_individually(blob)
+
+
+def _single_to_double_quotes(s: str) -> str:
+    """Replace single-quoted JSON strings with double-quoted ones."""
+    result = []
+    i = 0
+    in_double = False
+    while i < len(s):
+        ch = s[i]
+        if ch == '"' and (i == 0 or s[i - 1] != '\\'):
+            in_double = not in_double
+            result.append(ch)
+        elif ch == "'" and not in_double:
+            result.append('"')
+        else:
+            result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _escape_newlines_in_strings(s: str) -> str:
+    """Escape literal newlines that appear inside JSON string values."""
+    result = []
+    in_string = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == '"' and (i == 0 or s[i - 1] != '\\'):
+            in_string = not in_string
+            result.append(ch)
+        elif ch == '\n' and in_string:
+            result.append('\\n')
+        elif ch == '\r' and in_string:
+            result.append('\\r')
+        elif ch == '\t' and in_string:
+            result.append('\\t')
+        else:
+            result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _parse_objects_individually(blob: str) -> list[dict]:
+    """Try to extract individual JSON objects from a malformed array."""
+    objects = []
+    depth = 0
+    start = None
+    for i, ch in enumerate(blob):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                fragment = blob[start:i + 1]
+                # Apply the same repairs to each fragment
+                fragment = re.sub(r",\s*}", "}", fragment)
+                fragment = _escape_newlines_in_strings(fragment)
+                try:
+                    objects.append(json.loads(fragment))
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    return objects
 
 
 class DiagnosticAgent:
@@ -525,28 +641,22 @@ class DiagnosticAgent:
 
         response = await self._call_llm(prompt)
 
-        # Parse JSON response
+        # Parse JSON response (with repair for common LLM quirks)
         hypotheses = []
         try:
-            # Try to find JSON array in response
-            text = response.strip()
-            # Find first [ and last ]
-            start = text.find("[")
-            end = text.rfind("]")
-            if start >= 0 and end > start:
-                items = json.loads(text[start:end + 1])
-                for item in items:
-                    hypotheses.append(Hypothesis(
-                        id=item.get("id", f"h{len(hypotheses)+1}"),
-                        description=item.get("description", ""),
-                        confidence=float(item.get("confidence", 0.5)),
-                        supporting_anomalies=item.get("supporting_anomalies", []),
-                        test_type=item.get("test_type", "none"),
-                        test_params=item.get("test_params", {}),
-                        expected_if_true=item.get("expected_if_true", ""),
-                        expected_if_false=item.get("expected_if_false", ""),
-                    ))
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            items = _extract_json_array(response)
+            for item in items:
+                hypotheses.append(Hypothesis(
+                    id=item.get("id", f"h{len(hypotheses)+1}"),
+                    description=item.get("description", ""),
+                    confidence=float(item.get("confidence", 0.5)),
+                    supporting_anomalies=item.get("supporting_anomalies", []),
+                    test_type=item.get("test_type", "none"),
+                    test_params=item.get("test_params", {}),
+                    expected_if_true=item.get("expected_if_true", ""),
+                    expected_if_false=item.get("expected_if_false", ""),
+                ))
+        except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM hypotheses: {e}")
 
         # If LLM failed, generate rule-based hypotheses from anomalies
@@ -639,26 +749,22 @@ class DiagnosticAgent:
             else:
                 json_part = response
 
-            # Parse findings JSON
-            text = json_part.strip()
-            start = text.find("[")
-            end = text.rfind("]")
-            if start >= 0 and end > start:
-                items = json.loads(text[start:end + 1])
-                for item in items:
-                    findings.append(Finding(
-                        id=item.get("id", f"f{len(findings)+1}"),
-                        severity=item.get("severity", "info"),
-                        title=item.get("title", ""),
-                        observation=item.get("observation", ""),
-                        test_description=item.get("test_description", ""),
-                        test_result=item.get("test_result", ""),
-                        interpretation=item.get("interpretation", ""),
-                        fix=item.get("fix", ""),
-                        expected_impact=item.get("expected_impact", ""),
-                        evidence_refs=item.get("evidence_refs", []),
-                    ))
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Parse findings JSON (with repair for common LLM quirks)
+            items = _extract_json_array(json_part)
+            for item in items:
+                findings.append(Finding(
+                    id=item.get("id", f"f{len(findings)+1}"),
+                    severity=item.get("severity", "info"),
+                    title=item.get("title", ""),
+                    observation=item.get("observation", ""),
+                    test_description=item.get("test_description", ""),
+                    test_result=item.get("test_result", ""),
+                    interpretation=item.get("interpretation", ""),
+                    fix=item.get("fix", ""),
+                    expected_impact=item.get("expected_impact", ""),
+                    evidence_refs=item.get("evidence_refs", []),
+                ))
+        except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM synthesis: {e}")
 
         # If LLM failed, generate rule-based findings

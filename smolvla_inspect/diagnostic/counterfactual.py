@@ -43,9 +43,75 @@ def _hwc_to_tensor(arr: np.ndarray, device: str = "cpu") -> torch.Tensor:
     return torch.from_numpy(arr.astype(np.float32)).to(device)
 
 
-def _make_comparison(original_img: np.ndarray, modified_img: np.ndarray) -> np.ndarray:
-    """Create side-by-side comparison. Both are (H, W, 3) uint8 numpy arrays."""
-    return np.concatenate([original_img, modified_img], axis=1)
+def _make_comparison(
+    original_img: np.ndarray,
+    modified_img: np.ndarray,
+    mask: np.ndarray | None = None,
+    zoom_padding: int = 40,
+) -> np.ndarray:
+    """Create annotated side-by-side comparison. Both are (H, W, 3) uint8 numpy arrays.
+
+    If *mask* is provided, draws a highlight rectangle around the modified region
+    and appends a zoomed inset of original vs modified below the main comparison.
+    """
+    h, w = original_img.shape[:2]
+    top = np.concatenate([original_img.copy(), modified_img.copy()], axis=1)
+
+    if mask is None or not mask.any():
+        return top
+
+    # Find the bounding box of the mask
+    ys, xs = np.where(mask[:h, :w] if mask.shape[0] >= h else mask)
+    if len(ys) == 0:
+        return top
+
+    y1, y2 = max(int(ys.min()) - zoom_padding, 0), min(int(ys.max()) + zoom_padding, h)
+    x1, x2 = max(int(xs.min()) - zoom_padding, 0), min(int(xs.max()) + zoom_padding, w)
+
+    # Draw rectangles on both halves (green = original, red = modified)
+    _draw_rect(top, y1, x1, y2, x2, color=(0, 255, 0), thickness=2)
+    _draw_rect(top, y1, x1 + w, y2, x2 + w, color=(255, 0, 0), thickness=2)
+
+    # Build zoomed inset row — scale crop to a readable height (min 120px)
+    crop_h = y2 - y1
+    crop_w = x2 - x1
+    if crop_h > 0 and crop_w > 0:
+        scale = max(1, 120 // crop_h)
+        orig_crop = original_img[y1:y2, x1:x2]
+        mod_crop = modified_img[y1:y2, x1:x2]
+        orig_zoom = np.repeat(np.repeat(orig_crop, scale, axis=0), scale, axis=1)
+        mod_zoom = np.repeat(np.repeat(mod_crop, scale, axis=0), scale, axis=1)
+
+        # Pad zoomed crops so they match the top width
+        zoom_row = np.concatenate([orig_zoom, mod_zoom], axis=1)
+        pad_w = top.shape[1] - zoom_row.shape[1]
+        if pad_w > 0:
+            zoom_row = np.pad(zoom_row, ((0, 0), (0, pad_w), (0, 0)), constant_values=32)
+        elif pad_w < 0:
+            zoom_row = zoom_row[:, :top.shape[1]]
+
+        # Add a 2px separator
+        sep = np.full((2, top.shape[1], 3), 128, dtype=np.uint8)
+        top = np.concatenate([top, sep, zoom_row], axis=0)
+
+    return top
+
+
+def _draw_rect(img: np.ndarray, y1: int, x1: int, y2: int, x2: int,
+               color: tuple[int, int, int] = (0, 255, 0), thickness: int = 2):
+    """Draw a rectangle on an image (in-place). No OpenCV needed."""
+    h, w = img.shape[:2]
+    for t in range(thickness):
+        # Top and bottom edges
+        if 0 <= y1 + t < h:
+            img[y1 + t, max(x1, 0):min(x2, w)] = color
+        if 0 <= y2 - t < h:
+            img[y2 - t, max(x1, 0):min(x2, w)] = color
+        # Left and right edges
+        if 0 <= x1 + t < w:
+            img[max(y1, 0):min(y2, h), x1 + t] = color
+        if 0 <= x2 - t < w:
+            img[max(y1, 0):min(y2, h), x2 - t] = color
 
 
 def _to_uint8(img: np.ndarray) -> np.ndarray:
@@ -133,6 +199,7 @@ def _compute_result(
     modified_img_hwc: np.ndarray,
     hypothesis_id: str,
     test_type: str,
+    affected_mask: np.ndarray | None = None,
 ) -> CounterfactualResult:
     """Compare baseline and modified actions, build a CounterfactualResult."""
     delta = modified_actions - baseline_actions
@@ -142,6 +209,7 @@ def _compute_result(
     comparison = _make_comparison(
         _to_uint8(original_img_hwc),
         _to_uint8(modified_img_hwc),
+        mask=affected_mask,
     )
 
     return CounterfactualResult(
@@ -237,11 +305,14 @@ def background_substitution(
     policy.reset()
     modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
 
+    # For background sub, highlight the foreground (non-background) region
+    foreground_mask = ~bg_mask
     return _compute_result(
         baseline_actions, modified_actions,
         img_hwc, modified_hwc,
         hypothesis_id=f"background_substitution_{replacement}",
         test_type="background_substitution",
+        affected_mask=foreground_mask,
     )
 
 
@@ -338,6 +409,7 @@ def object_relocation(
         img_hwc, modified_hwc,
         hypothesis_id=f"object_relocation_{target_object}",
         test_type="object_relocation",
+        affected_mask=obj_mask,
     )
 
 
@@ -455,15 +527,20 @@ def object_recolor(
 
     modified_hwc = img_hwc.copy()
 
-    # Convert masked region to HSV, shift hue, convert back
-    # Use colorsys per-pixel if matplotlib is not available
+    # Convert masked region to HSV, shift hue, convert back.
+    # If the object has low saturation (near-gray), also boost saturation
+    # so the color change is actually visible and tests appearance sensitivity.
+    _MIN_SATURATION = 0.5
     try:
         import matplotlib.colors as mcolors
 
-        # Extract masked pixels as (N, 3)
         masked_rgb = modified_hwc[obj_mask]  # (N, 3) float [0, 1]
         hsv = mcolors.rgb_to_hsv(masked_rgb)
         hsv[:, 0] = (hsv[:, 0] + hue_shift) % 1.0
+        # Ensure enough saturation for the hue change to be visible
+        hsv[:, 1] = np.maximum(hsv[:, 1], _MIN_SATURATION)
+        # Ensure enough brightness for the color to be visible
+        hsv[:, 2] = np.maximum(hsv[:, 2], 0.4)
         rgb_shifted = mcolors.hsv_to_rgb(hsv)
         modified_hwc[obj_mask] = rgb_shifted
     except ImportError:
@@ -474,6 +551,8 @@ def object_recolor(
             r, g, b = modified_hwc[y, x, 0], modified_hwc[y, x, 1], modified_hwc[y, x, 2]
             h_val, s_val, v_val = colorsys.rgb_to_hsv(float(r), float(g), float(b))
             h_val = (h_val + hue_shift) % 1.0
+            s_val = max(s_val, _MIN_SATURATION)
+            v_val = max(v_val, 0.4)
             r2, g2, b2 = colorsys.hsv_to_rgb(h_val, s_val, v_val)
             modified_hwc[y, x] = [r2, g2, b2]
 
@@ -490,4 +569,5 @@ def object_recolor(
         img_hwc, modified_hwc,
         hypothesis_id=f"object_recolor_{target_object}",
         test_type="object_recolor",
+        affected_mask=obj_mask,
     )

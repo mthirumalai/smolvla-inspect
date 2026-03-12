@@ -31,11 +31,15 @@ class SceneSegmentation:
     image_shape: tuple[int, int]
 
     def get_mask(self, label: str) -> np.ndarray | None:
-        """Return the mask for the first object matching *label*, or None."""
+        """Return the union of all masks for objects matching *label*, or None."""
+        merged: np.ndarray | None = None
         for obj in self.objects:
-            if obj.label == label:
-                return obj.mask
-        return None
+            if obj.label == label and obj.mask is not None:
+                if merged is None:
+                    merged = obj.mask.copy()
+                else:
+                    merged |= obj.mask
+        return merged
 
     def region_names(self) -> list[str]:
         """Unique object labels plus ``'background'``."""
@@ -442,4 +446,207 @@ class DiagnosticReport:
         with open(md_path, "w") as f:
             f.write(self.to_markdown())
 
+        return json_path, md_path
+
+
+# ---------------------------------------------------------------------------
+# Comparison report
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RunSnapshot:
+    """Loaded data for one run being compared."""
+
+    label: str
+    run_dir: str
+    diagnostic: dict  # parsed report.json
+    internals: dict | None = None  # parsed model_internals section
+
+
+@dataclass
+class AttributionDelta:
+    """Change in attribution for one signal/region pair across two runs."""
+
+    signal: str
+    region: str
+    values: list[float]  # one per run, in run order
+    delta: float  # last - first
+    pct_change: float | None  # percentage change (None if base is 0)
+
+
+@dataclass
+class CounterfactualDelta:
+    """Change in a counterfactual test result across runs."""
+
+    test_type: str
+    values: list[float]  # action_delta_l2 per run
+    delta: float
+    pct_change: float | None
+    confirmed: list[bool]  # per run
+
+
+@dataclass
+class WeightAlphaDelta:
+    """Change in WeightWatcher alpha for a component across runs."""
+
+    component: str
+    values: list[float]  # mean alpha per run
+    delta: float
+    pct_change: float | None
+    status: list[str]  # per run
+
+
+@dataclass
+class ComparisonReport:
+    """Comparison of two or more diagnostic runs."""
+
+    labels: list[str]
+    run_dirs: list[str]
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    attribution_deltas: list[AttributionDelta] = field(default_factory=list)
+    scalar_deltas: dict[str, list[float]] = field(default_factory=dict)
+    counterfactual_deltas: list[CounterfactualDelta] = field(default_factory=list)
+    anomaly_summary: dict[str, list[str]] = field(default_factory=dict)
+    weight_alpha_deltas: list[WeightAlphaDelta] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
+    verdict: str = ""
+
+    # -- serialisation -----------------------------------------------------
+
+    def to_json(self) -> str:
+        payload = asdict(self)
+        return json.dumps(payload, indent=2, default=_numpy_serialiser)
+
+    # -- markdown ----------------------------------------------------------
+
+    def to_markdown(self) -> str:
+        s: list[str] = []
+        s.append("# Comparison Report")
+        s.append("")
+        s.append(f"Generated: {self.created_at}")
+        s.append("")
+
+        # Runs table
+        s.append("## Runs")
+        s.append("")
+        s.append("| # | Label | Run Directory |")
+        s.append("|---|---|---|")
+        for i, (label, rd) in enumerate(zip(self.labels, self.run_dirs)):
+            s.append(f"| {i + 1} | {label} | `{rd}` |")
+        s.append("")
+
+        # Attribution matrix comparison
+        if self.attribution_deltas:
+            s.append("## Attribution Matrix Comparison")
+            s.append("")
+            hdr = "| Signal | Region | " + " | ".join(self.labels) + " | Delta | Change |"
+            sep = "|" + "---|" * (len(self.labels) + 4)
+            s.append(hdr)
+            s.append(sep)
+            for ad in self.attribution_deltas:
+                vals = " | ".join(f"{v:.4f}" for v in ad.values)
+                sign = "+" if ad.delta > 0 else ""
+                pct = f"{ad.pct_change:+.1f}%" if ad.pct_change is not None else "N/A"
+                s.append(f"| {ad.signal} | {ad.region} | {vals} | {sign}{ad.delta:.4f} | {pct} |")
+            s.append("")
+
+        # Scalars
+        if self.scalar_deltas:
+            s.append("## Scalar Comparison")
+            s.append("")
+            hdr = "| Scalar | " + " | ".join(self.labels) + " | Delta |"
+            sep = "|" + "---|" * (len(self.labels) + 2)
+            s.append(hdr)
+            s.append(sep)
+            for key, vals in self.scalar_deltas.items():
+                vcells = " | ".join(f"{v:.6f}" for v in vals)
+                delta = vals[-1] - vals[0]
+                sign = "+" if delta > 0 else ""
+                s.append(f"| {key} | {vcells} | {sign}{delta:.6f} |")
+            s.append("")
+
+        # Counterfactual comparison
+        if self.counterfactual_deltas:
+            s.append("## Counterfactual Comparison")
+            s.append("")
+            hdr = "| Test | " + " | ".join(f"{l} (L2)" for l in self.labels) + " | Delta | Change | Confirmed |"
+            sep = "|" + "---|" * (len(self.labels) + 4)
+            s.append(hdr)
+            s.append(sep)
+            for cd in self.counterfactual_deltas:
+                vals = " | ".join(f"{v:.4f}" for v in cd.values)
+                sign = "+" if cd.delta > 0 else ""
+                pct = f"{cd.pct_change:+.1f}%" if cd.pct_change is not None else "N/A"
+                conf = " → ".join("Y" if c else "N" for c in cd.confirmed)
+                s.append(f"| {cd.test_type} | {vals} | {sign}{cd.delta:.4f} | {pct} | {conf} |")
+            s.append("")
+
+        # Anomaly summary
+        if self.anomaly_summary:
+            s.append("## Anomaly Comparison")
+            s.append("")
+            all_types: list[str] = []
+            for types in self.anomaly_summary.values():
+                for t in types:
+                    if t not in all_types:
+                        all_types.append(t)
+            if all_types:
+                hdr = "| Anomaly | " + " | ".join(self.labels) + " |"
+                sep = "|" + "---|" * (len(self.labels) + 1)
+                s.append(hdr)
+                s.append(sep)
+                for atype in all_types:
+                    cells = []
+                    for label in self.labels:
+                        present = atype in self.anomaly_summary.get(label, [])
+                        cells.append("PRESENT" if present else "resolved")
+                    s.append(f"| {atype} | " + " | ".join(cells) + " |")
+                s.append("")
+
+        # Weight spectral comparison
+        if self.weight_alpha_deltas:
+            s.append("## Weight Spectral Analysis (alpha)")
+            s.append("")
+            hdr = "| Component | " + " | ".join(f"{l} (alpha)" for l in self.labels) + " | Delta | Change | Status |"
+            sep = "|" + "---|" * (len(self.labels) + 4)
+            s.append(hdr)
+            s.append(sep)
+            for wa in self.weight_alpha_deltas:
+                vals = " | ".join(f"{v:.2f}" for v in wa.values)
+                sign = "+" if wa.delta > 0 else ""
+                pct = f"{wa.pct_change:+.1f}%" if wa.pct_change is not None else "N/A"
+                status = " → ".join(wa.status)
+                s.append(f"| {wa.component} | {vals} | {sign}{wa.delta:.2f} | {pct} | {status} |")
+            s.append("")
+
+        # Verdict
+        if self.verdict:
+            s.append("## Verdict")
+            s.append("")
+            s.append(self.verdict)
+            s.append("")
+
+        # Recommendations
+        if self.recommendations:
+            s.append("## Recommendations")
+            s.append("")
+            for i, rec in enumerate(self.recommendations, 1):
+                s.append(f"{i}. {rec}")
+            s.append("")
+
+        return "\n".join(s)
+
+    # -- persistence -------------------------------------------------------
+
+    def save(self, output_dir: str) -> tuple[str, str]:
+        """Save to *output_dir* as ``comparison_report.json`` and ``.md``."""
+        os.makedirs(output_dir, exist_ok=True)
+        json_path = os.path.join(output_dir, "comparison_report.json")
+        md_path = os.path.join(output_dir, "comparison_report.md")
+        with open(json_path, "w") as f:
+            f.write(self.to_json())
+        with open(md_path, "w") as f:
+            f.write(self.to_markdown())
         return json_path, md_path

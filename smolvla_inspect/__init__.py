@@ -4,7 +4,7 @@ import sys
 
 
 def main():
-    """Dispatch to CLI, serve, or diagnose subcommand."""
+    """Dispatch to CLI, serve, diagnose, or compare subcommand."""
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
         from .serve import serve_main
         serve_main(sys.argv[2:])
@@ -18,6 +18,15 @@ def main():
         add_diagnose_args(parser)
         args = parser.parse_args()
         diagnose_main(args)
+    elif len(sys.argv) > 1 and sys.argv[1] == "compare":
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        from .diagnostic.diagnostic_cli import add_compare_args, compare_main
+        import argparse
+        parser = argparse.ArgumentParser(
+            description="SmolVLA Run Comparison — compare diagnostic reports across runs")
+        add_compare_args(parser)
+        args = parser.parse_args()
+        compare_main(args)
     else:
         from .cli import main as cli_main
         cli_main()

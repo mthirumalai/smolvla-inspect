@@ -206,9 +206,109 @@ def diagnose_main(args: argparse.Namespace):
     print("=" * 60 + "\n")
 
 
+def add_compare_args(parser: argparse.ArgumentParser):
+    """Add compare subcommand arguments to an existing parser."""
+    parser.add_argument("--runs", nargs="+", required=True,
+                        help="Two or more run directories to compare")
+    parser.add_argument("--labels", nargs="+", default=None,
+                        help="Human-readable labels for each run (same order as --runs)")
+    parser.add_argument("--output-dir", type=str, default="./outputs",
+                        help="Output directory for the comparison report")
+
+
+def compare_main(args: argparse.Namespace):
+    """Main entry point for the compare subcommand."""
+    print("\n" + "=" * 60)
+    print("  SmolVLA Run Comparison")
+    print("=" * 60)
+
+    run_dirs = args.runs
+    labels = args.labels
+
+    if len(run_dirs) < 2:
+        print("  ERROR: Need at least 2 run directories to compare.")
+        sys.exit(1)
+
+    if labels and len(labels) != len(run_dirs):
+        print(f"  ERROR: Got {len(labels)} labels but {len(run_dirs)} run directories.")
+        sys.exit(1)
+
+    # Validate run directories
+    for rd in run_dirs:
+        report_path = os.path.join(rd, "diagnostic", "report.json")
+        if not os.path.exists(report_path):
+            print(f"  ERROR: No diagnostic report found in {rd}")
+            print(f"         Expected: {report_path}")
+            print(f"         Run `diagnose` on this directory first.")
+            sys.exit(1)
+
+    print(f"\n  Comparing {len(run_dirs)} runs:")
+    for i, rd in enumerate(run_dirs):
+        lbl = labels[i] if labels else os.path.basename(os.path.normpath(rd))
+        print(f"    {i + 1}. [{lbl}] {rd}")
+
+    from .comparison import compare_runs
+
+    report = compare_runs(run_dirs, labels)
+
+    # Save
+    output_dir = args.output_dir
+    json_path, md_path = report.save(output_dir)
+
+    # Print summary
+    print("\n" + "-" * 60)
+    print("  COMPARISON RESULTS")
+    print("-" * 60)
+
+    if report.weight_alpha_deltas:
+        print("\n  Weight Spectral (alpha):")
+        for wa in report.weight_alpha_deltas:
+            arrow = "improved" if wa.delta < 0 and wa.values[0] > 4 else (
+                "worsened" if wa.delta > 0.01 else "unchanged")
+            pct = f" ({wa.pct_change:+.1f}%)" if wa.pct_change is not None else ""
+            print(f"    {wa.component}: {wa.values[0]:.2f} → {wa.values[-1]:.2f} [{arrow}{pct}]")
+
+    if report.counterfactual_deltas:
+        print("\n  Counterfactuals:")
+        for cd in report.counterfactual_deltas:
+            sign = "+" if cd.delta > 0 else ""
+            pct = f" ({cd.pct_change:+.1f}%)" if cd.pct_change is not None else ""
+            print(f"    {cd.test_type}: {cd.values[0]:.4f} → {cd.values[-1]:.4f} [{sign}{cd.delta:.4f}{pct}]")
+
+    if report.anomaly_summary:
+        first_label = report.labels[0]
+        last_label = report.labels[-1]
+        first_set = set(report.anomaly_summary.get(first_label, []))
+        last_set = set(report.anomaly_summary.get(last_label, []))
+        resolved = first_set - last_set
+        new_anom = last_set - first_set
+        persistent = first_set & last_set
+        if resolved:
+            print(f"\n  Resolved anomalies: {', '.join(resolved)}")
+        if new_anom:
+            print(f"\n  New anomalies: {', '.join(new_anom)}")
+        if persistent:
+            print(f"\n  Persistent anomalies: {', '.join(persistent)}")
+
+    if report.verdict:
+        print(f"\n  Verdict:")
+        for line in report.verdict.split("\n"):
+            print(f"    {line}")
+
+    if report.recommendations:
+        print(f"\n  Recommendations:")
+        for i, rec in enumerate(report.recommendations, 1):
+            # Strip markdown bold for terminal display
+            clean = rec.replace("**", "")
+            print(f"    {i}. {clean}")
+
+    print(f"\n  Full report: {md_path}")
+    print("=" * 60 + "\n")
+
+
 def _load_policy(model_id: str, device: str):
     """Load a SmolVLA policy."""
-    from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
     policy = SmolVLAPolicy.from_pretrained(model_id)
     policy.to(device)
     policy.eval()
@@ -217,7 +317,7 @@ def _load_policy(model_id: str, device: str):
 
 def _load_dataset(dataset_id: str, episode_idx: int, image_key: str | None):
     """Load a LeRobot dataset and determine image key."""
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
     dataset = LeRobotDataset(dataset_id)
 
     if image_key is None:
