@@ -127,6 +127,9 @@ def _per_class_nms(
     return kept
 
 
+_FALLBACK_CONFIDENCE = 0.03
+
+
 def detect_objects(
     image: np.ndarray,
     object_queries: list[str],
@@ -136,6 +139,12 @@ def detect_objects(
     device: str = "cpu",
 ) -> list[DetectedObject]:
     """Run open-vocabulary object detection using OWL-ViT v2.
+
+    If any query label has zero detections above *confidence_threshold*, a
+    fallback pass at a lower threshold is used to recover the best-scoring
+    detection for that label (provided it exceeds ``_FALLBACK_CONFIDENCE``).
+    This ensures task-critical objects mentioned in the task string are not
+    silently dropped.
 
     Parameters
     ----------
@@ -185,7 +194,7 @@ def detect_objects(
         with torch.no_grad():
             outputs = model(**inputs)
 
-        # Post-process: convert to bounding boxes
+        # Post-process at the primary threshold
         target_sizes = torch.tensor([pil_image.size[::-1]], device=device)  # (H, W)
         results = processor.post_process_object_detection(
             outputs, threshold=confidence_threshold, target_sizes=target_sizes,
@@ -214,6 +223,43 @@ def detect_objects(
         # Per-class NMS to remove overlapping duplicates
         detections = _per_class_nms(detections, iou_threshold=nms_iou_threshold,
                                      max_per_class=max_per_class)
+
+        # --- Fallback for missing task objects ---
+        # Re-scan at a lower threshold to recover any query labels that had
+        # zero detections (e.g. a small cup scoring 0.07 vs threshold 0.1).
+        detected_labels = {d.label for d in detections}
+        missing = [q for q in object_queries if q not in detected_labels]
+
+        if missing and _FALLBACK_CONFIDENCE < confidence_threshold:
+            fallback_results = processor.post_process_object_detection(
+                outputs, threshold=_FALLBACK_CONFIDENCE, target_sizes=target_sizes,
+            )[0]
+            fb_boxes = fallback_results["boxes"].cpu().numpy()
+            fb_scores = fallback_results["scores"].cpu().numpy()
+            fb_labels = fallback_results["labels"].cpu().numpy()
+
+            for query in missing:
+                query_idx = object_queries.index(query)
+                # Find the best scoring detection for this query
+                best_score = 0.0
+                best_box = None
+                for box, score, label_idx in zip(fb_boxes, fb_scores, fb_labels):
+                    if int(label_idx) == query_idx and float(score) > best_score:
+                        best_score = float(score)
+                        best_box = box.astype(int).tolist()
+                if best_box is not None:
+                    x1, y1, x2, y2 = best_box
+                    detections.append(DetectedObject(
+                        label=query,
+                        box=(x1, y1, x2, y2),
+                        score=best_score,
+                        mask=None,
+                    ))
+                    print(f"  Recovered '{query}' at fallback threshold "
+                          f"(score={best_score:.3f})")
+                else:
+                    print(f"  WARNING: '{query}' not detected even at "
+                          f"fallback threshold {_FALLBACK_CONFIDENCE}")
 
         det_summary = ", ".join(f"{d.label} ({d.score:.2f})" for d in detections)
         print(f"  Detected {raw_count} raw → {len(detections)} after NMS: {det_summary}")
