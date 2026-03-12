@@ -311,7 +311,81 @@ def segment_scene(
 
 
 # ---------------------------------------------------------------------------
-# 4. Analyze dataset diversity
+# 4. Task-string embedding helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SIGLIP_MODEL = "google/siglip-base-patch16-512"
+
+
+def _compute_text_embedding_spread(
+    unique_tasks: list[str],
+    device: str = "cpu",
+    siglip_model_id: str = _DEFAULT_SIGLIP_MODEL,
+) -> float:
+    """Mean pairwise cosine distance of task strings using SigLIP's text encoder."""
+    try:
+        from transformers import AutoTokenizer, AutoModel
+    except ImportError:
+        print("  transformers not available, falling back to character distance.")
+        return _character_set_spread(unique_tasks)
+
+    try:
+        print(f"  Computing SigLIP text embeddings ({siglip_model_id})...")
+        tokenizer = AutoTokenizer.from_pretrained(siglip_model_id)
+        model = AutoModel.from_pretrained(siglip_model_id).to(device).eval()
+
+        inputs = tokenizer(
+            unique_tasks, padding=True, truncation=True, return_tensors="pt",
+        )
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            embeddings = model.get_text_features(**inputs)
+
+        embeddings = embeddings.cpu().numpy().astype(np.float32)
+        # L2-normalise
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        embeddings = embeddings / np.maximum(norms, 1e-8)
+
+        # Mean pairwise cosine distance
+        n = len(unique_tasks)
+        dists = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                cos_sim = float(np.dot(embeddings[i], embeddings[j]))
+                dists.append(1.0 - cos_sim)
+
+        spread = float(np.mean(dists)) if dists else 0.0
+        print(f"  Embedding spread: {spread:.4f} (over {len(dists)} pairs)")
+        return spread
+
+    except Exception as e:
+        print(f"  SigLIP text embedding failed ({e}), falling back to character distance.")
+        return _character_set_spread(unique_tasks)
+
+    finally:
+        try:
+            del model, tokenizer
+            if device != "cpu":
+                torch.cuda.empty_cache()
+        except NameError:
+            pass
+
+
+def _character_set_spread(unique_tasks: list[str]) -> float:
+    """Fallback: mean pairwise character-set Jaccard distance."""
+    dists = []
+    for i in range(len(unique_tasks)):
+        for j in range(i + 1, len(unique_tasks)):
+            s1, s2 = set(unique_tasks[i].lower()), set(unique_tasks[j].lower())
+            union = s1 | s2
+            diff = s1 ^ s2
+            dists.append(len(diff) / max(len(union), 1))
+    return float(np.mean(dists)) if dists else 0.0
+
+
+# ---------------------------------------------------------------------------
+# 5. Analyze dataset diversity
 # ---------------------------------------------------------------------------
 
 @register_primitive(
@@ -465,23 +539,15 @@ def analyze_dataset_diversity(
         "contrast_variance": float(np.var(contrast_values)) if len(contrast_values) > 1 else 0.0,
     }
 
-    # Task string diversity
+    # Task string diversity (SigLIP text embeddings)
     task_string_diversity: dict = {"unique_count": 1, "embedding_spread": 0.0}
     try:
         tasks_df = dataset.meta.tasks
         unique_tasks = tasks_df["task"].unique().tolist() if hasattr(tasks_df["task"], "unique") else list(set(tasks_df["task"]))
         task_string_diversity["unique_count"] = len(unique_tasks)
-        # Simple embedding spread proxy: average pairwise character-level distance
         if len(unique_tasks) > 1:
-            dists = []
-            for i in range(len(unique_tasks)):
-                for j in range(i + 1, len(unique_tasks)):
-                    # Normalised edit distance proxy: symmetric difference of character sets
-                    s1, s2 = set(unique_tasks[i].lower()), set(unique_tasks[j].lower())
-                    union = s1 | s2
-                    diff = s1 ^ s2
-                    dists.append(len(diff) / max(len(union), 1))
-            task_string_diversity["embedding_spread"] = float(np.mean(dists))
+            task_string_diversity["embedding_spread"] = _compute_text_embedding_spread(
+                unique_tasks, device=device)
     except (AttributeError, KeyError, TypeError):
         pass
 
