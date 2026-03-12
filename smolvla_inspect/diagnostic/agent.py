@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import re
+import sys
+import time
 import numpy as np
 
 from .models import (
@@ -219,10 +221,44 @@ class DiagnosticAgent:
     async def run(self, progress_callback=None) -> DiagnosticReport:
         """Run the full diagnostic pipeline."""
 
+        _PHASE_LABELS = {
+            "scene_understanding": ("1/7", "Scene Understanding"),
+            "dataset_diversity":   ("2/7", "Dataset Diversity"),
+            "triage":              ("3/7", "Signal Triage"),
+            "matrix":              ("4/7", "Diagnostic Matrix"),
+            "hypothesize":         ("5/7", "Hypothesis Formation"),
+            "counterfactuals":     ("6/7", "Counterfactual Tests"),
+            "iteration":          ("6/7", "Follow-up Iteration"),
+            "synthesis":           ("7/7", "Report Synthesis"),
+            "complete":            ("OK", "Complete"),
+        }
+        _run_start = time.time()
+        _phase_start = [_run_start]  # mutable so inner fn can update
+        _current_phase = [""]
+
         def _progress(phase: str, detail: str = ""):
             if progress_callback:
                 progress_callback(phase, detail)
-            print(f"  [{phase}] {detail}")
+
+            now = time.time()
+            elapsed_total = now - _run_start
+
+            # Print phase transition header when phase changes
+            if phase != _current_phase[0]:
+                # Print elapsed time for previous phase
+                if _current_phase[0]:
+                    phase_elapsed = now - _phase_start[0]
+                    prev_label = _PHASE_LABELS.get(_current_phase[0], ("", _current_phase[0]))[1]
+                    print(f"  {'':>5}  done ({phase_elapsed:.1f}s)")
+
+                _current_phase[0] = phase
+                _phase_start[0] = now
+                step, label = _PHASE_LABELS.get(phase, ("?", phase))
+                print(f"\n  [{step}] {label}  ({elapsed_total:.0f}s elapsed)")
+                print(f"  {'':>5}  {'-' * 40}")
+
+            # Print detail line
+            print(f"  {'':>5}  {detail}", flush=True)
 
         # Get a sample frame for scene understanding
         sample = self.dataset[self._get_first_frame_idx()]
@@ -311,7 +347,12 @@ class DiagnosticAgent:
 
         internals = signals.get("model_internals")
         anomalies = detect_anomalies(matrix, internals, dataset_diversity=diversity)
-        _progress("matrix", f"Detected {len(anomalies)} anomalies")
+        n_crit = sum(1 for a in anomalies if a.severity == "critical")
+        n_warn = sum(1 for a in anomalies if a.severity == "warning")
+        _progress("matrix", f"Detected {len(anomalies)} anomalies ({n_crit} critical, {n_warn} warnings)")
+        for a in anomalies:
+            sev_icon = {"critical": "!!", "warning": "! ", "info": "  "}.get(a.severity, "  ")
+            _progress("matrix", f"  {sev_icon} {a.type}: {a.description[:80]}")
 
         self.evidence_log.append(EvidenceEntry(
             phase="matrix",
@@ -320,10 +361,16 @@ class DiagnosticAgent:
         ))
 
         # ── Phase 5: LLM Hypothesis Formation ──────────────────
-        _progress("hypothesize", "Forming hypotheses via LLM...")
+        llm_label = self.llm_settings.get("provider", "rule-based")
+        if not self.llm_settings.get("api_key"):
+            llm_label = "rule-based (no API key)"
+        _progress("hypothesize", f"Forming hypotheses via {llm_label}...")
         hypotheses = await self._form_hypotheses(
             task_string, scene, diversity, matrix, anomalies)
-        _progress("hypothesize", f"Formed {len(hypotheses)} hypotheses")
+        _progress("hypothesize", f"Formed {len(hypotheses)} hypotheses:")
+        for h in hypotheses:
+            test_label = f" -> test: {h.test_type}" if h.test_type != "none" else " (no test needed)"
+            _progress("hypothesize", f"  {h.id} [{h.confidence:.0%}] {h.description[:70]}{test_label}")
 
         # ── Phase 6: Run Agent-Chosen Counterfactuals ───────────
         cf_results: list[CounterfactualResult] = []
@@ -344,11 +391,15 @@ class DiagnosticAgent:
                     cf_skip_reason = "budget_exhausted"
                     break
 
-                _progress("counterfactuals", f"Running {hypothesis.test_type} for {hypothesis.id}...")
+                _progress("counterfactuals",
+                          f"[{len(cf_results)+1}/{max_cf}] Running {hypothesis.test_type} for {hypothesis.id}...")
                 try:
                     result = self._run_counterfactual(
                         hypothesis, sample, scene)
                     cf_results.append(result)
+                    verdict = "CONFIRMED" if result.confirmed else "not confirmed"
+                    _progress("counterfactuals",
+                              f"  -> {verdict} (delta L2={result.action_delta_l2:.4f})")
                     self.evidence_log.append(EvidenceEntry(
                         phase="counterfactual",
                         primitive_name=f"counterfactual.{hypothesis.test_type}",
@@ -357,7 +408,7 @@ class DiagnosticAgent:
                               "action_delta_l2": result.action_delta_l2},
                     ))
                 except Exception as e:
-                    _progress("counterfactuals", f"  Failed: {e}")
+                    _progress("counterfactuals", f"  -> FAILED: {e}")
         else:
             _progress("counterfactuals", "Skipping (no model loaded)")
             cf_skip_reason = "no_model"
@@ -412,11 +463,14 @@ class DiagnosticAgent:
                         _progress("iteration", f"  Failed: {e}")
 
         # ── Phase 7: LLM Synthesis ─────────────────────────────
-        _progress("synthesis", "Synthesizing report via LLM...")
+        _progress("synthesis", f"Synthesizing report via {llm_label}...")
         findings, narrative = await self._synthesize_report(
             task_string, scene, diversity, matrix, anomalies,
             hypotheses, cf_results, cf_skip_reason=cf_skip_reason)
-        _progress("synthesis", f"Generated {len(findings)} findings")
+        _progress("synthesis", f"Generated {len(findings)} findings:")
+        for f in findings:
+            sev_icon = {"critical": "!!", "warning": "! ", "info": "  "}.get(f.severity, "  ")
+            _progress("synthesis", f"  {sev_icon} [{f.severity.upper()}] {f.title}")
 
         # ── Build Final Report ──────────────────────────────────
         metadata = {
@@ -448,7 +502,13 @@ class DiagnosticAgent:
             cf_skip_reason=cf_skip_reason,
         )
 
-        _progress("complete", "Diagnostic report ready")
+        total_time = time.time() - _run_start
+        _progress("complete", f"Diagnostic report ready  (total: {total_time:.1f}s)")
+        n_crit = sum(1 for f in findings if f.severity == "critical")
+        n_warn = sum(1 for f in findings if f.severity == "warning")
+        n_info = sum(1 for f in findings if f.severity == "info")
+        print(f"  {'':>5}  {n_crit} critical, {n_warn} warnings, {n_info} info findings")
+        print(f"  {'':>5}  {len(hypotheses)} hypotheses, {len(cf_results)} counterfactuals")
         return report
 
     # ─── Internal helpers ───────────────────────────────────────

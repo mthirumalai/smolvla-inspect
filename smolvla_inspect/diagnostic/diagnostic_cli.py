@@ -162,6 +162,15 @@ def diagnose_main(args: argparse.Namespace):
     else:
         print("  LLM: Not configured (will use rule-based fallback)")
 
+    # Config summary
+    print(f"\n  Config:")
+    print(f"    Max hypotheses:      {config.get('max_hypotheses', 5)}")
+    print(f"    Max counterfactuals:  {config.get('max_counterfactuals', 3)}")
+    print(f"    Max expensive signals:{config.get('max_expensive_signals', 4)}")
+    print(f"    Num frames:          {config.get('num_frames', 4)}")
+    if config.get("max_counterfactuals", 3) == 0:
+        print(f"    ** Counterfactuals:  SKIPPED **")
+
     print("\n" + "-" * 60)
 
     # Run diagnostic
