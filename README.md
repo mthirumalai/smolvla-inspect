@@ -9,6 +9,7 @@ Inspect where a SmolVLA policy looks, what pixels actually drive its actions, an
 
 - [Quick Start](#quick-start)
 - [What This Tool Does](#what-this-tool-does)
+- [Diagnostic Agent](#diagnostic-agent)
 - [Setup](#setup)
 - [Run](#run)
 - [Web Viewer](#web-viewer)
@@ -59,7 +60,23 @@ Or append it to a normal run:
 ./run.sh --with-internals
 ```
 
-### 5. Launch the web viewer
+### 5. Run the diagnostic agent
+
+Analyze an existing run (post-hoc mode):
+
+```bash
+./run.sh diagnose --run-dir ./outputs/your_run_folder --dataset your/dataset_id
+```
+
+Or run a full inspect + diagnose in one pass:
+
+```bash
+./run.sh diagnose --model your/model_id --dataset your/dataset_id --episode 0
+```
+
+See [Diagnostic Agent](#diagnostic-agent) for details.
+
+### 6. Launch the web viewer
 
 ```bash
 source .venv/bin/activate
@@ -78,6 +95,7 @@ SmolVLA is a vision-language-action policy: it takes camera images and a languag
 | Gradient attribution | `--gradient` | Which pixels causally affect the predicted action? | extra rows in the dashboard |
 | Extended attribution | `--gradcam-connector`, `--gradcam-vlm-layers`, `--vision-vs-state`, `--per-action-dim`, `--language-diff` | How information moves through the connector, VLM, and action heads | feature-specific PNGs / reports |
 | Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved internally? | `model_internals_report.md`, `model_internals_report.png` |
+| **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? | `diagnostic/report.md`, `diagnostic/report.json` |
 
 ### Core outputs
 
@@ -100,6 +118,129 @@ Use `--internals-only` when you want just that report. Use `--with-internals` wh
 *Example 3-panel internals report. The full markdown version lives at [assets/example_model_internals_report.md](assets/example_model_internals_report.md).*
 
 For a visual walkthrough of the architecture behind these views, see [assets/architecture.md](assets/architecture.md).
+
+## Diagnostic Agent
+
+The diagnostic agent goes beyond visualization — it automatically answers "why does my model fail?" and "what should I fix first?" by running a full analysis pipeline:
+
+1. **Scene understanding** — detects task-relevant objects (OWL-ViT v2) and segments them (SAM) to create semantic regions
+2. **Diagnostic matrix** — cross-references every signal type (attention, GradCAM, saliency, etc.) against every detected region to compute attribution mass percentages
+3. **Anomaly detection** — automatically flags issues like high background attribution, spatial shortcuts, dead state pathways, attention-GradCAM divergence, and more
+4. **LLM hypothesis formation** — sends the matrix + anomalies to an LLM, which selects the most discriminating counterfactual tests to run
+5. **Counterfactual verification** — digitally perturbs the scene (swap backgrounds, relocate objects, shift lighting, recolor objects) and measures how action predictions change
+6. **Report synthesis** — produces ranked findings with evidence chains and specific, actionable fixes
+
+### Two run modes
+
+**Post-hoc mode** — analyze an existing inspection run without re-loading the model:
+
+```bash
+./run.sh diagnose \
+    --run-dir ./outputs/your_run_folder \
+    --dataset your/dataset_id
+```
+
+This loads saved heatmaps from the run's NPZ files and runs scene understanding + matrix + LLM reasoning. Add `--model your/model_id` to also run counterfactual tests (requires loading the model).
+
+**Integrated mode** — run the full inspect + diagnose pipeline in one command:
+
+```bash
+./run.sh diagnose \
+    --model your/model_id \
+    --dataset your/dataset_id \
+    --episode 0 \
+    --device cuda
+```
+
+### LLM configuration
+
+The diagnostic agent uses an LLM for hypothesis formation and report synthesis. Configure via environment variables:
+
+```bash
+# Anthropic (default)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Or OpenAI / compatible
+export SMOLVLA_LLM_PROVIDER=openai
+export SMOLVLA_LLM_MODEL=gpt-4o
+export OPENAI_API_KEY=sk-...
+
+# Or local models via Ollama/vLLM
+export SMOLVLA_LLM_PROVIDER=openai
+export SMOLVLA_LLM_MODEL=llama3
+export SMOLVLA_LLM_BASE_URL=http://localhost:11434/v1
+export SMOLVLA_LLM_API_KEY=ollama
+```
+
+If no API key is set, the agent falls back to rule-based hypothesis generation — you still get the diagnostic matrix, anomaly detection, and counterfactual results, just without LLM-generated narrative.
+
+### Extra dependencies
+
+The diagnostic agent needs two additional packages for scene understanding:
+
+```bash
+pip install scipy
+pip install git+https://github.com/facebookresearch/segment-anything.git
+```
+
+The SAM model checkpoint (`sam_vit_b`) is downloaded automatically to `~/.cache/smolvla_inspect/` on first use. OWL-ViT v2 loads from HuggingFace via `transformers` (already a dependency).
+
+### Diagnostic config
+
+Use `configs/diagnostic.yaml` for defaults, or pass flags directly:
+
+```bash
+./run.sh diagnose --config configs/diagnostic.yaml \
+    --model your/model_id --dataset your/dataset_id
+
+# Control the analysis depth
+./run.sh diagnose --run-dir ./outputs/run_folder --dataset your/dataset_id \
+    --max-counterfactuals 5 --max-hypotheses 8
+
+# Skip counterfactuals (faster, no model needed)
+./run.sh diagnose --run-dir ./outputs/run_folder --dataset your/dataset_id \
+    --skip-counterfactuals
+```
+
+### Diagnostic output
+
+Reports are saved inside the run directory:
+
+```text
+run_folder/
+  diagnostic/
+    report.json          # Structured report (machine-readable)
+    report.md            # Full narrative report (human-readable)
+    matrix.json          # Attribution mass matrix
+    scene/
+      detections.json    # Detected objects with boxes/scores
+      segmentation.npz   # Per-object binary masks
+      annotated_frame.png
+    counterfactuals/
+      background_substitution/
+        comparison.png   # Side-by-side original vs modified
+        result.json      # Action delta, GradCAM shift
+      object_relocation/
+        comparison.png
+        result.json
+    evidence_chain.json  # Full evidence log
+```
+
+### Web viewer integration
+
+The diagnostic is also available in the web viewer. Select a run, then click "Diagnostic Agent" in the sidebar. You can trigger a diagnostic run from the UI and view the interactive matrix, expandable findings, and counterfactual comparison images.
+
+### What it detects
+
+| Anomaly | Severity | What it means |
+|---------|----------|---------------|
+| High background attribution | Critical/Warning | Model relies on background features, not task objects |
+| Spatial shortcut | Critical | Model memorized object positions instead of recognizing them |
+| Low object attribution | Critical/Warning | GradCAM shows the target object has minimal causal influence |
+| Attention-GradCAM divergence | Warning | Model looks at regions it doesn't use (or vice versa) |
+| Dead state pathway | Warning | Proprioceptive state input is being ignored |
+| Language insensitivity | Warning | Changing the task instruction doesn't shift visual attention |
+| Unstable GradCAM | Info | Gradient attribution varies significantly across frames |
 
 ## Setup
 
@@ -175,6 +316,7 @@ Defaults come from `configs/defaults.yaml`. Use `--config` to load another confi
 |--------|---------|
 | `configs/defaults.yaml` | Conservative CPU-friendly defaults |
 | `configs/gpu.yaml` | CUDA-oriented config with gradients and extended attribution enabled |
+| `configs/diagnostic.yaml` | Diagnostic agent defaults (scene models, hypothesis/counterfactual limits) |
 
 Example:
 
@@ -412,6 +554,23 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 
 ## CLI Reference
 
+### Diagnostic agent (`diagnose` subcommand)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--run-dir` | off | Path to existing run directory (post-hoc mode) |
+| `--model` | off | HuggingFace model ID or local path |
+| `--dataset` | off | LeRobot dataset ID or local path |
+| `--episode` | `0` | Episode index |
+| `--image-key` | auto | Dataset image key |
+| `--image-map` | off | Explicit image key mapping |
+| `--config` | off | Diagnostic config YAML path |
+| `--device` | auto | `cuda`, `mps`, or `cpu` |
+| `--output-dir` | `./outputs` | Output directory |
+| `--max-counterfactuals` | `3` | Maximum counterfactual tests to run |
+| `--skip-counterfactuals` | off | Skip counterfactual testing entirely |
+| `--max-hypotheses` | `5` | Maximum hypotheses to generate |
+
 ### General
 
 | Flag | Default | Description |
@@ -486,12 +645,34 @@ smolvla-inspect/
 │   ├── internals.py
 │   ├── serve.py
 │   ├── viz.py
-│   └── _compat.py
+│   ├── _compat.py
+│   └── diagnostic/             # Diagnostic agent package
+│       ├── __init__.py          # run_diagnostic() entry point
+│       ├── agent.py             # DiagnosticAgent orchestrator
+│       ├── counterfactual.py    # Counterfactual perturbation primitives
+│       ├── diagnostic_cli.py    # CLI subcommand handler
+│       ├── matrix.py            # Diagnostic matrix + anomaly detectors
+│       ├── models.py            # Data models (dataclasses)
+│       ├── prompts.py           # LLM prompt templates
+│       ├── regions.py           # Region attribution scoring
+│       ├── registry.py          # Primitive registry
+│       ├── report.py            # Report generation + export
+│       └── scene.py             # Scene understanding (OWL-ViT + SAM)
 ├── web/
 │   ├── backend/
+│   │   ├── routers/
+│   │   │   └── diagnostic.py   # Diagnostic API endpoints
+│   │   └── services/
+│   │       └── diagnostic_service.py
 │   └── frontend/
+│       └── src/components/
+│           ├── DiagnosticPanel.tsx
+│           ├── DiagnosticMatrixTable.tsx
+│           ├── FindingCard.tsx
+│           └── CounterfactualComparison.tsx
 ├── assets/
 ├── configs/
+│   └── diagnostic.yaml          # Diagnostic agent config
 ├── docs/
 ├── clone-and-setup.sh
 ├── setup-gpu.sh
@@ -508,7 +689,7 @@ smolvla-inspect/
 - [x] Extended attribution features
 - [x] Config file support
 - [x] Interactive web viewer
-- [ ] Occlusion / perturbation sensitivity
+- [x] Agentic diagnostic system with counterfactual verification
 - [ ] Representation probing
 - [ ] Causal tracing / activation patching
 - [ ] Temporal consistency analysis
