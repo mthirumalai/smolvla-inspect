@@ -87,6 +87,38 @@ class Anomaly:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class TemporalTrajectory:
+    """Attention centroid trajectory across episode frames."""
+
+    frame_indices: list[int]
+    centroids: list[tuple[float, float]]  # (cx, cy) per frame
+    smoothness: float  # mean inter-frame centroid displacement (lower = smoother)
+    object_tracking_correlation: float  # correlation with GT object centroid (-1 to 1)
+    signal_type: str  # which signal was used (attention, gradcam_siglip, etc.)
+
+
+@dataclass
+class OcclusionMap:
+    """Systematic occlusion sensitivity map."""
+
+    sensitivity_map: np.ndarray  # (grid_h, grid_w) action L2 delta per patch
+    patch_size: int
+    stride: int
+    max_delta: float
+    mean_delta: float
+
+
+@dataclass
+class ConnectorAnalysis:
+    """Pre/post connector attribution comparison."""
+
+    pre_connector_shares: dict[str, float]  # region -> share (from 1024-patch space)
+    post_connector_shares: dict[str, float]  # region -> share (from 64-token space)
+    information_loss_per_region: dict[str, float]  # region -> |pre - post|
+    total_information_loss: float  # sum of per-region losses
+
+
+@dataclass
 class DiagnosticMatrix:
     """Attribution matrix: signal types x regions, with optional per-frame and
     per-action-dim breakdowns."""
@@ -97,6 +129,9 @@ class DiagnosticMatrix:
     per_frame: list[dict[str, dict[str, float]]]
     per_action_dim: dict[str, dict[str, dict[str, float]]] | None = None
     scalars: dict = field(default_factory=dict)
+    temporal_trajectories: list[TemporalTrajectory] | None = None
+    occlusion: OcclusionMap | None = None
+    connector_analysis: ConnectorAnalysis | None = None
 
     # -- analysis ----------------------------------------------------------
 
@@ -108,7 +143,7 @@ class DiagnosticMatrix:
 
     def to_dict(self) -> dict:
         """Serialise the matrix to a plain dict."""
-        return {
+        d = {
             "signal_types": self.signal_types,
             "regions": self.regions,
             "attribution_mass": self.attribution_mass,
@@ -116,6 +151,25 @@ class DiagnosticMatrix:
             "per_action_dim": self.per_action_dim,
             "scalars": self.scalars,
         }
+        if self.temporal_trajectories:
+            d["temporal_trajectories"] = [
+                {"frame_indices": t.frame_indices, "centroids": t.centroids,
+                 "smoothness": t.smoothness,
+                 "object_tracking_correlation": t.object_tracking_correlation,
+                 "signal_type": t.signal_type}
+                for t in self.temporal_trajectories
+            ]
+        if self.occlusion is not None:
+            d["occlusion"] = {
+                "sensitivity_map": self.occlusion.sensitivity_map.tolist(),
+                "patch_size": self.occlusion.patch_size,
+                "stride": self.occlusion.stride,
+                "max_delta": self.occlusion.max_delta,
+                "mean_delta": self.occlusion.mean_delta,
+            }
+        if self.connector_analysis is not None:
+            d["connector_analysis"] = asdict(self.connector_analysis)
+        return d
 
     def to_markdown(self) -> str:
         """Render the attribution matrix as a Markdown table.
@@ -138,6 +192,33 @@ class DiagnosticMatrix:
             lines.append("")
             for key, val in self.scalars.items():
                 lines.append(f"- {key}: {val}")
+
+        if self.temporal_trajectories:
+            lines.append("")
+            lines.append("**Temporal Trajectories**")
+            lines.append("")
+            for t in self.temporal_trajectories:
+                lines.append(
+                    f"- {t.signal_type}: smoothness={t.smoothness:.3f}, "
+                    f"object_tracking_corr={t.object_tracking_correlation:.3f}, "
+                    f"{len(t.frame_indices)} frames"
+                )
+
+        if self.occlusion is not None:
+            lines.append("")
+            lines.append("**Occlusion Sensitivity**")
+            lines.append("")
+            lines.append(f"- Patch size: {self.occlusion.patch_size}, stride: {self.occlusion.stride}")
+            lines.append(f"- Max delta: {self.occlusion.max_delta:.4f}, mean delta: {self.occlusion.mean_delta:.4f}")
+
+        if self.connector_analysis is not None:
+            ca = self.connector_analysis
+            lines.append("")
+            lines.append("**Connector Bottleneck Analysis**")
+            lines.append("")
+            lines.append(f"- Total information loss: {ca.total_information_loss:.4f}")
+            for r, loss in ca.information_loss_per_region.items():
+                lines.append(f"  - {r}: pre={ca.pre_connector_shares.get(r, 0):.4f} → post={ca.post_connector_shares.get(r, 0):.4f} (loss={loss:.4f})")
 
         return "\n".join(lines)
 
@@ -234,6 +315,7 @@ class DiagnosticReport:
     counterfactual_results: list[CounterfactualResult]
     findings: list[Finding]
     llm_synthesis: str = ""
+    cf_skip_reason: str = ""  # "skipped", "no_model", "budget_exhausted", or ""
 
     # -- helpers -----------------------------------------------------------
 
@@ -391,7 +473,12 @@ class DiagnosticReport:
                 sections.append(f"- Attribution shift per region: {cr.attribution_shift_per_region}")
                 sections.append("")
         else:
-            sections.append("No counterfactual tests run.")
+            reason_msg = {
+                "skipped": "Counterfactual tests skipped by user (--skip-counterfactuals).",
+                "no_model": "No counterfactual tests run (no model loaded — post-hoc mode).",
+                "budget_exhausted": "Counterfactual budget exhausted.",
+            }.get(self.cf_skip_reason, "No counterfactual tests run.")
+            sections.append(reason_msg)
             sections.append("")
 
         # Findings

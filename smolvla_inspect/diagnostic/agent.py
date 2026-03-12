@@ -15,7 +15,7 @@ from .scene import parse_task_objects, detect_objects, segment_scene, analyze_da
 from .regions import attribute_to_regions
 from .matrix import build_diagnostic_matrix, detect_anomalies
 from .prompts import (
-    build_hypothesis_prompt, build_synthesis_prompt,
+    build_hypothesis_prompt, build_synthesis_prompt, build_triage_selection_prompt,
     format_diversity_summary, format_anomalies_json, format_hypotheses_with_results,
 )
 from ..data import _resolve_task_string, get_episode_frames, build_policy_batch_from_sample
@@ -24,6 +24,33 @@ from ..data import _resolve_task_string, get_episode_frames, build_policy_batch_
 # ---------------------------------------------------------------------------
 # Robust JSON extraction — handles common LLM output quirks
 # ---------------------------------------------------------------------------
+
+def _find_matching_bracket(text: str, start: int) -> int:
+    """Find the matching ] for a [ at position start, respecting string literals."""
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == '\\' and in_string:
+            escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == '[':
+            depth += 1
+        elif c == ']':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
 
 def _extract_json_array(text: str) -> list[dict]:
     """Extract a JSON array from LLM output, repairing common formatting issues.
@@ -34,10 +61,34 @@ def _extract_json_array(text: str) -> list[dict]:
     # 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
     text = re.sub(r"```(?:json)?\s*\n?", "", text)
 
-    # 2. Locate the outermost [ ... ]
+    # 2. Locate the outermost [ ... ] using bracket matching
     start = text.find("[")
-    end = text.rfind("]")
-    if start < 0 or end <= start:
+    if start < 0:
+        # No array found — check if it's a single JSON object (e.g. from response_format: json_object)
+        obj_start = text.find("{")
+        if obj_start >= 0:
+            # Try to parse as a single object or as a JSON object containing an array
+            try:
+                obj = json.loads(text[obj_start:])
+                if isinstance(obj, dict):
+                    # Check if any value is a list of dicts (e.g. {"hypotheses": [...]})
+                    for v in obj.values():
+                        if isinstance(v, list) and v and isinstance(v[0], dict):
+                            return v
+                    # Otherwise wrap single object as a list
+                    return [obj]
+            except json.JSONDecodeError:
+                pass
+            # Try individual object extraction
+            return _parse_objects_individually(text[obj_start:])
+        return []
+
+    # Try bracket-matched end first (handles narrative text after JSON)
+    end = _find_matching_bracket(text, start)
+    if end < 0:
+        # Fallback to rfind
+        end = text.rfind("]")
+    if end <= start:
         return []
     blob = text[start:end + 1]
 
@@ -46,6 +97,16 @@ def _extract_json_array(text: str) -> list[dict]:
         return json.loads(blob)
     except json.JSONDecodeError:
         pass
+
+    # 3b. If bracket matching failed, try rfind as fallback
+    end_rfind = text.rfind("]")
+    if end_rfind != end and end_rfind > start:
+        blob_rfind = text[start:end_rfind + 1]
+        try:
+            return json.loads(blob_rfind)
+        except json.JSONDecodeError:
+            pass
+        blob = blob_rfind  # Use the longer blob for repair
 
     # 4. Repair pass
     # Remove single-line // comments
@@ -202,18 +263,33 @@ class DiagnosticAgent:
         except Exception as e:
             _progress("dataset_diversity", f"Skipped: {e}")
 
-        # ── Phase 3: Triage — Collect Model Primitive Outputs ──
-        _progress("triage", "Collecting model signals...")
+        # ── Phase 3a: Cheap Triage — Always-run Signals ─────────
+        _progress("triage", "Collecting cheap model signals...")
         if self.post_hoc:
             signals = self._load_existing_signals()
         else:
-            signals = self._run_triage(sample)
+            signals = self._run_cheap_triage(sample)
 
-        _progress("triage", f"Collected signals: {list(signals.keys())}")
+        _progress("triage", f"Cheap signals: {list(signals.keys())}")
+
+        # ── Phase 3b: Adaptive Triage — LLM-selected Expensive Signals ──
+        if not self.post_hoc and self.policy is not None:
+            selected = await self._select_expensive_signals(
+                task_string, scene, signals)
+            _progress("triage", f"LLM selected expensive signals: {selected}")
+
+            for sig_name in selected:
+                _progress("triage", f"  Running {sig_name}...")
+                try:
+                    self._run_expensive_signal(sig_name, sample, signals, scene=scene)
+                except Exception as e:
+                    _progress("triage", f"  {sig_name} failed: {e}")
+
+        _progress("triage", f"All signals: {list(signals.keys())}")
 
         # ── Phase 4: Build Diagnostic Matrix ────────────────────
         _progress("matrix", "Building diagnostic matrix...")
-        frames_for_matrix = [first_frame]  # Use first frame for now
+        frames_for_matrix = [first_frame]
 
         matrix = build_diagnostic_matrix(
             frames=frames_for_matrix,
@@ -227,10 +303,14 @@ class DiagnosticAgent:
             vision_vs_state=signals.get("vision_vs_state"),
             positional_baseline=signals.get("positional_baseline"),
             language_diff=signals.get("language_diff"),
+            temporal_trajectories=signals.get("temporal_trajectories"),
+            occlusion_map=signals.get("occlusion_map"),
+            connector_analysis=signals.get("connector_analysis"),
+            dataset_diversity=diversity,
         )
 
         internals = signals.get("model_internals")
-        anomalies = detect_anomalies(matrix, internals)
+        anomalies = detect_anomalies(matrix, internals, dataset_diversity=diversity)
         _progress("matrix", f"Detected {len(anomalies)} anomalies")
 
         self.evidence_log.append(EvidenceEntry(
@@ -248,12 +328,20 @@ class DiagnosticAgent:
         # ── Phase 6: Run Agent-Chosen Counterfactuals ───────────
         cf_results: list[CounterfactualResult] = []
         max_cf = self.config.get("max_counterfactuals", 3)
+        cf_skip_reason = ""  # tracks why counterfactuals weren't run
 
-        if self.policy is not None:
+        if max_cf <= 0:
+            _progress("counterfactuals", "Skipping (--skip-counterfactuals or max_counterfactuals=0)")
+            cf_skip_reason = "skipped"
+            for h in hypotheses:
+                if h.test_type != "none":
+                    h.confidence *= 0.6
+        elif self.policy is not None:
             for hypothesis in hypotheses:
                 if hypothesis.test_type == "none":
                     continue
                 if len(cf_results) >= max_cf:
+                    cf_skip_reason = "budget_exhausted"
                     break
 
                 _progress("counterfactuals", f"Running {hypothesis.test_type} for {hypothesis.id}...")
@@ -272,17 +360,62 @@ class DiagnosticAgent:
                     _progress("counterfactuals", f"  Failed: {e}")
         else:
             _progress("counterfactuals", "Skipping (no model loaded)")
+            cf_skip_reason = "no_model"
             for h in hypotheses:
                 if h.test_type != "none":
                     h.confidence *= 0.6
 
         _progress("counterfactuals", f"Completed {len(cf_results)} counterfactual tests")
 
+        # ── Phase 6b: Iterative Follow-up ───────────────────────
+        max_iterations = self.config.get("max_hypothesis_iterations", 1)
+        if (max_iterations > 0 and self.policy is not None
+                and cf_results and len(cf_results) < max_cf):
+            # Check for surprising results: any hypothesis that was NOT confirmed
+            # but had high confidence, or confirmed with unexpected delta
+            surprising = [
+                (h, r) for h, r in zip(hypotheses, cf_results)
+                if h.id == r.hypothesis_id and (
+                    (h.confidence > 0.7 and not r.confirmed)
+                    or (r.confirmed and r.action_delta_l2 > 0.1)
+                )
+            ]
+            if surprising:
+                _progress("iteration", f"Found {len(surprising)} surprising results, forming follow-up hypotheses...")
+                followup_hypotheses = await self._form_hypotheses(
+                    task_string, scene, diversity, matrix, anomalies)
+                # Filter to only genuinely new hypotheses
+                existing_ids = {h.id for h in hypotheses}
+                existing_tests = {(h.test_type, str(h.test_params)) for h in hypotheses}
+                for fh in followup_hypotheses:
+                    if fh.id in existing_ids:
+                        fh.id = f"f{fh.id}"
+                    if (fh.test_type, str(fh.test_params)) in existing_tests:
+                        continue
+                    if fh.test_type == "none":
+                        continue
+                    if len(cf_results) >= max_cf:
+                        break
+                    _progress("iteration", f"Follow-up: {fh.test_type} for {fh.id}...")
+                    try:
+                        result = self._run_counterfactual(fh, sample, scene)
+                        cf_results.append(result)
+                        hypotheses.append(fh)
+                        self.evidence_log.append(EvidenceEntry(
+                            phase="iteration",
+                            primitive_name=f"counterfactual.{fh.test_type}",
+                            data={"hypothesis_id": fh.id,
+                                  "confirmed": result.confirmed,
+                                  "action_delta_l2": result.action_delta_l2},
+                        ))
+                    except Exception as e:
+                        _progress("iteration", f"  Failed: {e}")
+
         # ── Phase 7: LLM Synthesis ─────────────────────────────
         _progress("synthesis", "Synthesizing report via LLM...")
         findings, narrative = await self._synthesize_report(
             task_string, scene, diversity, matrix, anomalies,
-            hypotheses, cf_results)
+            hypotheses, cf_results, cf_skip_reason=cf_skip_reason)
         _progress("synthesis", f"Generated {len(findings)} findings")
 
         # ── Build Final Report ──────────────────────────────────
@@ -312,6 +445,7 @@ class DiagnosticAgent:
             counterfactual_results=cf_results,
             findings=findings,
             llm_synthesis=narrative,
+            cf_skip_reason=cf_skip_reason,
         )
 
         _progress("complete", "Diagnostic report ready")
@@ -415,118 +549,257 @@ class DiagnosticAgent:
         # Filter out None values
         return {k: v for k, v in signals.items() if v is not None}
 
-    def _run_triage(self, sample) -> dict:
-        """Run model primitives to collect signals (integrated mode)."""
+    def _run_cheap_triage(self, sample) -> dict:
+        """Run cheap, always-on signals: self-attention + positional baseline."""
+        import torch
         signals = {}
 
-        # Import existing pipeline functions
         try:
-            from ..cli import extract_attention_maps
-            from ..gradient import (
-                compute_saliency_map,
-                compute_gradcam_connector_maps,
-                compute_vision_vs_state_maps,
-                compute_language_conditional_maps,
-            )
-            from ..heatmap import compute_positional_baseline
             from ..data import find_vision_encoder
             from ..capture import SigLIPAttentionCapture
+            from ..heatmap import compute_patch_attention_scores, attention_to_heatmap
+            from ..gradient import _patch_eager_attention_bool_mask
         except ImportError as e:
             print(f"  Warning: Could not import triage modules: {e}")
             return signals
 
-        # Run attention extraction
         try:
-            from ..capture import SigLIPAttentionCapture, ActionVisionAttentionCapture
             vision_encoder = find_vision_encoder(self.policy)
-            if vision_encoder is not None:
-                attn_capture = SigLIPAttentionCapture(vision_encoder)
-                attn_capture.register_hooks()
+            if vision_encoder is None:
+                return signals
 
-                # Get frames
-                frames_data = get_episode_frames(
-                    self.dataset, self.episode_idx,
-                    self.config.get("num_frames", 4), self.image_key)
+            # Force eager attention so hooks receive actual weights
+            # (SDPA returns None for weights by default)
+            for mod in vision_encoder.modules():
+                cfg = getattr(mod, "config", None)
+                if cfg is not None and hasattr(cfg, "_attn_implementation"):
+                    cfg._attn_implementation = "eager"
 
-                heatmaps = []
-                for frame_idx, img_tensor in frames_data:
-                    frame_sample = self.dataset[frame_idx]
-                    batch, _ = build_policy_batch_from_sample(
-                        frame_sample, self.policy, self.device,
-                        dataset=self.dataset, image_map=self.image_map)
-                    with __import__('torch').no_grad():
-                        self.policy.select_action(batch)
-                    last_attn = attn_capture.get_last_layer_attention()
-                    if last_attn is not None:
-                        from ..heatmap import compute_patch_attention_scores, attention_to_heatmap
-                        scores = compute_patch_attention_scores(last_attn)
-                        # Determine grid size from vision encoder config
-                        try:
-                            vc = vision_encoder.config
-                            gs = vc.image_size // vc.patch_size
-                        except Exception:
-                            gs = 32
-                        try:
-                            vc = vision_encoder.config
-                            target_hw = (gs * vc.patch_size, gs * vc.patch_size)
-                        except Exception:
-                            target_hw = (512, 512)
-                        hm = attention_to_heatmap(scores, (gs, gs), target_hw)
-                        heatmaps.append(hm)
-                    attn_capture.reset_maps()
+            attn_capture = SigLIPAttentionCapture()
+            attn_capture.register_hooks(vision_encoder)
 
-                if heatmaps:
-                    signals["attention"] = heatmaps
+            frames_data = get_episode_frames(
+                self.dataset, self.episode_idx,
+                self.config.get("num_frames", 4), self.image_key)
 
-                # Positional baseline
-                try:
-                    baseline = compute_positional_baseline(
-                        vision_encoder, attn_capture, self.device, "last-layer",
-                        input_hw=(512, 512))
-                    if baseline is not None:
-                        signals["positional_baseline"] = baseline
-                except Exception:
-                    pass
+            heatmaps = []
+            for frame_idx, img_tensor in frames_data:
+                frame_sample = self.dataset[frame_idx]
+                batch, _ = build_policy_batch_from_sample(
+                    frame_sample, self.policy, self.device,
+                    dataset=self.dataset, image_map=self.image_map)
+                self.policy.reset()
+                with _patch_eager_attention_bool_mask(self.policy), torch.no_grad():
+                    self.policy.select_action(batch)
+                last_attn = attn_capture.get_last_layer_attention()
+                if last_attn is not None:
+                    # Squeeze batch dimension: (1, heads, seq, seq) → (heads, seq, seq)
+                    if last_attn.dim() == 4:
+                        last_attn = last_attn.squeeze(0)
+                    scores = compute_patch_attention_scores(last_attn)
+                    try:
+                        vc = vision_encoder.config
+                        gs = vc.image_size // vc.patch_size
+                        target_hw = (gs * vc.patch_size, gs * vc.patch_size)
+                    except Exception:
+                        gs = 32
+                        target_hw = (512, 512)
+                    hm = attention_to_heatmap(scores, (gs, gs), target_hw)
+                    heatmaps.append(hm)
+                attn_capture.reset_maps()
 
-                attn_capture.remove_hooks()
+            if heatmaps:
+                signals["attention"] = heatmaps
+
+            # Positional baseline (cheap)
+            try:
+                from ..heatmap import compute_positional_baseline
+                baseline_scores, _ = compute_positional_baseline(
+                    vision_encoder, attn_capture, self.device, "last-layer",
+                    input_hw=(512, 512))
+                if baseline_scores is not None:
+                    try:
+                        vc = vision_encoder.config
+                        gs = vc.image_size // vc.patch_size
+                        target_hw = (gs * vc.patch_size, gs * vc.patch_size)
+                    except Exception:
+                        gs = 32
+                        target_hw = (512, 512)
+                    signals["positional_baseline"] = attention_to_heatmap(
+                        baseline_scores, (gs, gs), target_hw)
+            except Exception:
+                pass
+
+            attn_capture.clear()
         except Exception as e:
             print(f"  Warning: Attention extraction failed: {e}")
 
-        # Run gradient-based attribution on first frame
-        try:
-            from ..gradient import compute_saliency_map, _run_forward_with_grad
-            frame_sample = self.dataset[self._get_first_frame_idx()]
-
-            # GradCAM SigLIP
-            try:
-                from ..gradient import compute_gradcam_siglip_maps
-            except ImportError:
-                pass
-
-            # Saliency
-            try:
-                saliency = compute_saliency_map(
-                    self.policy, frame_sample, self.dataset, self.image_key,
-                    self.device, image_map=self.image_map)
-                if saliency is not None:
-                    signals["saliency"] = [saliency]
-            except Exception as e:
-                print(f"  Warning: Saliency failed: {e}")
-
-            # Vision vs State
-            try:
-                vs_result = compute_vision_vs_state_maps(
-                    self.policy, frame_sample, self.dataset, self.device,
-                    image_map=self.image_map)
-                if vs_result is not None:
-                    signals["vision_vs_state"] = [vs_result]
-            except Exception as e:
-                print(f"  Warning: Vision vs state failed: {e}")
-
-        except Exception as e:
-            print(f"  Warning: Gradient attribution failed: {e}")
-
         return signals
+
+    async def _select_expensive_signals(self, task_string: str,
+                                         scene, signals: dict) -> list[str]:
+        """Use LLM to select which expensive signals to collect."""
+        # Summarise cheap signals for the LLM
+        summary_lines = []
+        if "attention" in signals:
+            n = len(signals["attention"])
+            summary_lines.append(f"- Self-attention heatmaps: {n} frames collected")
+            # Quick foreground ratio estimate
+            if signals["attention"] and hasattr(scene, 'background_mask'):
+                from .regions import foreground_ratio
+                fg = foreground_ratio(signals["attention"][0], scene)
+                summary_lines.append(f"  - Foreground ratio (first frame): {fg:.2%}")
+        if "positional_baseline" in signals:
+            from .regions import spatial_prior_ratio
+            if "attention" in signals and signals["attention"]:
+                pr = spatial_prior_ratio(signals["attention"][0], signals["positional_baseline"])
+                summary_lines.append(f"- Positional baseline similarity: {pr:.2f}")
+        if not summary_lines:
+            summary_lines.append("- No cheap signals available (attention extraction failed)")
+
+        max_signals = self.config.get("max_expensive_signals", 4)
+
+        prompt = build_triage_selection_prompt(
+            task_string=task_string,
+            detected_objects=scene.region_names(),
+            cheap_signals_summary="\n".join(summary_lines),
+            max_signals=max_signals,
+        )
+
+        response = await self._call_llm(prompt)
+
+        # Parse JSON array of signal names
+        try:
+            selected = _extract_json_array(response)
+            if selected and isinstance(selected[0], str):
+                return selected[:max_signals]
+            # If it parsed as list of dicts, try extracting strings
+            return [str(s) for s in json.loads(response.strip()) if isinstance(s, str)][:max_signals]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+        # Fallback: run a sensible default set
+        return ["gradcam_siglip", "saliency", "vision_vs_state"]
+
+    def _run_expensive_signal(self, signal_name: str, sample, signals: dict,
+                              scene=None):
+        """Run a single expensive signal and store in signals dict."""
+        import torch
+        frame_sample = self.dataset[self._get_first_frame_idx()]
+
+        if signal_name == "gradcam_siglip":
+            from ..gradient import compute_gradcam_map
+            cam = compute_gradcam_map(
+                self.policy, frame_sample, self.dataset, self.image_key,
+                self.device, image_map=self.image_map)
+            if cam is not None:
+                signals["gradcam_siglip"] = [cam]
+
+        elif signal_name == "saliency":
+            from ..gradient import compute_saliency_map
+            sal = compute_saliency_map(
+                self.policy, frame_sample, self.dataset, self.image_key,
+                self.device, image_map=self.image_map)
+            if sal is not None:
+                signals["saliency"] = [sal]
+
+        elif signal_name == "vision_vs_state":
+            from ..gradient import compute_vision_vs_state_ratio
+            vs = compute_vision_vs_state_ratio(
+                self.policy, frame_sample, self.dataset, self.image_key,
+                self.device, image_map=self.image_map)
+            if vs is not None:
+                signals["vision_vs_state"] = [vs]
+
+        elif signal_name == "per_action_dim_gradcam":
+            from ..gradient import compute_per_action_dim_gradcam
+            result = compute_per_action_dim_gradcam(
+                self.policy, frame_sample, self.dataset, self.image_key,
+                self.device, image_map=self.image_map)
+            if result is not None:
+                # Convert to the dict format expected by build_diagnostic_matrix
+                dim_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
+                per_dim = {}
+                for i, cam in enumerate(result["maps"]):
+                    name = dim_names[i] if i < len(dim_names) else f"dim_{i}"
+                    per_dim[name] = [cam]
+                signals["per_action_dim"] = per_dim
+
+        elif signal_name == "connector_analysis":
+            self._run_connector_analysis(frame_sample, signals, scene=scene)
+
+        elif signal_name == "occlusion_sensitivity":
+            try:
+                from .occlusion import compute_occlusion_sensitivity
+                occ = compute_occlusion_sensitivity(
+                    self.policy, frame_sample, self.dataset,
+                    self.image_key, self.device,
+                    patch_size=self.config.get("occlusion_patch_size", 64),
+                    stride=self.config.get("occlusion_stride", 32),
+                    image_map=self.image_map)
+                if occ is not None:
+                    signals["occlusion_map"] = occ
+            except Exception as e:
+                print(f"  Warning: Occlusion sensitivity failed: {e}")
+
+        elif signal_name == "temporal_trajectory":
+            try:
+                from .temporal import compute_temporal_trajectory
+                traj = compute_temporal_trajectory(
+                    self.policy, self.dataset, self.episode_idx,
+                    self.image_key, self.device,
+                    num_frames=self.config.get("temporal_frames", 20),
+                    image_map=self.image_map)
+                if traj is not None:
+                    signals["temporal_trajectories"] = [traj]
+            except Exception as e:
+                print(f"  Warning: Temporal trajectory failed: {e}")
+
+        elif signal_name == "language_diff":
+            from ..gradient import compute_language_conditional_diff
+            diff = compute_language_conditional_diff(
+                self.policy, frame_sample, self.dataset, self.image_key,
+                self.device, image_map=self.image_map)
+            if diff is not None:
+                signals["language_diff"] = diff
+
+    def _run_connector_analysis(self, sample, signals: dict, scene=None):
+        """Compare SigLIP (pre-connector) and connector (post-connector) attribution."""
+        from ..gradient import compute_gradcam_map, compute_gradcam_connector
+        from .models import ConnectorAnalysis
+
+        pre_cam = compute_gradcam_map(
+            self.policy, sample, self.dataset, self.image_key,
+            self.device, image_map=self.image_map)
+        post_cam = compute_gradcam_connector(
+            self.policy, sample, self.dataset, self.image_key,
+            self.device, image_map=self.image_map)
+
+        if pre_cam is None or post_cam is None:
+            return
+
+        # Store raw heatmaps for the matrix builder
+        signals["gradcam_siglip"] = signals.get("gradcam_siglip", []) or []
+        if not signals["gradcam_siglip"]:
+            signals["gradcam_siglip"] = [pre_cam]
+        signals["gradcam_connector"] = [post_cam]
+
+        # Build ConnectorAnalysis with per-region information loss
+        if scene is not None:
+            pre_shares = attribute_to_regions(pre_cam, scene, signal_name="gradcam_siglip")
+            post_shares = attribute_to_regions(post_cam, scene, signal_name="gradcam_connector")
+            info_loss = {}
+            for region in pre_shares:
+                pre_val = pre_shares.get(region, 0.0)
+                post_val = post_shares.get(region, 0.0)
+                info_loss[region] = max(0.0, pre_val - post_val)
+            total_loss = sum(info_loss.values())
+            signals["connector_analysis"] = ConnectorAnalysis(
+                pre_connector_shares=pre_shares,
+                post_connector_shares=post_shares,
+                information_loss_per_region=info_loss,
+                total_information_loss=total_loss,
+            )
 
     def _run_counterfactual(self, hypothesis: Hypothesis, sample,
                             scene: SceneSegmentation) -> CounterfactualResult:
@@ -549,6 +822,10 @@ class DiagnosticAgent:
         # Add segmentation if needed
         if "segmentation" in primitive.fn.__code__.co_varnames:
             params["segmentation"] = scene
+
+        # Add episode_idx for temporal tests
+        if "episode_idx" in primitive.fn.__code__.co_varnames:
+            params["episode_idx"] = self.episode_idx
 
         result = primitive.fn(**params)
         result.hypothesis_id = hypothesis.id
@@ -596,12 +873,20 @@ class DiagnosticAgent:
             return self._fallback_llm_response(prompt)
 
         client = anthropic.AsyncAnthropic(api_key=api_key)
-        response = await client.messages.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text
+        try:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=8192,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = response.content[0].text
+            if not content or content.strip() in ("", "[]"):
+                print(f"  Warning: Anthropic LLM returned empty response (model={model})")
+                return self._fallback_llm_response(prompt)
+            return content
+        except Exception as e:
+            print(f"  Warning: Anthropic API call failed: {e}")
+            return self._fallback_llm_response(prompt)
 
     async def _call_openai(self, prompt: str, model: str, api_key: str, base_url: str) -> str:
         """Call OpenAI or compatible API."""
@@ -614,12 +899,39 @@ class DiagnosticAgent:
         if base_url:
             kwargs["base_url"] = base_url
         client = openai.AsyncOpenAI(**kwargs)
-        response = await client.chat.completions.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.choices[0].message.content
+
+        is_json_prompt = "Output ONLY a JSON" in prompt or "Output valid JSON" in prompt
+
+        create_kwargs: dict = {
+            "model": model,
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        # Add system prompt for JSON output requests
+        if is_json_prompt:
+            create_kwargs["messages"].insert(0, {
+                "role": "system",
+                "content": (
+                    "You are an expert robotics ML researcher. "
+                    "Output valid JSON arrays when asked. "
+                    "Do not wrap JSON in markdown code fences. "
+                    "Start your response immediately with the [ character."
+                ),
+            })
+            # Note: we intentionally do NOT use response_format: json_object
+            # because it forces a single JSON object, but our prompts request
+            # JSON arrays. The system message is sufficient.
+
+        try:
+            response = await client.chat.completions.create(**create_kwargs)
+            content = response.choices[0].message.content
+            if not content or content.strip() in ("", "null"):
+                print(f"  Warning: LLM returned empty/null response (model={model})")
+                return self._fallback_llm_response(prompt)
+            return content
+        except Exception as e:
+            print(f"  Warning: LLM API call failed: {e}")
+            return self._fallback_llm_response(prompt)
 
     def _fallback_llm_response(self, prompt: str) -> str:
         """Generate a rule-based response when no LLM is available."""
@@ -645,7 +957,9 @@ class DiagnosticAgent:
         hypotheses = []
         try:
             items = _extract_json_array(response)
-            for item in items:
+            # Filter to only dict items (LLM may return string arrays)
+            dict_items = [item for item in items if isinstance(item, dict)]
+            for item in dict_items:
                 hypotheses.append(Hypothesis(
                     id=item.get("id", f"h{len(hypotheses)+1}"),
                     description=item.get("description", ""),
@@ -656,6 +970,10 @@ class DiagnosticAgent:
                     expected_if_true=item.get("expected_if_true", ""),
                     expected_if_false=item.get("expected_if_false", ""),
                 ))
+            if not dict_items:
+                preview = response[:500] if len(response) > 500 else response
+                print(f"  Warning: LLM returned no parseable hypotheses.")
+                print(f"  Response preview: {preview!r}")
         except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM hypotheses: {e}")
 
@@ -717,6 +1035,61 @@ class DiagnosticAgent:
                     expected_if_true="N/A — confirmed by vision vs state analysis",
                     expected_if_false="N/A",
                 ))
+            elif anomaly.type == "low_dataset_diversity":
+                hypotheses.append(Hypothesis(
+                    id=f"h{len(hypotheses)+1}",
+                    description=f"Model memorized fixed {target} positions due to low dataset diversity",
+                    confidence=0.7,
+                    supporting_anomalies=[anomaly.type],
+                    test_type="object_relocation",
+                    test_params={"target_object": target, "shift_pixels": [80, -60]},
+                    expected_if_true="Action breaks when object is moved from memorized position",
+                    expected_if_false="Model generalizes to new positions despite low training diversity",
+                ))
+            elif anomaly.type == "gripper_fixation":
+                hypotheses.append(Hypothesis(
+                    id=f"h{len(hypotheses)+1}",
+                    description="Model fixates on robot gripper instead of manipulation target",
+                    confidence=0.7,
+                    supporting_anomalies=[anomaly.type],
+                    test_type="occlusion_targeted",
+                    test_params={"target_object": target, "fill": "gray"},
+                    expected_if_true="Occluding target object has minimal effect (model relies on gripper)",
+                    expected_if_false="Occluding target changes actions significantly",
+                ))
+            elif anomaly.type == "cross_attention_diffuse":
+                hypotheses.append(Hypothesis(
+                    id=f"h{len(hypotheses)+1}",
+                    description="Action expert cross-attention is near-uniform — not selectively querying",
+                    confidence=0.5,
+                    supporting_anomalies=[anomaly.type],
+                    test_type="distractor_insertion",
+                    test_params={"position": [100, 100], "distractor_size": 80},
+                    expected_if_true="Model is equally distracted by novel objects",
+                    expected_if_false="Model ignores distractors despite diffuse attention",
+                ))
+            elif anomaly.type == "language_insensitivity":
+                hypotheses.append(Hypothesis(
+                    id=f"h{len(hypotheses)+1}",
+                    description="Model ignores language conditioning — acts the same regardless of instruction",
+                    confidence=0.7,
+                    supporting_anomalies=[anomaly.type],
+                    test_type="task_string_swap",
+                    test_params={"replacement_task": "do nothing"},
+                    expected_if_true="Changing instruction to 'do nothing' has no effect on actions",
+                    expected_if_false="Actions change, suggesting some language sensitivity",
+                ))
+            elif anomaly.type == "temporal_attention_instability":
+                hypotheses.append(Hypothesis(
+                    id=f"h{len(hypotheses)+1}",
+                    description="Attention is temporally unstable — jumps between frames",
+                    confidence=0.6,
+                    supporting_anomalies=[anomaly.type],
+                    test_type="temporal_consistency",
+                    test_params={"perturbation_type": "background_substitution", "num_frames": 5},
+                    expected_if_true="Model responds inconsistently to same perturbation across frames",
+                    expected_if_false="Model responds consistently despite attention instability",
+                ))
 
         return hypotheses
 
@@ -725,6 +1098,7 @@ class DiagnosticAgent:
                                   anomalies: list[Anomaly],
                                   hypotheses: list[Hypothesis],
                                   cf_results: list[CounterfactualResult],
+                                  cf_skip_reason: str = "",
                                   ) -> tuple[list[Finding], str]:
         """Use LLM to synthesize findings and narrative from all evidence."""
         prompt = build_synthesis_prompt(
@@ -733,25 +1107,35 @@ class DiagnosticAgent:
             matrix_markdown=matrix.to_markdown(),
             anomalies_summary=format_anomalies_json(anomalies),
             diversity_summary=format_diversity_summary(diversity),
-            hypotheses_with_results=format_hypotheses_with_results(hypotheses, cf_results),
+            hypotheses_with_results=format_hypotheses_with_results(
+                hypotheses, cf_results, skip_reason=cf_skip_reason),
         )
 
         response = await self._call_llm(prompt)
+
+        # Save raw response for debugging
+        try:
+            with open("/tmp/smolvla_llm_synthesis_raw.txt", "w") as f:
+                f.write(response)
+        except Exception:
+            pass
 
         findings = []
         narrative = ""
 
         try:
-            # Split on separator
-            if "---NARRATIVE---" in response:
-                json_part, narrative = response.split("---NARRATIVE---", 1)
-                narrative = narrative.strip()
-            else:
-                json_part = response
+            # Split on separator — try multiple variations LLMs might produce
+            json_part = response
+            for sep in ("---NARRATIVE---", "--- NARRATIVE ---", "---narrative---", "---Narrative---"):
+                if sep in response:
+                    json_part, narrative = response.split(sep, 1)
+                    narrative = narrative.strip()
+                    break
 
             # Parse findings JSON (with repair for common LLM quirks)
             items = _extract_json_array(json_part)
-            for item in items:
+            dict_items = [item for item in items if isinstance(item, dict)]
+            for item in dict_items:
                 findings.append(Finding(
                     id=item.get("id", f"f{len(findings)+1}"),
                     severity=item.get("severity", "info"),
@@ -764,11 +1148,20 @@ class DiagnosticAgent:
                     expected_impact=item.get("expected_impact", ""),
                     evidence_refs=item.get("evidence_refs", []),
                 ))
+
+            if not dict_items:
+                # Log what the LLM actually returned so we can debug format issues
+                preview = response[:500] if len(response) > 500 else response
+                print(f"  Warning: LLM synthesis returned no parseable JSON findings.")
+                print(f"  Response preview: {preview!r}")
         except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM synthesis: {e}")
+            preview = response[:300] if len(response) > 300 else response
+            print(f"  Response preview: {preview!r}")
 
         # If LLM failed, generate rule-based findings
         if not findings:
+            print("  Falling back to rule-based findings.")
             findings = self._rule_based_findings(anomalies, hypotheses, cf_results)
 
         if not narrative:
@@ -779,21 +1172,285 @@ class DiagnosticAgent:
     def _rule_based_findings(self, anomalies: list[Anomaly],
                               hypotheses: list[Hypothesis],
                               cf_results: list[CounterfactualResult]) -> list[Finding]:
-        """Generate findings without LLM."""
+        """Generate expert-quality findings without LLM, using anomaly-specific knowledge."""
         findings = []
         result_map = {r.hypothesis_id: r for r in cf_results}
 
+        # Anomaly-type → expert knowledge database
+        _EXPERT_DB = {
+            "high_background_attribution": {
+                "title": "Background texture dependence",
+                "interpretation": (
+                    "The model uses background texture/color as a spatial reference frame rather than "
+                    "attending to task-relevant objects. This means the policy will fail when deployed "
+                    "in environments with different backgrounds, tables, or lighting conditions."
+                ),
+                "fix": (
+                    "Add aggressive background augmentation during training:\n"
+                    "1. Random background substitution: swap backgrounds from a diverse image bank (20+ environments)\n"
+                    "2. Color jitter: `brightness=0.4, contrast=0.4, saturation=0.3, hue=0.1`\n"
+                    "3. Random crops with resize to break spatial priors\n"
+                    "4. Gaussian blur augmentation (kernel 5-15, sigma 0.5-2.0)\n"
+                    "5. Consider training with green-screen backgrounds and compositing varied scenes\n\n"
+                    "In the training config, add:\n"
+                    "```yaml\n"
+                    "augmentation:\n"
+                    "  background_randomization: true\n"
+                    "  color_jitter: {brightness: 0.4, contrast: 0.4, saturation: 0.3, hue: 0.1}\n"
+                    "  random_crop_scale: [0.8, 1.0]\n"
+                    "```"
+                ),
+                "expected_impact": (
+                    "Should reduce background attribution from >70% to <30% and improve "
+                    "cross-environment transfer. Expect 2-3x improvement in novel environment success rate."
+                ),
+            },
+            "low_object_attribution": {
+                "title": "Weak visual grounding on manipulation targets",
+                "interpretation": (
+                    "The model's vision encoder assigns negligible attention to the objects it needs to "
+                    "manipulate. It is likely relying on spatial priors (memorized positions) or background "
+                    "cues rather than actually recognizing and tracking the objects. This will cause "
+                    "failures when objects appear in novel positions, orientations, or appearances."
+                ),
+                "fix": (
+                    "Improve object-level grounding through:\n"
+                    "1. **Object-centric augmentation**: Randomly vary object color, size, and texture during training\n"
+                    "2. **Cutout/CutMix augmentation**: Force the model to use multiple visual cues\n"
+                    "3. **Auxiliary object detection loss**: Add a lightweight detection head that predicts object bounding boxes\n"
+                    "4. **Increase object diversity in training data**: Collect episodes with 3-5 different instances of each object class\n"
+                    "5. **Attention supervision**: If available, add soft attention guidance toward task-relevant regions\n\n"
+                    "Quick win: add `RandomErasing(p=0.3, scale=(0.02, 0.15))` to the training augmentation pipeline."
+                ),
+                "expected_impact": (
+                    "Should increase object attribution from <5% to >20% per task-relevant object. "
+                    "Expect improved generalization to novel object instances and positions."
+                ),
+            },
+            "spatial_shortcut": {
+                "title": "Spatial shortcut learning from fixed object positions",
+                "interpretation": (
+                    "The attention pattern closely matches a positional baseline (what the model would "
+                    "attend to with a blank image), indicating the model has memorized fixed spatial "
+                    "positions rather than learning true visual recognition. This is a memorization failure "
+                    "that will catastrophically break when objects are in different positions."
+                ),
+                "fix": (
+                    "Break spatial memorization through data diversity:\n"
+                    "1. **Randomize object positions**: Collect new episodes with objects placed at 10+ different positions\n"
+                    "2. **Spatial jitter augmentation**: Apply random affine transforms (translate ±20%, rotate ±15°)\n"
+                    "3. **Multi-camera training**: If possible, add side/wrist camera views to triangulate\n"
+                    "4. **Randomize camera position**: Even small ±5cm shifts in camera placement help\n"
+                    "5. **Curriculum**: Start with fixed positions, gradually increase randomization\n\n"
+                    "Critical: ensure the training set has at least 5 distinct object positions per object class."
+                ),
+                "expected_impact": (
+                    "Should eliminate positional memorization. Model should generalize to novel object "
+                    "placements within the workspace. Expect >3x improvement in position-varied evaluations."
+                ),
+            },
+            "low_dataset_diversity": {
+                "title": "Insufficient dataset diversity risks memorization",
+                "interpretation": (
+                    "The training dataset has extremely low diversity in one or more dimensions: "
+                    "object positions (std < 15px), backgrounds (near-identical), lighting, or task instructions. "
+                    "The model is likely memorizing a single scenario rather than learning a generalizable policy."
+                ),
+                "fix": (
+                    "Expand dataset diversity systematically:\n"
+                    "1. **Object positions**: Collect 50+ episodes with objects in random positions across the workspace\n"
+                    "2. **Backgrounds**: Collect episodes in 5+ different environments or with varied tablecloths/surfaces\n"
+                    "3. **Lighting**: Vary lighting conditions (bright, dim, directional, diffuse)\n"
+                    "4. **Task instructions**: Use 5+ paraphrases of each task (e.g., 'grab the block', 'pick up the lego', 'take the brick')\n"
+                    "5. **Object instances**: Use 3+ instances of each object class (different colors, sizes)\n\n"
+                    "Minimum viable dataset: 200 episodes with varied conditions. Current dataset likely needs 5-10x more diversity."
+                ),
+                "expected_impact": (
+                    "Should eliminate memorization artifacts and produce a policy that generalizes "
+                    "across environments. This is the highest-impact fix — without data diversity, "
+                    "no amount of model tuning will help."
+                ),
+            },
+            "action_attention_misalignment": {
+                "title": "Action dimensions attend to background instead of objects",
+                "interpretation": (
+                    "Spatial action dimensions (x, y, yaw) should attend primarily to the manipulation "
+                    "target to compute correct motion vectors. Instead, they attend to background regions, "
+                    "suggesting the model computes actions from background spatial cues rather than "
+                    "object-relative positioning. This will fail in novel environments."
+                ),
+                "fix": (
+                    "Address the root cause (likely background dependence + spatial shortcuts):\n"
+                    "1. Fix background attribution first (see above) — this is usually the upstream cause\n"
+                    "2. **Object-relative action representation**: Transform actions to be relative to detected object positions\n"
+                    "3. **Attention regularization**: Add a loss term penalizing background attention for spatial action dims\n"
+                    "4. Consider **object-centric architectures** that explicitly route object features to action heads\n\n"
+                    "Quick diagnostic: this finding usually resolves automatically when background dependence is fixed."
+                ),
+                "expected_impact": (
+                    "Once background dependence is addressed, action dimensions should shift attention "
+                    "to objects. Expect improved precision in reaching and grasping."
+                ),
+            },
+            "dead_state_pathway": {
+                "title": "Proprioceptive state input is unused",
+                "interpretation": (
+                    "The gradient ratio between vision and proprioceptive state shows the model "
+                    "effectively ignores the state input. For manipulation tasks, proprioceptive state "
+                    "(joint angles, gripper width) provides critical feedback for closed-loop control."
+                ),
+                "fix": (
+                    "Investigate and fix the state pathway:\n"
+                    "1. **Verify state normalization**: Ensure proprioceptive inputs are properly normalized (zero-mean, unit-variance)\n"
+                    "2. **Check state embedding**: Verify the state projection layer has non-zero gradients during training\n"
+                    "3. **State dropout**: Add `dropout=0.1` on the vision pathway during training to force state usage\n"
+                    "4. **State prediction auxiliary loss**: Add a loss that predicts next state from current state + action\n"
+                    "5. **Verify data pipeline**: Ensure state values are correctly loaded and not all zeros"
+                ),
+                "expected_impact": (
+                    "Should enable closed-loop control. Vision provides 'what to do' while state provides "
+                    "'where I am' — both are needed for precise manipulation."
+                ),
+            },
+            "gripper_fixation": {
+                "title": "Model fixates on robot gripper instead of manipulation target",
+                "interpretation": (
+                    "The model attends primarily to the robot gripper, which is always present and "
+                    "highly salient, rather than the objects being manipulated. This suggests the model "
+                    "is tracking its own end-effector position from vision rather than planning relative "
+                    "to the target object."
+                ),
+                "fix": (
+                    "Reduce gripper dominance:\n"
+                    "1. **Gripper masking augmentation**: Randomly mask/occlude the gripper region during 30% of training frames\n"
+                    "2. **Use wrist camera**: Add a wrist-mounted camera that doesn't see the gripper\n"
+                    "3. **Proprioceptive bypass**: If gripper position comes from state, the model shouldn't need to extract it from vision\n"
+                    "4. **Increase object saliency**: Add object-level augmentation to make targets more visually distinct"
+                ),
+                "expected_impact": (
+                    "Should shift attention from gripper to manipulation targets. Model should use "
+                    "state input for self-localization and vision for target localization."
+                ),
+            },
+            "cross_attention_diffuse": {
+                "title": "Action expert cross-attention is near-uniform",
+                "interpretation": (
+                    "The action expert's cross-attention over the VLM's KV cache is nearly uniform, "
+                    "meaning it queries all tokens equally rather than selectively attending to "
+                    "task-relevant information. This suggests the expert hasn't learned to extract "
+                    "specific features for action generation."
+                ),
+                "fix": (
+                    "Improve cross-attention specificity:\n"
+                    "1. **Temperature scaling**: Add learnable temperature to cross-attention softmax\n"
+                    "2. **Longer training**: Cross-attention patterns often sharpen with more training\n"
+                    "3. **Attention dropout**: Apply dropout to cross-attention to encourage sparse patterns\n"
+                    "4. **Verify KV cache content**: Ensure the VLM prefix contains meaningful, differentiated tokens"
+                ),
+                "expected_impact": (
+                    "Sharper cross-attention should improve action quality by focusing the expert "
+                    "on the most task-relevant VLM representations."
+                ),
+            },
+            "language_insensitivity": {
+                "title": "Model ignores language conditioning",
+                "interpretation": (
+                    "Changing the task instruction produces negligible change in the model's attention "
+                    "or actions, suggesting the model does not use language input. With only 1 unique "
+                    "task string in training, the model has learned to ignore language entirely."
+                ),
+                "fix": (
+                    "Enable language grounding:\n"
+                    "1. **Multi-task training**: Train on 5+ distinct tasks with different instructions\n"
+                    "2. **Paraphrase augmentation**: Use 5+ paraphrases per task during training\n"
+                    "3. **Contrastive language loss**: Add a loss that ensures different instructions produce different actions\n"
+                    "4. **Language dropout**: Randomly blank the instruction during 10% of training to create gradient signal for language use\n"
+                    "5. **Verify tokenization**: Ensure the instruction is correctly tokenized and within the model's vocabulary"
+                ),
+                "expected_impact": (
+                    "Should enable multi-task capability and instruction following. "
+                    "Critical for deployment where tasks are specified via language."
+                ),
+            },
+            "temporal_attention_instability": {
+                "title": "Temporally unstable attention patterns",
+                "interpretation": (
+                    "Attention patterns jump erratically between consecutive frames, rather than "
+                    "smoothly tracking objects over time. This may cause jerky or inconsistent actions "
+                    "during execution."
+                ),
+                "fix": (
+                    "Improve temporal consistency:\n"
+                    "1. **Temporal augmentation**: Apply consistent augmentations across consecutive frames\n"
+                    "2. **Frame stacking**: Use multi-frame input to provide temporal context\n"
+                    "3. **Temporal smoothing loss**: Penalize large changes in attention between consecutive frames\n"
+                    "4. **Video pretraining**: SmolVLM2 supports video — ensure video pretraining features are leveraged"
+                ),
+                "expected_impact": (
+                    "Should produce smoother action sequences and more stable manipulation behavior."
+                ),
+            },
+            "connector_bottleneck": {
+                "title": "Connector bottleneck drops task-critical information",
+                "interpretation": (
+                    "The pixel-shuffle connector compresses 1024 SigLIP patches into 64 VLM tokens "
+                    "(93.75% compression). Some task-relevant information is being lost in this process. "
+                    "If the lost information includes target object features, the VLM and action expert "
+                    "cannot recover it."
+                ),
+                "fix": (
+                    "Mitigate connector information loss:\n"
+                    "1. **Increase connector output tokens**: If feasible, use 128 or 256 output tokens\n"
+                    "2. **Fine-tune the connector**: Train the connector projection with a larger learning rate\n"
+                    "3. **Skip connections**: Add a direct path from SigLIP patches to the action expert\n"
+                    "4. **Learnable pooling**: Replace pixel-shuffle with attention-based pooling that can prioritize object regions"
+                ),
+                "expected_impact": (
+                    "Should preserve more spatial detail through the connector, improving "
+                    "fine-grained manipulation accuracy."
+                ),
+            },
+        }
+
         for anomaly in anomalies:
+            expert = _EXPERT_DB.get(anomaly.type, {})
+            evidence = anomaly.evidence or {}
+
+            # Build observation from actual evidence data
+            obs_parts = [f"Anomaly detected: {anomaly.type}."]
+            if anomaly.type == "high_background_attribution":
+                bg_share = evidence.get("background_share", 0)
+                signal = evidence.get("signal", "unknown")
+                obs_parts.append(f"{signal} shows {bg_share:.1%} background attribution.")
+            elif anomaly.type == "low_object_attribution":
+                low_objs = evidence.get("low_objects", {})
+                for obj, val in low_objs.items():
+                    obs_parts.append(f"{obj}: {val:.1%} attribution.")
+            elif anomaly.type == "spatial_shortcut":
+                ratio = evidence.get("positional_baseline_ratio", evidence.get("correlation", 0))
+                obs_parts.append(f"Positional baseline similarity: {ratio:.2f}.")
+            elif anomaly.type == "low_dataset_diversity":
+                lp = evidence.get("low_position_objects", [])
+                ut = evidence.get("unique_task_strings", "?")
+                if lp:
+                    obs_parts.append(f"Low position variance objects: {', '.join(lp)}.")
+                obs_parts.append(f"Unique task strings: {ut}.")
+            elif anomaly.type == "action_attention_misalignment":
+                dims = evidence.get("background_attributed_dims", [])
+                obs_parts.append(f"Background-attributed action dims: {', '.join(dims)}.")
+            else:
+                obs_parts.append(json.dumps(evidence))
+
             finding = Finding(
                 id=f"f{len(findings)+1}",
                 severity=anomaly.severity,
-                title=anomaly.description,
-                observation=f"Anomaly detected: {anomaly.type}. {json.dumps(anomaly.evidence)}",
+                title=expert.get("title", anomaly.description),
+                observation=" ".join(obs_parts),
                 test_description="See counterfactual results below.",
                 test_result="",
-                interpretation=anomaly.description,
-                fix="Review the diagnostic matrix and anomaly details for specific recommendations.",
-                expected_impact="Varies based on the fix applied.",
+                interpretation=expert.get("interpretation", anomaly.description),
+                fix=expert.get("fix", f"Address the {anomaly.type} anomaly based on the diagnostic data."),
+                expected_impact=expert.get("expected_impact", "Improvement expected upon resolution."),
                 evidence_refs=[anomaly.type],
             )
 
@@ -803,7 +1460,12 @@ class DiagnosticAgent:
                     r = result_map.get(h.id)
                     if r:
                         finding.test_description = f"Ran {r.test_type} counterfactual"
-                        finding.test_result = f"Action delta L2: {r.action_delta_l2:.4f}, Confirmed: {r.confirmed}"
+                        finding.test_result = (
+                            f"Action delta L2: {r.action_delta_l2:.4f} "
+                            f"({'Confirmed' if r.confirmed else 'Not confirmed'}: "
+                            f"{'significant' if r.action_delta_l2 > 0.02 else 'minimal'} sensitivity to perturbation)"
+                        )
+                        finding.evidence_refs.append(h.id)
                     break
 
             findings.append(finding)
@@ -812,20 +1474,80 @@ class DiagnosticAgent:
 
     def _rule_based_narrative(self, anomalies: list[Anomaly],
                                findings: list[Finding]) -> str:
-        """Generate narrative without LLM."""
-        critical = [a for a in anomalies if a.severity == "critical"]
-        warnings = [a for a in anomalies if a.severity == "warning"]
+        """Generate expert-quality narrative without LLM."""
+        critical = [f for f in findings if f.severity == "critical"]
+        warnings = [f for f in findings if f.severity == "warning"]
+        info_items = [f for f in findings if f.severity == "info"]
 
         lines = ["## Diagnostic Summary\n"]
+
         if critical:
             lines.append(f"**{len(critical)} critical issue(s) detected.**\n")
-            for a in critical:
-                lines.append(f"- {a.description}")
+            for f in critical:
+                lines.append(f"- **{f.title}**: {f.observation.split('. ', 1)[-1] if '. ' in f.observation else f.observation}")
         if warnings:
             lines.append(f"\n**{len(warnings)} warning(s) detected.**\n")
-            for a in warnings:
-                lines.append(f"- {a.description}")
-        if not critical and not warnings:
+            for f in warnings:
+                lines.append(f"- **{f.title}**: {f.observation.split('. ', 1)[-1] if '. ' in f.observation else f.observation}")
+        if info_items:
+            lines.append(f"\n**{len(info_items)} informational finding(s).**\n")
+            for f in info_items:
+                lines.append(f"- {f.title}")
+        if not findings:
             lines.append("No critical issues detected. The model appears reasonably healthy based on the available signals.")
+            return "\n".join(lines)
+
+        # Prioritized action plan
+        lines.append("\n## Recommended Action Plan\n")
+        lines.append("Prioritized by expected impact:\n")
+
+        priority_order = [
+            "low_dataset_diversity",      # Data is always #1
+            "high_background_attribution", # Environment generalization
+            "spatial_shortcut",            # Memorization
+            "low_object_attribution",      # Object grounding
+            "language_insensitivity",      # Multi-task capability
+            "dead_state_pathway",          # Closed-loop control
+            "gripper_fixation",            # Attention allocation
+            "action_attention_misalignment", # Usually follows from above
+            "connector_bottleneck",        # Architecture
+            "cross_attention_diffuse",     # Architecture
+            "temporal_attention_instability", # Temporal
+        ]
+        anomaly_types = [a.type for a in anomalies]
+        seen = set()
+        step = 1
+        for atype in priority_order:
+            if atype in anomaly_types and atype not in seen:
+                seen.add(atype)
+                matching = [f for f in findings if atype in f.evidence_refs]
+                if matching:
+                    f = matching[0]
+                    # Extract just the first sentence of the fix
+                    fix_first = f.fix.split("\n")[0] if "\n" in f.fix else f.fix
+                    lines.append(f"{step}. **{f.title}** — {fix_first}")
+                    step += 1
+
+        # Overall health assessment
+        lines.append("\n## Overall Assessment\n")
+        if len(critical) >= 3:
+            lines.append(
+                "The model has **multiple critical issues** that will prevent reliable deployment. "
+                "The most impactful fix is expanding dataset diversity — without it, the model will "
+                "continue to memorize specific scenarios rather than learning generalizable manipulation skills. "
+                "Address data diversity first, then retrain with augmentation to fix background dependence."
+            )
+        elif len(critical) >= 1:
+            lines.append(
+                "The model has critical issues that should be addressed before deployment. "
+                "Focus on the highest-priority fixes above and re-run diagnostics after retraining."
+            )
+        elif warnings:
+            lines.append(
+                "The model shows some concerning patterns but may be functional in controlled settings. "
+                "Address the warnings above to improve robustness before expanding to new environments."
+            )
+        else:
+            lines.append("The model appears healthy. Consider edge-case testing before deployment.")
 
         return "\n".join(lines)

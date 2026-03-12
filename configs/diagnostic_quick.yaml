@@ -1,0 +1,14 @@
+# Quick diagnostic config — fewer diversity samples for fast iteration
+scene_model: "google/owlv2-base-patch16-ensemble"
+segmentation_model: "facebook/sam-vit-base"
+detection_confidence: 0.1
+
+# Reduced diversity analysis for speed
+diversity_episodes: 5
+diversity_frames_per_episode: 2
+
+# Agent settings
+max_hypotheses: 5
+max_counterfactuals: 3
+max_expensive_signals: 3
+num_frames: 2

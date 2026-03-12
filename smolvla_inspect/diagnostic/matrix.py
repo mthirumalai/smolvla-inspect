@@ -10,7 +10,14 @@ from typing import Callable
 
 import numpy as np
 
-from .models import Anomaly, DiagnosticMatrix
+from .models import (
+    Anomaly,
+    ConnectorAnalysis,
+    DatasetDiversityReport,
+    DiagnosticMatrix,
+    OcclusionMap,
+    TemporalTrajectory,
+)
 from .regions import attribute_to_regions, foreground_ratio, spatial_prior_ratio
 
 
@@ -30,6 +37,11 @@ def build_diagnostic_matrix(
     vision_vs_state: list[dict] | None = None,
     positional_baseline: np.ndarray | None = None,
     language_diff: dict | None = None,
+    # Extended diagnostic inputs
+    temporal_trajectories: list[TemporalTrajectory] | None = None,
+    occlusion_map: OcclusionMap | None = None,
+    connector_analysis: ConnectorAnalysis | None = None,
+    dataset_diversity: DatasetDiversityReport | None = None,
 ) -> DiagnosticMatrix:
     """Build a :class:`DiagnosticMatrix` from available signals.
 
@@ -146,6 +158,24 @@ def build_diagnostic_matrix(
     if language_diff is not None and "max_shift" in language_diff:
         scalars["language_diff_max_shift"] = float(language_diff["max_shift"])
 
+    # Cross-attention entropy
+    if cross_attention_heatmaps is not None and len(cross_attention_heatmaps) > 0:
+        entropies: list[float] = []
+        for hm in cross_attention_heatmaps:
+            flat = hm.flatten().astype(np.float64)
+            total = flat.sum()
+            if total > 0:
+                p = flat / total
+                p = p[p > 0]
+                entropies.append(float(-np.sum(p * np.log2(p))))
+        if entropies:
+            scalars["cross_attention_entropy"] = float(np.mean(entropies))
+
+    # Occlusion sensitivity scalars
+    if occlusion_map is not None:
+        scalars["occlusion_max_delta"] = occlusion_map.max_delta
+        scalars["occlusion_mean_delta"] = occlusion_map.mean_delta
+
     return DiagnosticMatrix(
         signal_types=signal_types,
         regions=regions,
@@ -153,6 +183,9 @@ def build_diagnostic_matrix(
         per_frame=per_frame,
         per_action_dim=per_action_dim,
         scalars=scalars,
+        temporal_trajectories=temporal_trajectories,
+        occlusion=occlusion_map,
+        connector_analysis=connector_analysis,
     )
 
 
@@ -166,6 +199,7 @@ _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 def detect_high_background_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Background attribution > 60% for any causal signal (gradcam_siglip, saliency)."""
     causal_signals = {"gradcam_siglip", "saliency"}
@@ -198,6 +232,7 @@ def detect_high_background_attribution(
 def detect_attention_gradcam_divergence(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Any region differs by > 0.3 between attention and gradcam_siglip."""
     if "attention" not in matrix.attribution_mass or "gradcam_siglip" not in matrix.attribution_mass:
@@ -230,6 +265,7 @@ def detect_attention_gradcam_divergence(
 def detect_dead_state_pathway(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Vision share > 99.5%, indicating the state pathway may be dead."""
     vision_share = matrix.scalars.get("vision_share")
@@ -252,6 +288,7 @@ def detect_dead_state_pathway(
 def detect_low_object_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Non-background, non-gripper task objects with < 10% gradcam attribution."""
     if "gradcam_siglip" not in matrix.attribution_mass:
@@ -289,6 +326,7 @@ def detect_low_object_attribution(
 def detect_spatial_shortcut(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Positional baseline ratio > 0.6 AND low object attribution exists."""
     pos_ratio = matrix.scalars.get("positional_baseline_ratio")
@@ -296,7 +334,7 @@ def detect_spatial_shortcut(
         return None
 
     # Check whether low object attribution is also present
-    low_obj = detect_low_object_attribution(matrix, internals)
+    low_obj = detect_low_object_attribution(matrix, internals, dataset_diversity)
     if low_obj is None:
         return None
 
@@ -318,6 +356,7 @@ def detect_spatial_shortcut(
 def detect_language_insensitivity(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """Language diff max shift < 0.05, indicating instruction-insensitivity."""
     max_shift = matrix.scalars.get("language_diff_max_shift")
@@ -341,6 +380,7 @@ def detect_language_insensitivity(
 def detect_unstable_gradcam(
     matrix: DiagnosticMatrix,
     internals: dict | None,
+    dataset_diversity=None,
 ) -> Anomaly | None:
     """GradCAM region attribution varies widely across frames (std/mean > 1.0)."""
     if "gradcam_siglip" not in matrix.attribution_mass:
@@ -378,10 +418,288 @@ def detect_unstable_gradcam(
 
 
 # ---------------------------------------------------------------------------
+# Extended detectors
+# ---------------------------------------------------------------------------
+
+
+def detect_low_dataset_diversity(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag memorisation risks from low dataset diversity."""
+    if dataset_diversity is None:
+        return None
+
+    issues: list[str] = []
+    evidence: dict = {}
+    severity = "info"
+
+    # Check object position variance
+    low_position_objects: list[str] = []
+    for obj_label, stats in dataset_diversity.object_position_stats.items():
+        count = stats.get("count", 0)
+        std_x = stats.get("std_x", 999)
+        std_y = stats.get("std_y", 999)
+        if count > 0 and std_x < 15 and std_y < 15:
+            low_position_objects.append(obj_label)
+
+    if low_position_objects:
+        issues.append(
+            f"Objects with low position variance (std < 15px): "
+            f"{', '.join(low_position_objects)}. Memorisation risk."
+        )
+        evidence["low_position_objects"] = low_position_objects
+        severity = "warning"
+
+    # Check background diversity
+    if dataset_diversity.background_diversity_score < 0.02:
+        issues.append(
+            f"Background diversity score is {dataset_diversity.background_diversity_score:.4f}, "
+            f"indicating single-environment overfitting."
+        )
+        evidence["background_diversity_score"] = dataset_diversity.background_diversity_score
+        severity = "warning"
+
+    # Check task string diversity
+    unique_count = dataset_diversity.task_string_diversity.get("unique_count", 0)
+    if unique_count == 1:
+        issues.append("Only 1 unique task string — no language grounding.")
+        evidence["unique_task_strings"] = unique_count
+        # Escalate to critical if combined with low position variance
+        if low_position_objects:
+            severity = "critical"
+        else:
+            severity = "warning"
+
+    if not issues:
+        return None
+
+    return Anomaly(
+        type="low_dataset_diversity",
+        severity=severity,
+        description=" ".join(issues),
+        evidence=evidence,
+    )
+
+
+def detect_gripper_fixation(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag when causal signals attribute > 40% to gripper region."""
+    causal_signals = {"gradcam_siglip", "saliency"}
+    worst_signal = None
+    worst_share = 0.0
+
+    for sig in causal_signals:
+        if sig not in matrix.attribution_mass:
+            continue
+        for region_key in ("robot gripper", "gripper"):
+            share = matrix.attribution_mass[sig].get(region_key, 0.0)
+            if share > worst_share:
+                worst_share = share
+                worst_signal = sig
+
+    if worst_signal is None or worst_share <= 0.40:
+        return None
+
+    return Anomaly(
+        type="gripper_fixation",
+        severity="warning",
+        description=(
+            f"Gripper region receives {worst_share:.1%} of {worst_signal} "
+            f"attribution, suggesting the model fixates on the robot gripper "
+            f"rather than the manipulation target."
+        ),
+        evidence={"signal": worst_signal, "gripper_share": worst_share},
+    )
+
+
+def detect_cross_attention_diffuse(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag near-uniform cross-attention entropy (> 5.0 bits)."""
+    entropy = matrix.scalars.get("cross_attention_entropy")
+    if entropy is None:
+        return None
+    # log2(64) = 6.0 — entropy > 5.0 is near-uniform for ~64 vision tokens
+    if entropy <= 5.0:
+        return None
+
+    return Anomaly(
+        type="cross_attention_diffuse",
+        severity="warning",
+        description=(
+            f"Cross-attention entropy is {entropy:.2f} bits (near-uniform "
+            f"threshold: 5.0). The action expert may not be selectively "
+            f"attending to relevant vision tokens."
+        ),
+        evidence={"cross_attention_entropy": entropy},
+    )
+
+
+def detect_action_attention_misalignment(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag when translation action dims attribute primarily to background."""
+    if matrix.per_action_dim is None:
+        return None
+
+    # Look for translation-related dims (first two, or keys with x/y/dx/dy)
+    translation_dims: list[str] = []
+    all_dims = list(matrix.per_action_dim.keys())
+    for dim_name in all_dims:
+        lower = dim_name.lower()
+        if any(k in lower for k in ("x", "y", "dx", "dy")):
+            translation_dims.append(dim_name)
+
+    # Fall back to first two dims if no named translation dims found
+    if not translation_dims and len(all_dims) >= 2:
+        translation_dims = all_dims[:2]
+
+    if not translation_dims:
+        return None
+
+    bg_dims: list[str] = []
+    for dim_name in translation_dims:
+        dim_data = matrix.per_action_dim[dim_name]
+        attrib = dim_data.get("attribution", {})
+        if not attrib:
+            continue
+        top_region = max(attrib, key=lambda r: attrib[r])
+        if top_region == "background":
+            bg_dims.append(dim_name)
+
+    if len(bg_dims) < len(translation_dims) or not bg_dims:
+        return None
+
+    return Anomaly(
+        type="action_attention_misalignment",
+        severity="warning",
+        description=(
+            f"Translation action dimensions ({', '.join(bg_dims)}) all attribute "
+            f"primarily to 'background'. The model may not be grounding spatial "
+            f"actions on task-relevant objects."
+        ),
+        evidence={"background_attributed_dims": bg_dims},
+    )
+
+
+def detect_temporal_attention_instability(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag unstable or poorly-tracking attention trajectories."""
+    if matrix.temporal_trajectories is None:
+        return None
+
+    worst_smoothness = 0.0
+    worst_correlation = 1.0
+    evidence: dict = {}
+
+    for traj in matrix.temporal_trajectories:
+        if traj.smoothness > worst_smoothness:
+            worst_smoothness = traj.smoothness
+        if traj.object_tracking_correlation < worst_correlation:
+            worst_correlation = traj.object_tracking_correlation
+
+    bad_smoothness = worst_smoothness > 0.15
+    bad_correlation = worst_correlation < 0.3
+
+    if not bad_smoothness and not bad_correlation:
+        return None
+
+    evidence["worst_smoothness"] = worst_smoothness
+    evidence["worst_object_tracking_correlation"] = worst_correlation
+
+    if bad_smoothness and bad_correlation:
+        severity = "critical"
+        description = (
+            f"Attention centroid is unstable (smoothness={worst_smoothness:.3f}, "
+            f"threshold 0.15) and does not track objects "
+            f"(correlation={worst_correlation:.3f}, threshold 0.3). "
+            f"The model may be attending randomly rather than following scene dynamics."
+        )
+    elif bad_smoothness:
+        severity = "warning"
+        description = (
+            f"Attention centroid jumps significantly between frames "
+            f"(smoothness={worst_smoothness:.3f}, threshold 0.15), "
+            f"suggesting temporally unstable visual attention."
+        )
+    else:
+        severity = "warning"
+        description = (
+            f"Attention trajectory has low correlation with object motion "
+            f"(correlation={worst_correlation:.3f}, threshold 0.3), "
+            f"suggesting the model does not track manipulation targets."
+        )
+
+    return Anomaly(
+        type="temporal_attention_instability",
+        severity=severity,
+        description=description,
+        evidence=evidence,
+    )
+
+
+def detect_single_region_dependency(
+    matrix: DiagnosticMatrix,
+    internals: dict | None,
+    dataset_diversity=None,
+) -> Anomaly | None:
+    """Flag when all action dims attribute to the same non-background region."""
+    if matrix.per_action_dim is None:
+        return None
+
+    top_regions: list[str] = []
+    for dim_name, dim_data in matrix.per_action_dim.items():
+        attrib = dim_data.get("attribution", {})
+        if not attrib:
+            continue
+        top_region = max(attrib, key=lambda r: attrib[r])
+        top_regions.append(top_region)
+
+    if len(top_regions) < 2:
+        return None
+
+    # Check if all dims have the same top region
+    if len(set(top_regions)) != 1:
+        return None
+
+    common_region = top_regions[0]
+
+    # If background, other detectors handle it
+    if common_region == "background":
+        return None
+
+    return Anomaly(
+        type="single_region_dependency",
+        severity="info",
+        description=(
+            f"All {len(top_regions)} action dimensions attribute primarily to "
+            f"'{common_region}'. The model may be reading a single scene region "
+            f"for all action outputs rather than using spatially diverse cues."
+        ),
+        evidence={
+            "common_region": common_region,
+            "num_action_dims": len(top_regions),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Aggregate detector
 # ---------------------------------------------------------------------------
 
-_ALL_DETECTORS: list[Callable[[DiagnosticMatrix, dict | None], Anomaly | None]] = [
+_ALL_DETECTORS: list[Callable] = [
     detect_high_background_attribution,
     detect_attention_gradcam_divergence,
     detect_dead_state_pathway,
@@ -389,12 +707,20 @@ _ALL_DETECTORS: list[Callable[[DiagnosticMatrix, dict | None], Anomaly | None]] 
     detect_spatial_shortcut,
     detect_language_insensitivity,
     detect_unstable_gradcam,
+    # Extended detectors
+    detect_low_dataset_diversity,
+    detect_gripper_fixation,
+    detect_cross_attention_diffuse,
+    detect_action_attention_misalignment,
+    detect_temporal_attention_instability,
+    detect_single_region_dependency,
 ]
 
 
 def detect_anomalies(
     matrix: DiagnosticMatrix,
     internals: dict | None = None,
+    dataset_diversity=None,
 ) -> list[Anomaly]:
     """Run all anomaly detectors and return results sorted by severity.
 
@@ -402,7 +728,7 @@ def detect_anomalies(
     """
     anomalies: list[Anomaly] = []
     for detector in _ALL_DETECTORS:
-        result = detector(matrix, internals)
+        result = detector(matrix, internals, dataset_diversity)
         if result is not None:
             anomalies.append(result)
 

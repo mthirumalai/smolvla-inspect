@@ -40,6 +40,13 @@ def add_diagnose_args(parser: argparse.ArgumentParser):
 
 def diagnose_main(args: argparse.Namespace):
     """Main entry point for the diagnose subcommand."""
+    # Load .env if available
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     print("\n" + "=" * 60)
     print("  SmolVLA Diagnostic Agent")
     print("=" * 60)

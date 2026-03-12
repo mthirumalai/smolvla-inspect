@@ -571,3 +571,375 @@ def object_recolor(
         test_type="object_recolor",
         affected_mask=obj_mask,
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Distractor insertion
+# ---------------------------------------------------------------------------
+
+@register_primitive(
+    "counterfactual.distractor_insertion",
+    category="counterfactual",
+    cost="expensive",
+    requires_gpu=True,
+    requires_model=True,
+    description="Insert a distractor object and measure action change.",
+)
+def distractor_insertion(
+    policy,
+    sample: dict,
+    dataset,
+    image_key: str,
+    device: str | torch.device,
+    segmentation: SceneSegmentation,
+    position: tuple[int, int] = (100, 100),  # (x, y) center
+    distractor_size: int = 80,
+    distractor_source: str = "synthetic",  # "synthetic" or "noise"
+    noise_seed: int = 42,
+    image_map=None,
+) -> CounterfactualResult:
+    """Insert a distractor at *position* and measure action shift.
+
+    Parameters
+    ----------
+    position : tuple[int, int]
+        ``(x, y)`` center of the distractor in pixel coordinates.
+    distractor_size : int
+        Approximate diameter (pixels) of the distractor.
+    distractor_source : str
+        ``"synthetic"`` generates a coloured ellipse; ``"noise"`` fills with
+        random noise.
+    """
+    # Baseline actions
+    policy.reset()
+    baseline_actions = _get_actions(policy, sample, dataset, image_key, device, image_map)
+
+    img_tensor = sample[image_key]  # (C, H, W) float [0, 1]
+    img_hwc = _tensor_to_hwc(img_tensor)  # (H, W, C)
+    h, w = img_hwc.shape[:2]
+
+    rng = np.random.RandomState(noise_seed)
+
+    # Build a binary mask for the distractor region (ellipse)
+    cx, cy = position
+    radius = distractor_size // 2
+    yy, xx = np.ogrid[:h, :w]
+    dist_sq = ((xx - cx).astype(np.float64)) ** 2 + ((yy - cy).astype(np.float64)) ** 2
+    distractor_mask = dist_sq <= (radius ** 2)
+
+    modified_hwc = img_hwc.copy()
+
+    if distractor_source == "synthetic":
+        # Generate a random solid colour and draw a filled ellipse
+        color = rng.rand(3).astype(np.float32)
+        modified_hwc[distractor_mask] = color
+    elif distractor_source == "noise":
+        noise_patch = rng.rand(h, w, img_hwc.shape[2]).astype(np.float32)
+        modified_hwc[distractor_mask] = noise_patch[distractor_mask]
+    else:
+        raise ValueError(f"Unknown distractor_source: {distractor_source!r}")
+
+    modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
+
+    new_sample = _clone_sample(sample, image_key)
+    new_sample[image_key] = _hwc_to_tensor(modified_hwc, device=str(img_tensor.device))
+
+    policy.reset()
+    modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
+
+    return _compute_result(
+        baseline_actions, modified_actions,
+        img_hwc, modified_hwc,
+        hypothesis_id=f"distractor_insertion_{distractor_source}",
+        test_type="distractor_insertion",
+        affected_mask=distractor_mask,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Task string swap
+# ---------------------------------------------------------------------------
+
+@register_primitive(
+    "counterfactual.task_string_swap",
+    category="counterfactual",
+    cost="expensive",
+    requires_gpu=True,
+    requires_model=True,
+    description="Replace task instruction and measure action change.",
+)
+def task_string_swap(
+    policy,
+    sample: dict,
+    dataset,
+    image_key: str,
+    device: str | torch.device,
+    replacement_task: str = "do nothing",
+    noise_seed: int = 42,
+    image_map=None,
+) -> CounterfactualResult:
+    """Replace the task instruction with *replacement_task* and measure action shift.
+
+    The image is kept identical; only the language conditioning changes.
+    """
+    # Baseline actions (original task string)
+    policy.reset()
+    baseline_actions = _get_actions(policy, sample, dataset, image_key, device, image_map)
+
+    # Build a batch with the replacement task string
+    batch, _ = build_policy_batch_from_sample(
+        sample, policy, device, image_key_for_grad=None,
+        dataset=dataset, image_map=image_map,
+        task_override=replacement_task,
+    )
+
+    policy.reset()
+    with torch.no_grad(), _patch_eager_attention_bool_mask(policy):
+        images, img_masks = policy.prepare_images(batch)
+        state = policy.prepare_state(batch)
+        lang_tokens = batch["observation.language.tokens"]
+        lang_masks = batch["observation.language.attention_mask"]
+
+        bsize = state.shape[0]
+        actions_shape = (
+            bsize,
+            policy.model.config.chunk_size,
+            policy.model.config.max_action_dim,
+        )
+        gen = torch.Generator(device=device)
+        gen.manual_seed(noise_seed)
+        noise = torch.randn(
+            actions_shape, device=device, generator=gen, dtype=torch.float32,
+        )
+        actions = policy.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise,
+        )
+
+    modified_actions = actions[0, 0].cpu().numpy()
+
+    # Visual comparison — same image on both sides (no image change)
+    img_hwc = _tensor_to_hwc(sample[image_key])
+
+    return _compute_result(
+        baseline_actions, modified_actions,
+        img_hwc, img_hwc,
+        hypothesis_id="task_string_swap",
+        test_type="task_string_swap",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Temporal consistency
+# ---------------------------------------------------------------------------
+
+@register_primitive(
+    "counterfactual.temporal_consistency",
+    category="counterfactual",
+    cost="expensive",
+    requires_gpu=True,
+    requires_model=True,
+    description="Apply perturbation across multiple frames and check action sequence coherence.",
+)
+def temporal_consistency(
+    policy,
+    sample: dict,
+    dataset,
+    image_key: str,
+    device: str | torch.device,
+    segmentation: SceneSegmentation,
+    perturbation_type: str = "background_substitution",
+    num_frames: int = 5,
+    episode_idx: int = 0,
+    noise_seed: int = 42,
+    image_map=None,
+) -> CounterfactualResult:
+    """Apply the same perturbation across episode frames and measure coherence.
+
+    For each frame the baseline and perturbed actions are computed.  The
+    standard deviation of per-frame action deltas across the episode indicates
+    how consistently the model responds to the same perturbation — high
+    variance suggests unstable or inconsistent behaviour.
+
+    Parameters
+    ----------
+    perturbation_type : str
+        Currently only ``"background_substitution"`` is supported.
+    num_frames : int
+        Number of evenly-spaced frames to sample from the episode.
+    episode_idx : int
+        Episode to sample frames from.
+    """
+    from ..data import get_episode_frames
+
+    frames = get_episode_frames(dataset, episode_idx, num_frames, image_key)
+    bg_mask_raw = segmentation.background_mask
+
+    rng = np.random.RandomState(noise_seed)
+
+    per_frame_deltas: list[np.ndarray] = []
+    first_img_hwc: np.ndarray | None = None
+    first_modified_hwc: np.ndarray | None = None
+    first_affected_mask: np.ndarray | None = None
+
+    for frame_idx, frame_img_tensor in frames:
+        # Build a sample dict for this frame by copying the original and
+        # replacing the image tensor.
+        frame_sample = dict(sample)
+        frame_sample[image_key] = frame_img_tensor
+
+        # Baseline
+        policy.reset()
+        baseline_actions = _get_actions(
+            policy, frame_sample, dataset, image_key, device, image_map,
+        )
+
+        # Perturbed
+        img_hwc = _tensor_to_hwc(frame_img_tensor)
+        h, w = img_hwc.shape[:2]
+        bg_mask = _resize_mask(bg_mask_raw, (h, w))
+
+        modified_hwc = img_hwc.copy()
+
+        if perturbation_type == "background_substitution":
+            modified_hwc[bg_mask] = 0.5
+        else:
+            raise ValueError(
+                f"Unsupported perturbation_type for temporal_consistency: "
+                f"{perturbation_type!r}"
+            )
+
+        modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
+
+        perturbed_sample = _clone_sample(frame_sample, image_key)
+        perturbed_sample[image_key] = _hwc_to_tensor(
+            modified_hwc, device=str(frame_img_tensor.device),
+        )
+
+        policy.reset()
+        modified_actions = _get_actions(
+            policy, perturbed_sample, dataset, image_key, device, image_map,
+        )
+
+        delta = modified_actions - baseline_actions
+        per_frame_deltas.append(delta)
+
+        # Keep the first frame's visuals for the comparison image
+        if first_img_hwc is None:
+            first_img_hwc = img_hwc
+            first_modified_hwc = modified_hwc
+            first_affected_mask = ~bg_mask  # highlight foreground
+
+    # Aggregate: mean L2 delta and std of deltas across frames
+    deltas_array = np.stack(per_frame_deltas, axis=0)  # (num_frames, action_dim)
+    mean_delta = deltas_array.mean(axis=0)
+    mean_delta_l2 = float(np.linalg.norm(mean_delta))
+    std_across_frames = deltas_array.std(axis=0)  # per-dim std
+
+    comparison = _make_comparison(
+        _to_uint8(first_img_hwc),
+        _to_uint8(first_modified_hwc),
+        mask=first_affected_mask,
+    )
+
+    return CounterfactualResult(
+        hypothesis_id=f"temporal_consistency_{perturbation_type}",
+        test_type="temporal_consistency",
+        action_delta_l2=mean_delta_l2,
+        action_delta_per_dim=std_across_frames.tolist(),
+        gradcam_shift=0.0,
+        attribution_shift_per_region={},
+        confirmed=mean_delta_l2 > 0.01,
+        visual_comparison=comparison,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. Occlusion targeted
+# ---------------------------------------------------------------------------
+
+@register_primitive(
+    "counterfactual.occlusion_targeted",
+    category="counterfactual",
+    cost="expensive",
+    requires_gpu=True,
+    requires_model=True,
+    description="Completely occlude a target object and measure action change.",
+)
+def occlusion_targeted(
+    policy,
+    sample: dict,
+    dataset,
+    image_key: str,
+    device: str | torch.device,
+    segmentation: SceneSegmentation,
+    target_object: str,
+    fill: str = "gray",  # "gray" or "noise"
+    noise_seed: int = 42,
+    image_map=None,
+) -> CounterfactualResult:
+    """Completely occlude *target_object* with a uniform fill and measure action shift.
+
+    Unlike ``object_recolor`` (which changes appearance while preserving
+    shape), this primitive removes **all** visual information about the
+    object, testing whether the model truly relies on it.
+
+    Parameters
+    ----------
+    fill : str
+        ``"gray"`` fills the masked region with mid-gray (0.5);
+        ``"noise"`` fills with random noise.
+    """
+    # Baseline actions
+    policy.reset()
+    baseline_actions = _get_actions(policy, sample, dataset, image_key, device, image_map)
+
+    img_tensor = sample[image_key]  # (C, H, W) float [0, 1]
+    img_hwc = _tensor_to_hwc(img_tensor)  # (H, W, C)
+    h, w = img_hwc.shape[:2]
+
+    obj_mask = segmentation.get_mask(target_object)
+    if obj_mask is None:
+        print(
+            f"  WARNING: No mask found for object '{target_object}', "
+            f"returning zero-delta result."
+        )
+        comparison = _make_comparison(_to_uint8(img_hwc), _to_uint8(img_hwc))
+        return CounterfactualResult(
+            hypothesis_id=f"occlusion_targeted_{target_object}",
+            test_type="occlusion_targeted",
+            action_delta_l2=0.0,
+            action_delta_per_dim=[0.0] * len(baseline_actions),
+            gradcam_shift=0.0,
+            attribution_shift_per_region={},
+            confirmed=False,
+            visual_comparison=comparison,
+        )
+
+    obj_mask = _resize_mask(obj_mask, (h, w))
+
+    modified_hwc = img_hwc.copy()
+
+    if fill == "gray":
+        modified_hwc[obj_mask] = 0.5
+    elif fill == "noise":
+        rng = np.random.RandomState(noise_seed)
+        noise_patch = rng.rand(h, w, img_hwc.shape[2]).astype(np.float32)
+        modified_hwc[obj_mask] = noise_patch[obj_mask]
+    else:
+        raise ValueError(f"Unknown fill mode: {fill!r}")
+
+    modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
+
+    new_sample = _clone_sample(sample, image_key)
+    new_sample[image_key] = _hwc_to_tensor(modified_hwc, device=str(img_tensor.device))
+
+    policy.reset()
+    modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
+
+    return _compute_result(
+        baseline_actions, modified_actions,
+        img_hwc, modified_hwc,
+        hypothesis_id=f"occlusion_targeted_{target_object}",
+        test_type="occlusion_targeted",
+        affected_mask=obj_mask,
+    )

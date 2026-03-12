@@ -40,6 +40,14 @@ HYPOTHESIS_PROMPT = """You are an expert robotics ML researcher diagnosing a vis
   Params: {{brightness_delta: float, contrast_delta: float}}
 - object_recolor: Change object color via HSV shift. Tests if model uses color cues.
   Params: {{target_object: str, hue_shift: float}}
+- distractor_insertion: Insert a novel distractor object at a given position. Tests if model is robust to out-of-distribution objects.
+  Params: {{position: [x, y], distractor_size: int, distractor_source: "synthetic"|"noise"}}
+- task_string_swap: Replace the language instruction with a different one. Tests if model actually uses language conditioning.
+  Params: {{replacement_task: str}}
+- occlusion_targeted: Completely occlude a specific object with gray or noise fill. Tests if model can act without seeing the target.
+  Params: {{target_object: str, fill: "gray"|"noise"}}
+- temporal_consistency: Apply a perturbation across multiple frames and check coherence of action sequence response.
+  Params: {{perturbation_type: "background_substitution", num_frames: int}}
 - none: No test needed — hypothesis is already well-supported by the matrix data alone.
 
 For each hypothesis, provide:
@@ -59,7 +67,10 @@ Output ONLY a JSON array. Each element must have these exact keys:
 - "expected_if_true": string
 - "expected_if_false": string
 
-Maximum 5 hypotheses, ranked by severity/confidence. Output valid JSON only, no markdown fences."""
+Maximum 5 hypotheses, ranked by severity/confidence. Output valid JSON only, no markdown fences.
+
+Example output format (abbreviated):
+[{{"id": "h1", "description": "Model relies on background texture...", "confidence": 0.8, "supporting_anomalies": ["high_background_attribution"], "test_type": "background_substitution", "test_params": {{"replacement": "gray"}}, "expected_if_true": "Action delta > 0.05", "expected_if_false": "Action delta < 0.01"}}]"""
 
 
 SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnostic report for a vision-language-action model.
@@ -106,7 +117,12 @@ Output ONLY a JSON array of findings. Each element must have these exact keys:
 
 After the JSON array, on a new line write "---NARRATIVE---" followed by a full narrative synthesis (2-4 paragraphs) summarizing the overall model health, key issues, and prioritized action plan. This narrative should be written for a robotics engineer who wants to understand what's wrong and what to do about it.
 
-Output valid JSON for the findings array, then the separator, then the narrative text."""
+IMPORTANT: Start your response IMMEDIATELY with the JSON array `[` character. No preamble text.
+
+Example output format (abbreviated):
+[{{"id": "f1", "severity": "critical", "title": "Background texture dependence", "observation": "GradCAM shows 78% background attribution", "test_description": "Ran background_substitution with gray fill", "test_result": "Action delta L2 = 0.17, confirming background reliance", "interpretation": "Model uses background texture as a spatial reference frame", "fix": "Add background augmentation: random crops, color jitter (brightness=0.3, contrast=0.3), and synthetic background swaps during training", "expected_impact": "Should reduce background attribution from 78% to <30%", "evidence_refs": ["high_background_attribution", "h1"]}}]
+---NARRATIVE---
+The model shows critical dependence on background features..."""
 
 
 def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
@@ -176,8 +192,18 @@ def format_anomalies_json(anomalies) -> str:
     return json.dumps(items, indent=2)
 
 
-def format_hypotheses_with_results(hypotheses, cf_results) -> str:
-    """Format hypotheses with their counterfactual results for the synthesis prompt."""
+def format_hypotheses_with_results(hypotheses, cf_results, *, skip_reason: str = "") -> str:
+    """Format hypotheses with their counterfactual results for the synthesis prompt.
+
+    Args:
+        hypotheses: List of Hypothesis objects.
+        cf_results: List of CounterfactualResult objects.
+        skip_reason: Why counterfactuals weren't run. Common values:
+            "skipped" — user passed --skip-counterfactuals
+            "no_model" — policy not loaded (post-hoc mode)
+            "budget_exhausted" — max_counterfactuals reached
+            "" — unknown / default
+    """
     lines = []
     result_map = {r.hypothesis_id: r for r in cf_results}
 
@@ -198,9 +224,65 @@ def format_hypotheses_with_results(hypotheses, cf_results) -> str:
         elif h.test_type == "none":
             lines.append("Test: none (matrix evidence sufficient)")
         else:
-            lines.append(f"Test: {h.test_type} (not run — model not available)")
+            # Context-aware reason for why the test wasn't run
+            if skip_reason == "skipped":
+                reason = "not run — counterfactuals skipped by user"
+            elif skip_reason == "no_model":
+                reason = "not run — no model loaded (post-hoc mode)"
+            elif skip_reason == "budget_exhausted":
+                reason = "not run — counterfactual budget exhausted"
+            else:
+                reason = "not run"
+            lines.append(f"Test: {h.test_type} ({reason})")
             lines.append(f"Confidence reduced to: {h.confidence:.2f}")
 
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Triage selection prompt (adaptive triage)
+# ---------------------------------------------------------------------------
+
+TRIAGE_SELECTION_PROMPT = """You are an expert robotics ML researcher. Based on cheap diagnostic signals, decide which expensive signals to collect next.
+
+**Architecture:**
+{arch_context}
+
+**Task instruction:** "{task_string}"
+**Detected objects:** {detected_objects}
+
+**Cheap signals already collected:**
+{cheap_signals_summary}
+
+**Available expensive signals (each has a compute cost):**
+- gradcam_siglip: GradCAM on SigLIP last encoder layer. Causal attribution at patch level. Cost: ~30s/frame.
+- saliency: Input-pixel gradient saliency map. Causal attribution at pixel level. Cost: ~30s/frame.
+- per_action_dim_gradcam: Separate GradCAM per action dimension (x, y, z, rotation, gripper). Shows what each action dim attends to. Cost: ~2min/frame.
+- connector_analysis: Compare pre/post connector attribution to find information bottleneck losses. Cost: ~1min.
+- vision_vs_state: Gradient ratio between vision and proprioceptive state inputs. Cost: ~30s.
+- occlusion_sensitivity: Slide gray patch across image, measure action delta at each position. Ground-truth causal map. Cost: ~5min.
+- temporal_trajectory: Track attention centroid across full episode, measure smoothness and object tracking. Cost: ~2min.
+- language_diff: Compare GradCAM under original vs alternative task string. Cost: ~1min.
+
+**Budget:** Select at most {max_signals} expensive signals. Prioritise signals that would best diagnose potential issues visible in the cheap signals.
+
+Output ONLY a JSON array of signal names to collect. Example: ["gradcam_siglip", "vision_vs_state", "temporal_trajectory"]
+No explanation needed, just the JSON array."""
+
+
+def build_triage_selection_prompt(
+    task_string: str,
+    detected_objects: list[str],
+    cheap_signals_summary: str,
+    max_signals: int = 4,
+) -> str:
+    """Build the adaptive triage selection prompt."""
+    return TRIAGE_SELECTION_PROMPT.format(
+        arch_context=_ARCH_CONTEXT,
+        task_string=task_string,
+        detected_objects=", ".join(detected_objects),
+        cheap_signals_summary=cheap_signals_summary,
+        max_signals=max_signals,
+    )
