@@ -758,10 +758,10 @@ class CounterfactualDelta:
     """Change in a counterfactual test result across runs."""
 
     test_type: str
-    values: list[float]  # action_delta_l2 per run
-    delta: float
+    values: list[float | None]  # action_delta_l2 per run (None = not run)
+    delta: float | None  # None if either value missing
     pct_change: float | None
-    confirmed: list[bool]  # per run
+    confirmed: list[bool | None]  # per run (None = not run)
 
 
 @dataclass
@@ -785,7 +785,7 @@ class ComparisonReport:
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     attribution_deltas: list[AttributionDelta] = field(default_factory=list)
-    scalar_deltas: dict[str, list[float]] = field(default_factory=dict)
+    scalar_deltas: dict[str, list[float | None]] = field(default_factory=dict)
     counterfactual_deltas: list[CounterfactualDelta] = field(default_factory=list)
     anomaly_summary: dict[str, list[str]] = field(default_factory=dict)
     weight_alpha_deltas: list[WeightAlphaDelta] = field(default_factory=list)
@@ -840,10 +840,13 @@ class ComparisonReport:
             s.append(hdr)
             s.append(sep)
             for key, vals in self.scalar_deltas.items():
-                vcells = " | ".join(f"{v:.6f}" for v in vals)
-                delta = vals[-1] - vals[0]
-                sign = "+" if delta > 0 else ""
-                s.append(f"| {key} | {vcells} | {sign}{delta:.6f} |")
+                vcells = " | ".join(f"{v:.6f}" if v is not None else "N/A" for v in vals)
+                if any(v is None for v in vals):
+                    s.append(f"| {key} | {vcells} | N/A |")
+                else:
+                    delta = vals[-1] - vals[0]
+                    sign = "+" if delta > 0 else ""
+                    s.append(f"| {key} | {vcells} | {sign}{delta:.6f} |")
             s.append("")
 
         # Counterfactual comparison
@@ -855,11 +858,15 @@ class ComparisonReport:
             s.append(hdr)
             s.append(sep)
             for cd in self.counterfactual_deltas:
-                vals = " | ".join(f"{v:.4f}" for v in cd.values)
-                sign = "+" if cd.delta > 0 else ""
+                vals = " | ".join(f"{v:.4f}" if v is not None else "N/A" for v in cd.values)
+                if cd.delta is not None:
+                    sign = "+" if cd.delta > 0 else ""
+                    delta_str = f"{sign}{cd.delta:.4f}"
+                else:
+                    delta_str = "N/A"
                 pct = f"{cd.pct_change:+.1f}%" if cd.pct_change is not None else "N/A"
-                conf = " → ".join("Y" if c else "N" for c in cd.confirmed)
-                s.append(f"| {cd.test_type} | {vals} | {sign}{cd.delta:.4f} | {pct} | {conf} |")
+                conf = " → ".join("Y" if c else ("N" if c is not None else "—") for c in cd.confirmed)
+                s.append(f"| {cd.test_type} | {vals} | {delta_str} | {pct} | {conf} |")
             s.append("")
 
         # Anomaly summary

@@ -154,7 +154,7 @@ def _compute_attribution_deltas(
             if k not in all_scalar_keys:
                 all_scalar_keys.append(k)
     for k in all_scalar_keys:
-        vals = [m.get("scalars", {}).get(k, 0.0) for m in matrices]
+        vals = [m.get("scalars", {}).get(k) for m in matrices]
         scalar_deltas[k] = vals
 
     return deltas, scalar_deltas
@@ -177,22 +177,27 @@ def _compute_counterfactual_deltas(
 
     deltas: list[CounterfactualDelta] = []
     for test_type in all_tests:
-        values = []
-        confirmed = []
+        values: list[float | None] = []
+        confirmed: list[bool | None] = []
         for by_type in cf_by_run:
             cf = by_type.get(test_type)
             if cf:
                 values.append(cf.get("action_delta_l2", 0.0))
                 confirmed.append(cf.get("confirmed", False))
             else:
-                values.append(0.0)
-                confirmed.append(False)
-        delta = values[-1] - values[0]
+                values.append(None)
+                confirmed.append(None)
+        if any(v is None for v in values):
+            delta = None
+            pct = None
+        else:
+            delta = values[-1] - values[0]
+            pct = _pct(values[0], values[-1])
         deltas.append(CounterfactualDelta(
             test_type=test_type,
             values=values,
             delta=delta,
-            pct_change=_pct(values[0], values[-1]),
+            pct_change=pct,
             confirmed=confirmed,
         ))
     return deltas
@@ -281,6 +286,8 @@ def _generate_verdict(report: ComparisonReport) -> str:
 
     # Check counterfactual changes
     for cd in report.counterfactual_deltas:
+        if cd.delta is None:
+            continue
         if cd.test_type == "background_substitution" and cd.delta < 0:
             lines.append(
                 f"Background dependence decreased "

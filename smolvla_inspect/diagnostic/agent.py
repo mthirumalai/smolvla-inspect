@@ -308,10 +308,22 @@ class DiagnosticAgent:
 
         _progress("triage", f"Cheap signals: {list(signals.keys())}")
 
-        # ── Phase 3b: Adaptive Triage — LLM-selected Expensive Signals ──
+        # ── Phase 3b: Mandatory expensive signals (always run) ──
+        _mandatory_expensive = ["vision_vs_state"]
+        if not self.post_hoc and self.policy is not None:
+            for sig_name in _mandatory_expensive:
+                _progress("triage", f"  Running {sig_name} (mandatory)...")
+                try:
+                    self._run_expensive_signal(sig_name, sample, signals, scene=scene)
+                except Exception as e:
+                    _progress("triage", f"  {sig_name} failed: {e}")
+
+        # ── Phase 3c: Adaptive Triage — LLM-selected Expensive Signals ──
         if not self.post_hoc and self.policy is not None:
             selected = await self._select_expensive_signals(
                 task_string, scene, signals)
+            # Remove any that were already run as mandatory
+            selected = [s for s in selected if s not in _mandatory_expensive]
             _progress("triage", f"LLM selected expensive signals: {selected}")
 
             for sig_name in selected:
@@ -461,6 +473,50 @@ class DiagnosticAgent:
                         ))
                     except Exception as e:
                         _progress("iteration", f"  Failed: {e}")
+
+        # ── Phase 6c: Mandatory counterfactuals (always run for comparability) ──
+        _mandatory_cf_tests = [
+            "background_substitution",
+            "object_relocation",
+            "task_string_swap",
+            "occlusion_targeted",
+        ]
+        if self.policy is not None and max_cf > 0:
+            already_run = {r.test_type for r in cf_results}
+            missing = [t for t in _mandatory_cf_tests if t not in already_run]
+            if missing:
+                _progress("counterfactuals",
+                          f"Running {len(missing)} mandatory tests for comparability: {missing}")
+                for test_type in missing:
+                    # Create a synthetic hypothesis for the mandatory test
+                    synth_h = Hypothesis(
+                        id=f"mandatory_{test_type}",
+                        description=f"Mandatory baseline test: {test_type}",
+                        confidence=0.5,
+                        supporting_anomalies=[],
+                        test_type=test_type,
+                        test_params={},
+                        expected_if_true="Model output changes significantly",
+                        expected_if_false="Model output remains stable",
+                    )
+                    _progress("counterfactuals",
+                              f"  Running {test_type} (mandatory)...")
+                    try:
+                        result = self._run_counterfactual(synth_h, sample, scene)
+                        cf_results.append(result)
+                        hypotheses.append(synth_h)
+                        verdict = "CONFIRMED" if result.confirmed else "not confirmed"
+                        _progress("counterfactuals",
+                                  f"  -> {verdict} (delta L2={result.action_delta_l2:.4f})")
+                        self.evidence_log.append(EvidenceEntry(
+                            phase="counterfactual",
+                            primitive_name=f"counterfactual.{test_type}",
+                            data={"hypothesis_id": synth_h.id,
+                                  "confirmed": result.confirmed,
+                                  "action_delta_l2": result.action_delta_l2},
+                        ))
+                    except Exception as e:
+                        _progress("counterfactuals", f"  -> FAILED: {e}")
 
         # ── Phase 7: LLM Synthesis ─────────────────────────────
         _progress("synthesis", f"Synthesizing report via {llm_label}...")
@@ -717,7 +773,7 @@ class DiagnosticAgent:
         if not summary_lines:
             summary_lines.append("- No cheap signals available (attention extraction failed)")
 
-        max_signals = self.config.get("max_expensive_signals", 4)
+        max_signals = self.config.get("max_expensive_signals", 5)
 
         prompt = build_triage_selection_prompt(
             task_string=task_string,

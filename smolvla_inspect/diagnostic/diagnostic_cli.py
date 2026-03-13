@@ -287,9 +287,14 @@ def compare_main(args: argparse.Namespace):
     if report.counterfactual_deltas:
         print("\n  Counterfactuals:")
         for cd in report.counterfactual_deltas:
-            sign = "+" if cd.delta > 0 else ""
-            pct = f" ({cd.pct_change:+.1f}%)" if cd.pct_change is not None else ""
-            print(f"    {cd.test_type}: {cd.values[0]:.4f} → {cd.values[-1]:.4f} [{sign}{cd.delta:.4f}{pct}]")
+            v0 = f"{cd.values[0]:.4f}" if cd.values[0] is not None else "N/A"
+            v1 = f"{cd.values[-1]:.4f}" if cd.values[-1] is not None else "N/A"
+            if cd.delta is not None:
+                sign = "+" if cd.delta > 0 else ""
+                pct = f" ({cd.pct_change:+.1f}%)" if cd.pct_change is not None else ""
+                print(f"    {cd.test_type}: {v0} → {v1} [{sign}{cd.delta:.4f}{pct}]")
+            else:
+                print(f"    {cd.test_type}: {v0} → {v1} [N/A — not run in both]")
 
     if report.anomaly_summary:
         first_label = report.labels[0]

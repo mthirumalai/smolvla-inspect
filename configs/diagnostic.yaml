@@ -13,7 +13,7 @@ diversity_frames_per_episode: 3
 # Agent settings
 max_hypotheses: 5
 max_counterfactuals: 3
-max_expensive_signals: 4
+max_expensive_signals: 5
 num_frames: 4
 
 # LLM settings (can also use env vars SMOLVLA_LLM_*)
