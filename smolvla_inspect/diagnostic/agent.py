@@ -21,6 +21,14 @@ from .spatial_object import (
     choose_target_object,
     summarize_spatial_object_diagnosis,
 )
+from .semantic_probe import (
+    build_qk_probe_report,
+    build_semantic_probe_report,
+    probe_semantic_frame,
+    semantic_candidate_labels,
+    summarize_qk_probe,
+    summarize_semantic_probe,
+)
 from .prompts import (
     build_hypothesis_prompt, build_synthesis_prompt, build_triage_selection_prompt,
     format_diversity_summary, format_anomalies_json, format_hypotheses_with_results,
@@ -227,15 +235,16 @@ class DiagnosticAgent:
         """Run the full diagnostic pipeline."""
 
         _PHASE_LABELS = {
-            "scene_understanding": ("1/8", "Scene Understanding"),
-            "dataset_diversity":   ("2/8", "Dataset Diversity"),
-            "triage":              ("3/8", "Signal Triage"),
-            "matrix":              ("4/8", "Diagnostic Matrix"),
-            "hypothesize":         ("5/8", "Hypothesis Formation"),
-            "counterfactuals":     ("6/8", "Counterfactual Tests"),
-            "iteration":           ("6/8", "Follow-up Iteration"),
-            "disambiguation":      ("7/8", "Spatial vs Object Diagnosis"),
-            "synthesis":           ("8/8", "Report Synthesis"),
+            "scene_understanding": ("1/9", "Scene Understanding"),
+            "dataset_diversity":   ("2/9", "Dataset Diversity"),
+            "triage":              ("3/9", "Signal Triage"),
+            "matrix":              ("4/9", "Diagnostic Matrix"),
+            "representation":      ("5/9", "Representation Probes"),
+            "hypothesize":         ("6/9", "Hypothesis Formation"),
+            "counterfactuals":     ("7/9", "Counterfactual Tests"),
+            "iteration":           ("7/9", "Follow-up Iteration"),
+            "disambiguation":      ("8/9", "Spatial vs Object Diagnosis"),
+            "synthesis":           ("9/9", "Report Synthesis"),
             "complete":            ("OK", "Complete"),
         }
         _run_start = time.time()
@@ -390,11 +399,40 @@ class DiagnosticAgent:
             data={"anomaly_types": [a.type for a in anomalies]},
         ))
 
+        primary_semantic_frame = None
+        semantic_internal = None
+        semantic_probe = None
+        qk_probe = None
+        if self.policy is not None and target_object is not None:
+            _progress("representation", "Running semantic patch-to-text probe on the primary frame...")
+            try:
+                primary_semantic_frame, semantic_internal = probe_semantic_frame(
+                    self.policy,
+                    sample,
+                    self.dataset,
+                    self.image_key,
+                    self.device,
+                    target_object=target_object,
+                    candidate_labels=semantic_candidate_labels(scene, target_object),
+                    attention_heatmap=(signals.get("attention") or [None])[0],
+                    gradcam_map=(signals.get("gradcam_siglip") or [None])[0],
+                    image_map=self.image_map,
+                    frame_id="primary",
+                )
+                semantic_probe = build_semantic_probe_report(target_object, primary_semantic_frame, [])
+                if semantic_probe is not None:
+                    _progress("representation", summarize_semantic_probe(semantic_probe))
+            except Exception as e:
+                _progress("representation", f"Semantic probe skipped: {e}")
+        else:
+            _progress("representation", "Skipping semantic probe (no model or target object)")
+
         preliminary_spatial_object = build_spatial_object_diagnosis(
             matrix,
             target_object=target_object,
             cf_results=[],
             dataset_diversity=diversity,
+            semantic_probe=semantic_probe,
         )
 
         # ── Phase 5: LLM Hypothesis Formation ──────────────────
@@ -404,7 +442,7 @@ class DiagnosticAgent:
         _progress("hypothesize", f"Forming hypotheses via {llm_label}...")
         hypotheses = await self._form_hypotheses(
             task_string, scene, diversity, matrix, anomalies,
-            preliminary_spatial_object)
+            preliminary_spatial_object, semantic_probe, None)
         _progress("hypothesize", f"Formed {len(hypotheses)} hypotheses:")
         for h in hypotheses:
             test_label = f" -> test: {h.test_type}" if h.test_type != "none" else " (no test needed)"
@@ -472,7 +510,11 @@ class DiagnosticAgent:
             if surprising:
                 _progress("iteration", f"Found {len(surprising)} surprising results, forming follow-up hypotheses...")
                 followup_hypotheses = await self._form_hypotheses(
-                    task_string, scene, diversity, matrix, anomalies)
+                    task_string, scene, diversity, matrix, anomalies,
+                    pre_qk_spatial_object if 'pre_qk_spatial_object' in locals() else preliminary_spatial_object,
+                    semantic_probe,
+                    qk_probe,
+                )
                 # Filter to only genuinely new hypotheses
                 existing_ids = {h.id for h in hypotheses}
                 existing_tests = {(h.test_type, str(h.test_params)) for h in hypotheses}
@@ -552,24 +594,78 @@ class DiagnosticAgent:
                     except Exception as e:
                         _progress("counterfactuals", f"  -> FAILED: {e}")
 
-        # ── Phase 7: Spatial vs Object Diagnosis ─────────────────
+        semantic_probe = build_semantic_probe_report(target_object, primary_semantic_frame, cf_results)
+
+        # ── Phase 8: Spatial vs Object Diagnosis ─────────────────
         _progress("disambiguation", "Summarizing spatial priors vs object grounding...")
+        pre_qk_spatial_object = build_spatial_object_diagnosis(
+            matrix,
+            target_object=target_object,
+            cf_results=cf_results,
+            dataset_diversity=diversity,
+            semantic_probe=semantic_probe,
+        )
+        semantic_ambiguous = (
+            primary_semantic_frame is not None
+            and (
+                primary_semantic_frame.target_margin_over_best_non_target is None
+                or abs(primary_semantic_frame.target_margin_over_best_non_target) < 0.08
+            )
+        )
+        if (
+            self.policy is not None
+            and target_object is not None
+            and semantic_internal is not None
+            and (pre_qk_spatial_object.verdict in {"mixed", "inconclusive"} or semantic_ambiguous)
+        ):
+            _progress("disambiguation", "Running last-layer SigLIP QK decomposition...")
+            try:
+                relocation_result = next(
+                    (
+                        result for result in cf_results
+                        if result.test_type == "object_relocation"
+                        and (result.metrics or {}).get("target_object") == target_object
+                    ),
+                    None,
+                )
+                qk_probe = build_qk_probe_report(
+                    self.policy,
+                    sample,
+                    self.dataset,
+                    self.image_key,
+                    self.device,
+                    target_object=target_object,
+                    scene=scene,
+                    target_semantic_map=semantic_internal["target_map"],
+                    positional_baseline=signals.get("positional_baseline"),
+                    relocation_result=relocation_result,
+                    image_map=self.image_map,
+                )
+                if qk_probe is not None:
+                    _progress("disambiguation", summarize_qk_probe(qk_probe))
+            except Exception as e:
+                _progress("disambiguation", f"QK probe skipped: {e}")
+
         spatial_object_diagnosis = build_spatial_object_diagnosis(
             matrix,
             target_object=target_object,
             cf_results=cf_results,
             dataset_diversity=diversity,
+            semantic_probe=semantic_probe,
+            qk_probe=qk_probe,
         )
         _progress(
             "disambiguation",
             summarize_spatial_object_diagnosis(spatial_object_diagnosis),
         )
 
-        # ── Phase 8: LLM Synthesis ─────────────────────────────
+        # ── Phase 9: LLM Synthesis ─────────────────────────────
         _progress("synthesis", f"Synthesizing report via {llm_label}...")
         findings, narrative = await self._synthesize_report(
             task_string, scene, diversity, matrix, anomalies,
             hypotheses, cf_results, spatial_object_diagnosis,
+            semantic_probe,
+            qk_probe,
             cf_skip_reason=cf_skip_reason)
         _progress("synthesis", f"Generated {len(findings)} findings:")
         for f in findings:
@@ -608,6 +704,8 @@ class DiagnosticAgent:
             scene=scene,
             dataset_diversity=diversity,
             matrix=matrix,
+            semantic_probe=semantic_probe,
+            qk_probe=qk_probe,
             spatial_object_diagnosis=spatial_object_diagnosis,
             anomalies=anomalies,
             hypotheses=hypotheses,
@@ -1121,7 +1219,9 @@ class DiagnosticAgent:
     async def _form_hypotheses(self, task_string: str, scene: SceneSegmentation,
                                 diversity, matrix: DiagnosticMatrix,
                                 anomalies: list[Anomaly],
-                                spatial_object_diagnosis=None) -> list[Hypothesis]:
+                                spatial_object_diagnosis=None,
+                                semantic_probe=None,
+                                qk_probe=None) -> list[Hypothesis]:
         """Use LLM to form hypotheses from the diagnostic data."""
         prompt = build_hypothesis_prompt(
             task_string=task_string,
@@ -1130,6 +1230,8 @@ class DiagnosticAgent:
             matrix_markdown=matrix.to_markdown(),
             anomalies_json=format_anomalies_json(anomalies),
             spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
+            semantic_probe_summary=summarize_semantic_probe(semantic_probe),
+            qk_probe_summary=summarize_qk_probe(qk_probe),
         )
 
         response = await self._call_llm(prompt)
@@ -1293,6 +1395,8 @@ class DiagnosticAgent:
                                   hypotheses: list[Hypothesis],
                                   cf_results: list[CounterfactualResult],
                                   spatial_object_diagnosis=None,
+                                  semantic_probe=None,
+                                  qk_probe=None,
                                   cf_skip_reason: str = "",
                                   ) -> tuple[list[Finding], str]:
         """Use LLM to synthesize findings and narrative from all evidence."""
@@ -1301,6 +1405,8 @@ class DiagnosticAgent:
             detected_objects=scene.region_names(),
             matrix_markdown=matrix.to_markdown(),
             spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
+            semantic_probe_summary=summarize_semantic_probe(semantic_probe),
+            qk_probe_summary=summarize_qk_probe(qk_probe),
             anomalies_summary=format_anomalies_json(anomalies),
             diversity_summary=format_diversity_summary(diversity),
             hypotheses_with_results=format_hypotheses_with_results(

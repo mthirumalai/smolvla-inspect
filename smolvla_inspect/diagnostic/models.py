@@ -330,6 +330,70 @@ class SpatialObjectDiagnosis:
 
 
 @dataclass
+class SemanticFrameSummary:
+    """Semantic-probe summary for a single image/frame."""
+
+    frame_id: str
+    target_object: str | None
+    candidate_labels: list[str] = field(default_factory=list)
+    best_non_target_label: str | None = None
+    target_semantic_peak: float | None = None
+    target_semantic_mean_on_causal_patches: float | None = None
+    target_margin_over_best_non_target: float | None = None
+    causal_semantic_alignment: float | None = None
+    background_semantic_gap: float | None = None
+    summary: str = ""
+
+
+@dataclass
+class SemanticCounterfactualSummary:
+    """Semantic summary derived from a counterfactual probe."""
+
+    test_type: str
+    summary: str
+    metrics: dict = field(default_factory=dict)
+
+
+@dataclass
+class SemanticProbeReport:
+    """Top-level semantic object-vs-location probe report."""
+
+    target_object: str | None
+    summary: str
+    primary_frame: SemanticFrameSummary | None = None
+    frames: list[SemanticFrameSummary] = field(default_factory=list)
+    counterfactuals: dict[str, SemanticCounterfactualSummary] = field(default_factory=dict)
+
+
+@dataclass
+class QKHeadSummary:
+    """Per-head QK decomposition summary for the final SigLIP layer."""
+
+    head_index: int
+    head_type: str
+    score: float
+    semantic_map_correlation: float
+    positional_baseline_correlation: float
+    target_region_logit_mass: float
+    background_logit_mass: float
+    old_anchor_logit_mass: float | None = None
+    moved_object_logit_mass: float | None = None
+
+
+@dataclass
+class QKProbeReport:
+    """Compact summary of last-layer SigLIP QK behavior."""
+
+    layer: str
+    summary: str
+    dominant_head_type: str
+    semantic_head_fraction: float
+    positional_head_fraction: float
+    mixed_head_fraction: float
+    top_heads: list[QKHeadSummary] = field(default_factory=list)
+
+
+@dataclass
 class EvidenceEntry:
     """A single piece of evidence collected during a diagnostic phase."""
 
@@ -380,6 +444,8 @@ class DiagnosticReport:
     scene: SceneSegmentation
     dataset_diversity: DatasetDiversityReport | None
     matrix: DiagnosticMatrix
+    semantic_probe: SemanticProbeReport | None
+    qk_probe: QKProbeReport | None
     spatial_object_diagnosis: SpatialObjectDiagnosis | None
     anomalies: list[Anomaly]
     hypotheses: list[Hypothesis]
@@ -439,6 +505,8 @@ class DiagnosticReport:
             "scene": self._serialisable_scene(),
             "dataset_diversity": asdict(self.dataset_diversity) if self.dataset_diversity else None,
             "matrix": self.matrix.to_dict(),
+            "semantic_probe": asdict(self.semantic_probe) if self.semantic_probe else None,
+            "qk_probe": asdict(self.qk_probe) if self.qk_probe else None,
             "spatial_object_diagnosis": (
                 asdict(self.spatial_object_diagnosis)
                 if self.spatial_object_diagnosis
@@ -663,6 +731,73 @@ class DiagnosticReport:
                 sections.append("")
                 for item in diag.object_evidence:
                     sections.append(f"- {item.summary} (score={item.score:.2f}, source={item.source})")
+                sections.append("")
+
+        # ── Semantic Probe ───────────────────────────────────────
+        if self.semantic_probe is not None:
+            probe = self.semantic_probe
+            sections.append("## Semantic Feature Probe")
+            sections.append("")
+            sections.append(probe.summary)
+            sections.append("")
+
+            if probe.primary_frame is not None:
+                frame = probe.primary_frame
+                sections.append("### Primary Frame")
+                sections.append("")
+                sections.append("| Metric | Value |")
+                sections.append("|---|---|")
+                sections.append(f"| Target object | {frame.target_object or 'N/A'} |")
+                sections.append(f"| Candidate labels | {', '.join(frame.candidate_labels)} |")
+                sections.append(f"| Best non-target label | {frame.best_non_target_label or 'N/A'} |")
+                for key in (
+                    "target_semantic_peak",
+                    "target_semantic_mean_on_causal_patches",
+                    "target_margin_over_best_non_target",
+                    "causal_semantic_alignment",
+                    "background_semantic_gap",
+                ):
+                    value = getattr(frame, key)
+                    rendered = f"{value:.4f}" if isinstance(value, float) else "N/A"
+                    sections.append(f"| {key.replace('_', ' ').title()} | {rendered} |")
+                if frame.summary:
+                    sections.append("")
+                    sections.append(frame.summary)
+                sections.append("")
+
+            if probe.counterfactuals:
+                sections.append("### Counterfactual Semantic Follow-Through")
+                sections.append("")
+                for name, summary in probe.counterfactuals.items():
+                    sections.append(f"- **{name.replace('_', ' ')}**: {summary.summary}")
+                sections.append("")
+
+        # ── QK Probe ─────────────────────────────────────────────
+        if self.qk_probe is not None:
+            probe = self.qk_probe
+            sections.append("## QK Decomposition")
+            sections.append("")
+            sections.append(probe.summary)
+            sections.append("")
+            sections.append("| Metric | Value |")
+            sections.append("|---|---|")
+            sections.append(f"| Layer | {probe.layer} |")
+            sections.append(f"| Dominant head type | {probe.dominant_head_type} |")
+            sections.append(f"| Semantic head fraction | {probe.semantic_head_fraction:.4f} |")
+            sections.append(f"| Positional head fraction | {probe.positional_head_fraction:.4f} |")
+            sections.append(f"| Mixed head fraction | {probe.mixed_head_fraction:.4f} |")
+            sections.append("")
+            if probe.top_heads:
+                sections.append("### Top Heads")
+                sections.append("")
+                sections.append("| Head | Type | Score | Semantic Corr | Positional Corr | Target Mass | Background Mass |")
+                sections.append("|---|---|---|---|---|---|---|")
+                for head in probe.top_heads:
+                    sections.append(
+                        f"| {head.head_index} | {head.head_type} | {head.score:.4f} | "
+                        f"{head.semantic_map_correlation:.4f} | {head.positional_baseline_correlation:.4f} | "
+                        f"{head.target_region_logit_mass:.4f} | {head.background_logit_mass:.4f} |"
+                    )
                 sections.append("")
 
         # ── Anomalies ─────────────────────────────────────────────

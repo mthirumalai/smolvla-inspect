@@ -22,6 +22,7 @@ from ..data import build_policy_batch_from_sample
 from ..gradient import _patch_eager_attention_bool_mask
 from .models import CounterfactualResult, SceneSegmentation
 from .registry import register_primitive
+from .semantic_probe import compute_patch_text_similarity
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,38 @@ def _mask_share(heatmap: np.ndarray | None, mask: np.ndarray) -> float:
     if total <= 1e-12:
         return 0.0
     return float(np.sum(hm * mask.astype(np.float32)) / total)
+
+
+def _normalize_similarity_map(similarity_map: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    out = np.zeros_like(similarity_map, dtype=np.float32)
+    if not valid_mask.any():
+        return out
+    valid = similarity_map[valid_mask].astype(np.float32)
+    vmin = float(valid.min())
+    vmax = float(valid.max())
+    if vmax > vmin:
+        out[valid_mask] = (valid - vmin) / (vmax - vmin)
+    return out
+
+
+def _semantic_region_mean(similarity_map: np.ndarray | None, region_mask: np.ndarray,
+                          grid_shape: tuple[int, int], valid_mask: np.ndarray) -> float | None:
+    if similarity_map is None:
+        return None
+    region_grid = _resize_mask(region_mask, grid_shape) & valid_mask
+    if not region_grid.any():
+        return None
+    return float(similarity_map[region_grid].mean())
+
+
+def _semantic_region_peak(similarity_map: np.ndarray | None, region_mask: np.ndarray,
+                          grid_shape: tuple[int, int], valid_mask: np.ndarray) -> float | None:
+    if similarity_map is None:
+        return None
+    region_grid = _resize_mask(region_mask, grid_shape) & valid_mask
+    if not region_grid.any():
+        return None
+    return float(similarity_map[region_grid].max())
 
 
 def _shift_mask(mask: np.ndarray, shift_pixels: tuple[int, int]) -> np.ndarray:
@@ -587,6 +620,40 @@ def object_relocation(
         "anchor_retention_ratio": old_anchor_share / focus_total,
         "focus_shift_gap": moved_target_share - old_anchor_share,
     }
+
+    original_semantics = compute_patch_text_similarity(
+        policy, sample, dataset, image_key, device, [target_object], image_map=image_map,
+    )
+    modified_semantics = compute_patch_text_similarity(
+        policy, new_sample, dataset, image_key, device, [target_object], image_map=image_map,
+    )
+    if original_semantics is not None and modified_semantics is not None:
+        orig_map = original_semantics["similarity_maps"].get(target_object)
+        mod_map = modified_semantics["similarity_maps"].get(target_object)
+        if orig_map is not None and mod_map is not None:
+            orig_valid = original_semantics["valid_patch_mask"]
+            mod_valid = modified_semantics["valid_patch_mask"]
+            orig_grid = original_semantics["grid_size"]
+            mod_grid = modified_semantics["grid_size"]
+            orig_peak = _semantic_region_peak(orig_map, obj_mask, orig_grid, orig_valid)
+            old_anchor_sem = _semantic_region_mean(mod_map, old_anchor_mask, mod_grid, mod_valid)
+            moved_target_sem = _semantic_region_mean(mod_map, moved_target_mask, mod_grid, mod_valid)
+            mod_norm = _normalize_similarity_map(mod_map, mod_valid)
+            old_anchor_norm = _semantic_region_mean(mod_norm, old_anchor_mask, mod_grid, mod_valid) or 0.0
+            moved_target_norm = _semantic_region_mean(mod_norm, moved_target_mask, mod_grid, mod_valid) or 0.0
+            semantic_total = old_anchor_norm + moved_target_norm + 1e-8
+            metrics.update({
+                "original_target_semantic_peak": orig_peak if orig_peak is not None else 0.0,
+                "modified_old_anchor_target_semantic": (
+                    old_anchor_sem if old_anchor_sem is not None else 0.0
+                ),
+                "modified_new_object_target_semantic": (
+                    moved_target_sem if moved_target_sem is not None else 0.0
+                ),
+                "semantic_follow_ratio": moved_target_norm / semantic_total,
+                "semantic_anchor_ratio": old_anchor_norm / semantic_total,
+                "semantic_shift_gap": moved_target_norm - old_anchor_norm,
+            })
 
     return _compute_result(
         baseline_actions, modified_actions,
@@ -1144,11 +1211,35 @@ def occlusion_targeted(
     policy.reset()
     modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
 
+    metrics = {"target_object": target_object, "fill": fill}
+    original_semantics = compute_patch_text_similarity(
+        policy, sample, dataset, image_key, device, [target_object], image_map=image_map,
+    )
+    occluded_semantics = compute_patch_text_similarity(
+        policy, new_sample, dataset, image_key, device, [target_object], image_map=image_map,
+    )
+    if original_semantics is not None and occluded_semantics is not None:
+        orig_map = original_semantics["similarity_maps"].get(target_object)
+        occ_map = occluded_semantics["similarity_maps"].get(target_object)
+        if orig_map is not None and occ_map is not None:
+            orig_valid = original_semantics["valid_patch_mask"]
+            occ_valid = occluded_semantics["valid_patch_mask"]
+            orig_grid = original_semantics["grid_size"]
+            occ_grid = occluded_semantics["grid_size"]
+            orig_peak = _semantic_region_peak(orig_map, obj_mask, orig_grid, orig_valid)
+            occ_peak = _semantic_region_peak(occ_map, obj_mask, occ_grid, occ_valid)
+            if orig_peak is not None and occ_peak is not None:
+                metrics.update({
+                    "original_target_semantic_peak": orig_peak,
+                    "occluded_target_semantic_peak": occ_peak,
+                    "occlusion_target_semantic_drop": orig_peak - occ_peak,
+                })
+
     return _compute_result(
         baseline_actions, modified_actions,
         img_hwc, modified_hwc,
         hypothesis_id=f"occlusion_targeted_{target_object}",
         test_type="occlusion_targeted",
         affected_mask=obj_mask,
-        metrics={"target_object": target_object, "fill": fill},
+        metrics=metrics,
     )

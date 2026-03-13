@@ -11,6 +11,7 @@ import warnings
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 try:
     from tqdm import tqdm
@@ -25,6 +26,8 @@ from .data import (
     _resolve_task_string,
     find_vision_encoder,
 )
+from ._compat import resize_with_pad
+from .heatmap import compute_padding_patches
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +235,196 @@ def _gradcam_from_captured(activations, gradients, spatial_shape=None):
     cam = cam[:h * w].reshape(h, w)
     cam = cam / (cam.max() + 1e-8)
     return cam.detach().float().cpu().numpy()
+
+
+def _prepare_siglip_vision_inputs(sample, image_key, vision_encoder, device):
+    """Normalize a sample image for direct SigLIP vision-encoder forward passes."""
+    img = sample[image_key].unsqueeze(0).to(device)
+    if img.max() > 1.0:
+        img = img.float() / 255.0
+
+    original_hw = (int(img.shape[-2]), int(img.shape[-1]))
+    target_size = getattr(
+        getattr(vision_encoder, "config", None), "image_size", None,
+    ) or getattr(vision_encoder, "image_size", 384)
+    if img.shape[-2] != target_size or img.shape[-1] != target_size:
+        img_resized = resize_with_pad(img, target_size, target_size, pad_value=0)
+    else:
+        img_resized = img
+    img_resized = img_resized * 2.0 - 1.0
+
+    try:
+        enc_dtype = next(vision_encoder.parameters()).dtype
+        img_resized = img_resized.to(enc_dtype)
+    except StopIteration:
+        pass
+
+    patch_size = getattr(vision_encoder, "patch_size", None) or getattr(
+        getattr(vision_encoder, "config", None), "patch_size", 14,
+    )
+    grid_h = int(img_resized.size(2) // patch_size)
+    grid_w = int(img_resized.size(3) // patch_size)
+    patch_mask = torch.ones(1, grid_h, grid_w, dtype=torch.bool, device=device)
+
+    crop_h, crop_w = compute_padding_patches(original_hw, target_size, patch_size)
+    valid_patch_mask = np.ones((grid_h, grid_w), dtype=bool)
+    if crop_h > 0:
+        valid_patch_mask[:crop_h, :] = False
+    if crop_w > 0:
+        valid_patch_mask[:, :crop_w] = False
+
+    return img_resized, patch_mask, {
+        "grid_size": (grid_h, grid_w),
+        "image_shape": original_hw,
+        "patch_size": patch_size,
+        "content_crop": (crop_h, crop_w),
+        "valid_patch_mask": valid_patch_mask,
+    }
+
+
+def _forward_siglip_vision_encoder(vision_encoder, img_resized, patch_mask):
+    """Run a direct forward pass through the SigLIP vision encoder."""
+    if hasattr(vision_encoder, "embeddings") and hasattr(vision_encoder, "encoder"):
+        embeddings = vision_encoder.embeddings(img_resized, patch_mask)
+        return vision_encoder.encoder(embeddings)
+    if hasattr(vision_encoder, "forward"):
+        return vision_encoder(img_resized)
+    return vision_encoder(pixel_values=img_resized, patch_attention_mask=patch_mask)
+
+
+def extract_siglip_last_layer_features(
+    policy,
+    sample,
+    dataset,
+    image_key,
+    device,
+    *,
+    image_map=None,
+    capture_qk: bool = False,
+):
+    """Extract final-layer SigLIP patch features, with optional QK key-logit maps."""
+    vision_encoder = find_vision_encoder(policy)
+    if vision_encoder is None:
+        print("    WARNING: Could not find vision encoder for semantic probe")
+        return None
+
+    try:
+        last_layer = vision_encoder.encoder.layers[-1]
+    except (AttributeError, IndexError):
+        print("    WARNING: Could not access last SigLIP encoder layer")
+        return None
+
+    last_attn = getattr(last_layer, "self_attn", None) or getattr(last_layer, "attention", None)
+    if capture_qk and last_attn is None:
+        print("    WARNING: Could not access last-layer attention module for QK probe")
+        capture_qk = False
+
+    img_resized, patch_mask, meta = _prepare_siglip_vision_inputs(
+        sample, image_key, vision_encoder, device,
+    )
+
+    activations: dict[str, torch.Tensor] = {}
+    q_capture: dict[str, torch.Tensor] = {}
+    k_capture: dict[str, torch.Tensor] = {}
+    attn_input: dict[str, torch.Tensor] = {}
+    handles = []
+
+    def _layer_hook(module, input_args, output):
+        out = output[0] if isinstance(output, tuple) else output
+        activations["value"] = out.detach()
+        return output
+
+    handles.append(last_layer.register_forward_hook(_layer_hook))
+
+    if capture_qk:
+        if hasattr(last_attn, "q_proj") and hasattr(last_attn, "k_proj"):
+            def _q_hook(module, input_args, output):
+                q_capture.setdefault("value", output.detach())
+                return output
+
+            def _k_hook(module, input_args, output):
+                k_capture.setdefault("value", output.detach())
+                return output
+
+            handles.append(last_attn.q_proj.register_forward_hook(_q_hook))
+            handles.append(last_attn.k_proj.register_forward_hook(_k_hook))
+        elif isinstance(last_attn, torch.nn.MultiheadAttention):
+            def _pre_hook(module, input_args):
+                attn_input.setdefault("value", input_args[0].detach())
+                return None
+
+            handles.append(last_attn.register_forward_pre_hook(_pre_hook))
+
+    try:
+        with torch.no_grad():
+            try:
+                _forward_siglip_vision_encoder(vision_encoder, img_resized, patch_mask)
+            except Exception as direct_error:
+                batch, _ = build_policy_batch_from_sample(
+                    sample, policy, device, batch_size=1,
+                    image_key_for_grad=None, dataset=dataset,
+                    image_map=image_map,
+                )
+                try:
+                    policy.reset()
+                    policy.select_action(batch)
+                except Exception as fallback_error:
+                    print(
+                        "    WARNING: SigLIP feature extraction failed "
+                        f"(direct={direct_error}, fallback={fallback_error})"
+                    )
+                    return None
+
+        if "value" not in activations:
+            print("    WARNING: Last-layer feature hook did not fire")
+            return None
+
+        patch_features = activations["value"]
+        if patch_features.dim() == 3:
+            patch_features = patch_features[0]
+        patch_features = F.normalize(patch_features.float(), dim=-1)
+
+        grid_h, grid_w = meta["grid_size"]
+        patch_grid = patch_features.reshape(grid_h, grid_w, -1).detach().cpu().numpy()
+        result = {
+            "patch_features": patch_grid,
+            "grid_size": meta["grid_size"],
+            "image_shape": meta["image_shape"],
+            "patch_size": meta["patch_size"],
+            "content_crop": meta["content_crop"],
+            "valid_patch_mask": meta["valid_patch_mask"],
+        }
+
+        if capture_qk:
+            q_tensor = q_capture.get("value")
+            k_tensor = k_capture.get("value")
+            if q_tensor is None or k_tensor is None:
+                hidden = attn_input.get("value")
+                if hidden is not None and isinstance(last_attn, torch.nn.MultiheadAttention):
+                    qkv = F.linear(hidden, last_attn.in_proj_weight, last_attn.in_proj_bias)
+                    q_tensor, k_tensor, _ = qkv.chunk(3, dim=-1)
+
+            if q_tensor is not None and k_tensor is not None:
+                if q_tensor.dim() == 3:
+                    q_tensor = q_tensor[0]
+                if k_tensor.dim() == 3:
+                    k_tensor = k_tensor[0]
+                num_heads = getattr(last_attn, "num_heads", None) or getattr(
+                    last_attn, "num_attention_heads", None,
+                )
+                if num_heads is None or num_heads <= 0:
+                    num_heads = 1
+                head_dim = int(q_tensor.shape[-1] // num_heads)
+                q = q_tensor.reshape(-1, num_heads, head_dim).permute(1, 0, 2).float()
+                k = k_tensor.reshape(-1, num_heads, head_dim).permute(1, 0, 2).float()
+                scores = torch.matmul(q, k.transpose(1, 2)) * (head_dim ** -0.5)
+                key_maps = scores.mean(dim=1).detach().cpu().numpy()
+                result["qk_key_maps"] = key_maps.reshape(num_heads, grid_h, grid_w)
+
+        return result
+    finally:
+        for handle in handles:
+            handle.remove()
 
 
 # ---------------------------------------------------------------------------

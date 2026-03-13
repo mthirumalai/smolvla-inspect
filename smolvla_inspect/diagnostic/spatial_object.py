@@ -7,7 +7,9 @@ from .models import (
     DatasetDiversityReport,
     DiagnosticEvidence,
     DiagnosticMatrix,
+    QKProbeReport,
     SceneSegmentation,
+    SemanticProbeReport,
     SpatialObjectDiagnosis,
 )
 
@@ -100,6 +102,8 @@ def build_spatial_object_diagnosis(
     target_object: str | None,
     cf_results: list[CounterfactualResult],
     dataset_diversity: DatasetDiversityReport | None = None,
+    semantic_probe: SemanticProbeReport | None = None,
+    qk_probe: QKProbeReport | None = None,
 ) -> SpatialObjectDiagnosis:
     """Summarize whether the policy is reading a location or an object."""
     spatial_evidence: list[DiagnosticEvidence] = []
@@ -182,6 +186,72 @@ def build_spatial_object_diagnosis(
                 {"target_object": target_object, "target_attention_share": attention_share},
             )
 
+    if semantic_probe is not None and semantic_probe.primary_frame is not None:
+        frame = semantic_probe.primary_frame
+        if frame.target_semantic_peak is not None:
+            key_metrics["target_semantic_peak"] = float(frame.target_semantic_peak)
+        if frame.target_semantic_mean_on_causal_patches is not None:
+            key_metrics["target_semantic_mean_on_causal_patches"] = float(
+                frame.target_semantic_mean_on_causal_patches
+            )
+        if frame.target_margin_over_best_non_target is not None:
+            margin = float(frame.target_margin_over_best_non_target)
+            key_metrics["target_margin_over_best_non_target"] = margin
+            add_object(
+                "semantic_target_margin",
+                _scale(margin, 0.02, 0.18),
+                0.18,
+                f"Causal patches look more like '{target_object}' than other detected objects "
+                f"(margin={margin:.3f}).",
+                {
+                    "target_object": target_object,
+                    "best_non_target_label": frame.best_non_target_label,
+                    "target_margin_over_best_non_target": margin,
+                },
+            )
+            add_spatial(
+                "weak_semantic_target_margin",
+                _scale(0.05 - margin, 0.01, 0.10),
+                0.14,
+                f"Causal patches are not semantically distinctive for '{target_object}' "
+                f"(margin={margin:.3f}).",
+                {
+                    "target_object": target_object,
+                    "best_non_target_label": frame.best_non_target_label,
+                    "target_margin_over_best_non_target": margin,
+                },
+            )
+        if frame.causal_semantic_alignment is not None:
+            alignment = float(frame.causal_semantic_alignment)
+            key_metrics["causal_semantic_alignment"] = alignment
+            add_object(
+                "causal_semantic_alignment",
+                _scale(alignment, 0.15, 0.45),
+                0.10,
+                f"High-causal patches contain clear target semantics for '{target_object}' "
+                f"(alignment={alignment:.3f}).",
+                {"target_object": target_object, "causal_semantic_alignment": alignment},
+            )
+        if frame.background_semantic_gap is not None:
+            bg_gap = float(frame.background_semantic_gap)
+            key_metrics["background_semantic_gap"] = bg_gap
+            add_object(
+                "background_semantic_gap",
+                _scale(bg_gap, 0.03, 0.18),
+                0.10,
+                f"Target semantics are stronger on high-causal patches than on the low-causal background "
+                f"(gap={bg_gap:.3f}).",
+                {"target_object": target_object, "background_semantic_gap": bg_gap},
+            )
+            add_spatial(
+                "low_background_semantic_gap",
+                _scale(0.04 - bg_gap, 0.01, 0.08),
+                0.10,
+                f"Target semantics are no stronger on causal patches than on the surrounding background "
+                f"(gap={bg_gap:.3f}).",
+                {"target_object": target_object, "background_semantic_gap": bg_gap},
+            )
+
     for traj in matrix.temporal_trajectories or []:
         corr = float(traj.object_tracking_correlation)
         key_metrics["object_tracking_correlation"] = max(
@@ -228,10 +298,16 @@ def build_spatial_object_diagnosis(
         metrics = relocation.metrics or {}
         follow_ratio = metrics.get("focus_follow_ratio")
         anchor_ratio = metrics.get("anchor_retention_ratio")
+        semantic_follow_ratio = metrics.get("semantic_follow_ratio")
+        semantic_anchor_ratio = metrics.get("semantic_anchor_ratio")
         if follow_ratio is not None:
             key_metrics["relocation_follow_ratio"] = float(follow_ratio)
         if anchor_ratio is not None:
             key_metrics["relocation_anchor_ratio"] = float(anchor_ratio)
+        if semantic_follow_ratio is not None:
+            key_metrics["relocation_semantic_follow_ratio"] = float(semantic_follow_ratio)
+        if semantic_anchor_ratio is not None:
+            key_metrics["relocation_semantic_anchor_ratio"] = float(semantic_anchor_ratio)
 
         if follow_ratio is not None and anchor_ratio is not None:
             add_object(
@@ -248,6 +324,23 @@ def build_spatial_object_diagnosis(
                 f"After relocation, GradCAM stays anchored to the old location more than the moved object (anchor={float(anchor_ratio):.2f}, follow={float(follow_ratio):.2f}).",
                 metrics,
             )
+        if semantic_follow_ratio is not None and semantic_anchor_ratio is not None:
+            add_object(
+                "semantic_relocation_follow_probe",
+                _scale(float(semantic_follow_ratio) - float(semantic_anchor_ratio), 0.05, 0.35),
+                0.20,
+                f"After relocation, target semantics follow the moved object more than the old anchor "
+                f"(follow={float(semantic_follow_ratio):.2f}, anchor={float(semantic_anchor_ratio):.2f}).",
+                metrics,
+            )
+            add_spatial(
+                "semantic_relocation_anchor_probe",
+                _scale(float(semantic_anchor_ratio) - float(semantic_follow_ratio), 0.05, 0.35),
+                0.20,
+                f"After relocation, target semantics stay more anchored to the old location than to the moved object "
+                f"(anchor={float(semantic_anchor_ratio):.2f}, follow={float(semantic_follow_ratio):.2f}).",
+                metrics,
+            )
 
     occlusion = _pick_counterfactual(
         cf_results,
@@ -257,6 +350,7 @@ def build_spatial_object_diagnosis(
     if occlusion is not None:
         delta = float(occlusion.action_delta_l2)
         key_metrics["occlusion_action_delta"] = delta
+        semantic_drop = occlusion.metrics.get("occlusion_target_semantic_drop") if occlusion.metrics else None
         add_object(
             "target_occlusion_response",
             _scale(delta, 0.02, 0.10),
@@ -271,6 +365,25 @@ def build_spatial_object_diagnosis(
             f"Occluding '{target_object}' barely changes the predicted action (delta={delta:.4f}).",
             {"target_object": target_object, "action_delta_l2": delta},
         )
+        if semantic_drop is not None:
+            semantic_drop = float(semantic_drop)
+            key_metrics["occlusion_target_semantic_drop"] = semantic_drop
+            add_object(
+                "target_occlusion_semantic_drop",
+                _scale(semantic_drop, 0.03, 0.20),
+                0.12,
+                f"Occluding '{target_object}' removes target-semantic evidence from the target region "
+                f"(drop={semantic_drop:.3f}).",
+                {"target_object": target_object, "occlusion_target_semantic_drop": semantic_drop},
+            )
+            add_spatial(
+                "target_occlusion_semantic_insensitivity",
+                _scale(0.02 - semantic_drop, 0.005, 0.02),
+                0.08,
+                f"Occluding '{target_object}' does not materially reduce target-semantic evidence "
+                f"(drop={semantic_drop:.3f}).",
+                {"target_object": target_object, "occlusion_target_semantic_drop": semantic_drop},
+            )
 
     background = _pick_counterfactual(cf_results, "background_substitution")
     if background is not None:
@@ -299,6 +412,34 @@ def build_spatial_object_diagnosis(
             f"Changing '{target_object}' appearance changes the action (delta={delta:.4f}).",
             {"target_object": target_object, "action_delta_l2": delta},
         )
+
+    if qk_probe is not None:
+        key_metrics["qk_semantic_head_fraction"] = qk_probe.semantic_head_fraction
+        key_metrics["qk_positional_head_fraction"] = qk_probe.positional_head_fraction
+        if qk_probe.dominant_head_type == "semantic":
+            add_object(
+                "qk_semantic_heads",
+                _scale(
+                    qk_probe.semantic_head_fraction - qk_probe.positional_head_fraction,
+                    0.05,
+                    0.40,
+                ),
+                0.14,
+                qk_probe.summary,
+                {"dominant_head_type": qk_probe.dominant_head_type},
+            )
+        elif qk_probe.dominant_head_type == "positional":
+            add_spatial(
+                "qk_positional_heads",
+                _scale(
+                    qk_probe.positional_head_fraction - qk_probe.semantic_head_fraction,
+                    0.05,
+                    0.40,
+                ),
+                0.14,
+                qk_probe.summary,
+                {"dominant_head_type": qk_probe.dominant_head_type},
+            )
 
     spatial_score = spatial_sum / spatial_weight if spatial_weight > 1e-8 else 0.0
     object_score = object_sum / object_weight if object_weight > 1e-8 else 0.0
@@ -340,7 +481,7 @@ def build_spatial_object_diagnosis(
         summary = (
             f"The available evidence is not strong enough to cleanly separate spatial-prior use from "
             f"object grounding for '{target_object}'. The model may be weakly grounded, weakly shortcut-driven, "
-            "or the available probes may be too noisy."
+                "or the available probes may be too noisy."
         )
 
     return SpatialObjectDiagnosis(

@@ -31,6 +31,12 @@ HYPOTHESIS_PROMPT = """You are an expert robotics ML researcher diagnosing a vis
 **Spatial vs Object Diagnosis:**
 {spatial_object_summary}
 
+**Semantic Probe:**
+{semantic_probe_summary}
+
+**QK Decomposition:**
+{qk_probe_summary}
+
 **Detected Anomalies:**
 {anomalies_json}
 
@@ -91,6 +97,12 @@ SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnos
 **Spatial vs Object Diagnosis:**
 {spatial_object_summary}
 
+**Semantic Probe:**
+{semantic_probe_summary}
+
+**QK Decomposition:**
+{qk_probe_summary}
+
 **Anomalies detected:** {anomalies_summary}
 
 **Dataset diversity:** {diversity_summary}
@@ -136,6 +148,8 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
                             diversity_summary: str, matrix_markdown: str,
                             anomalies_json: str,
                             spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
+                            semantic_probe_summary: str = "Semantic patch-to-text probe unavailable.",
+                            qk_probe_summary: str = "QK decomposition unavailable.",
                             ) -> str:
     """Build the hypothesis formation prompt with all context filled in."""
     return HYPOTHESIS_PROMPT.format(
@@ -145,6 +159,8 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
         diversity_summary=diversity_summary,
         matrix_markdown=matrix_markdown,
         spatial_object_summary=spatial_object_summary,
+        semantic_probe_summary=semantic_probe_summary,
+        qk_probe_summary=qk_probe_summary,
         anomalies_json=anomalies_json,
     )
 
@@ -154,6 +170,8 @@ def build_synthesis_prompt(task_string: str, detected_objects: list[str],
                            diversity_summary: str,
                            hypotheses_with_results: str,
                            spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
+                           semantic_probe_summary: str = "Semantic patch-to-text probe unavailable.",
+                           qk_probe_summary: str = "QK decomposition unavailable.",
                            ) -> str:
     """Build the synthesis/report prompt with all context filled in."""
     return SYNTHESIS_PROMPT.format(
@@ -162,6 +180,8 @@ def build_synthesis_prompt(task_string: str, detected_objects: list[str],
         detected_objects=", ".join(detected_objects),
         matrix_markdown=matrix_markdown,
         spatial_object_summary=spatial_object_summary,
+        semantic_probe_summary=semantic_probe_summary,
+        qk_probe_summary=qk_probe_summary,
         anomalies_summary=anomalies_summary,
         diversity_summary=diversity_summary,
         hypotheses_with_results=hypotheses_with_results,

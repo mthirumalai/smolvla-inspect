@@ -104,6 +104,23 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
             "metrics": cf.metrics,
         })
 
+    if report.semantic_probe is not None:
+        evidence_data.append({
+            "phase": "representation",
+            "type": "semantic_probe",
+            "target_object": report.semantic_probe.target_object,
+            "summary": report.semantic_probe.summary,
+        })
+
+    if report.qk_probe is not None:
+        evidence_data.append({
+            "phase": "representation",
+            "type": "qk_probe",
+            "layer": report.qk_probe.layer,
+            "summary": report.qk_probe.summary,
+            "dominant_head_type": report.qk_probe.dominant_head_type,
+        })
+
     if report.spatial_object_diagnosis is not None:
         diag = report.spatial_object_diagnosis
         evidence_data.append({

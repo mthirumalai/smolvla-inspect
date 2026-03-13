@@ -6,6 +6,46 @@ import CounterfactualComparison from "./CounterfactualComparison";
 
 interface DiagnosticReport {
   metadata: Record<string, unknown>;
+  semantic_probe?: {
+    target_object: string | null;
+    summary: string;
+    primary_frame?: {
+      frame_id: string;
+      target_object: string | null;
+      candidate_labels: string[];
+      best_non_target_label: string | null;
+      target_semantic_peak: number | null;
+      target_semantic_mean_on_causal_patches: number | null;
+      target_margin_over_best_non_target: number | null;
+      causal_semantic_alignment: number | null;
+      background_semantic_gap: number | null;
+      summary: string;
+    } | null;
+    counterfactuals?: Record<string, {
+      test_type: string;
+      summary: string;
+      metrics: Record<string, number | string | boolean | number[] | string[]>;
+    }>;
+  };
+  qk_probe?: {
+    layer: string;
+    summary: string;
+    dominant_head_type: string;
+    semantic_head_fraction: number;
+    positional_head_fraction: number;
+    mixed_head_fraction: number;
+    top_heads: Array<{
+      head_index: number;
+      head_type: string;
+      score: number;
+      semantic_map_correlation: number;
+      positional_baseline_correlation: number;
+      target_region_logit_mass: number;
+      background_logit_mass: number;
+      old_anchor_logit_mass?: number | null;
+      moved_object_logit_mass?: number | null;
+    }>;
+  };
   spatial_object_diagnosis?: {
     target_object: string | null;
     verdict: string;
@@ -290,7 +330,11 @@ export default function DiagnosticPanel() {
       </div>
 
       {report.spatial_object_diagnosis && (
-        <SpatialObjectDiagnosisCard diagnosis={report.spatial_object_diagnosis} />
+        <SpatialObjectDiagnosisCard
+          diagnosis={report.spatial_object_diagnosis}
+          semanticProbe={report.semantic_probe}
+          qkProbe={report.qk_probe}
+        />
       )}
 
       {/* Scene Understanding */}
@@ -426,8 +470,12 @@ export default function DiagnosticPanel() {
 
 function SpatialObjectDiagnosisCard({
   diagnosis,
+  semanticProbe,
+  qkProbe,
 }: {
   diagnosis: NonNullable<DiagnosticReport["spatial_object_diagnosis"]>;
+  semanticProbe?: DiagnosticReport["semantic_probe"];
+  qkProbe?: DiagnosticReport["qk_probe"];
 }) {
   const verdictLabel: Record<string, string> = {
     spatial_prior: "Spatial Prior",
@@ -480,6 +528,72 @@ function SpatialObjectDiagnosisCard({
         <EvidenceList title="Evidence For Spatial Priors" items={diagnosis.spatial_evidence} emptyText="No strong spatial-prior evidence." />
         <EvidenceList title="Evidence For Object Grounding" items={diagnosis.object_evidence} emptyText="No strong object-grounding evidence." />
       </div>
+
+      {(semanticProbe || qkProbe) && (
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+          {semanticProbe && (
+            <div style={{ background: "#FCFDFD", border: "1px solid #DBE4E8", borderRadius: 8, padding: 12 }}>
+              <div style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: 12, marginBottom: 8 }}>
+                Semantic Probe
+              </div>
+              <div style={{ color: "var(--text-body)", fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>
+                {semanticProbe.summary}
+              </div>
+              {semanticProbe.primary_frame && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: 8 }}>
+                  <MetricPill label="Semantic peak" value={formatOptionalMetric(semanticProbe.primary_frame.target_semantic_peak)} />
+                  <MetricPill label="Causal mean" value={formatOptionalMetric(semanticProbe.primary_frame.target_semantic_mean_on_causal_patches)} />
+                  <MetricPill label="Target margin" value={formatOptionalMetric(semanticProbe.primary_frame.target_margin_over_best_non_target)} />
+                  <MetricPill label="Background gap" value={formatOptionalMetric(semanticProbe.primary_frame.background_semantic_gap)} />
+                </div>
+              )}
+              {semanticProbe.counterfactuals && Object.keys(semanticProbe.counterfactuals).length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {Object.entries(semanticProbe.counterfactuals).map(([key, value]) => (
+                    <div key={key} style={{ fontSize: 12 }}>
+                      <div style={{ color: "var(--text-heading)", fontWeight: 500 }}>
+                        {key.replace(/_/g, " ")}
+                      </div>
+                      <div style={{ color: "var(--text-body)" }}>{value.summary}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {qkProbe && (
+            <div style={{ background: "#FCFDFD", border: "1px solid #DBE4E8", borderRadius: 8, padding: 12 }}>
+              <div style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: 12, marginBottom: 8 }}>
+                QK Decomposition
+              </div>
+              <div style={{ color: "var(--text-body)", fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>
+                {qkProbe.summary}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 8 }}>
+                <MetricPill label="Layer" value={qkProbe.layer} />
+                <MetricPill label="Dominant" value={qkProbe.dominant_head_type} />
+                <MetricPill label="Semantic heads" value={qkProbe.semantic_head_fraction.toFixed(3)} />
+                <MetricPill label="Positional heads" value={qkProbe.positional_head_fraction.toFixed(3)} />
+              </div>
+              {qkProbe.top_heads.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {qkProbe.top_heads.map((head) => (
+                    <div key={head.head_index} style={{ fontSize: 12 }}>
+                      <div style={{ color: "var(--text-heading)", fontWeight: 500 }}>
+                        Head {head.head_index} · {head.head_type}
+                      </div>
+                      <div style={{ color: "var(--text-body)" }}>
+                        semantic corr={head.semantic_map_correlation.toFixed(3)} · positional corr={head.positional_baseline_correlation.toFixed(3)} · score={head.score.toFixed(3)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -534,6 +648,11 @@ function formatMetricValue(value: number | string) {
     return Math.abs(value) >= 1 ? value.toFixed(3) : value.toFixed(4);
   }
   return String(value);
+}
+
+function formatOptionalMetric(value: number | null | undefined) {
+  if (typeof value !== "number") return "N/A";
+  return Math.abs(value) >= 1 ? value.toFixed(3) : value.toFixed(4);
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
