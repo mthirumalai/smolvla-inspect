@@ -5,187 +5,106 @@ Inspect where a SmolVLA policy looks, what pixels actually drive its actions, an
 ![Example attention grid](assets/example_grid.png)
 *Example inspection grid for a pick-and-place episode. It combines raw attention, overlays, and gradient attribution in one view.*
 
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [What This Tool Does](#what-this-tool-does)
-- [Diagnostic Agent](#diagnostic-agent)
-- [Setup](#setup)
-- [Run](#run)
-- [Web Viewer](#web-viewer)
-- [How It Works](#how-it-works)
-- [Interpreting Results](#interpreting-results)
-- [CLI Reference](#cli-reference)
-- [Project Layout](#project-layout)
-- [Roadmap](#roadmap)
-
 ## Quick Start
 
-### 1. Install dependencies
-
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+# 1. Install
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt   # macOS: brew install ffmpeg@6 first
 
-On macOS, install FFmpeg 6 first:
-
-```bash
-brew install ffmpeg@6
-```
-
-### 2. Run a standard inspection
-
-```bash
-source .venv/bin/activate
+# 2. Basic inspection (CPU)
 ./run.sh
-```
 
-### 3. Run gradients and the web-viewer-friendly export
-
-```bash
+# 3. With gradients (GPU)
 ./run.sh --config configs/gpu.yaml
-```
 
-### 4. Run the model internals report
-
-```bash
-./run.sh --internals-only
-```
-
-Or append it to a normal run:
-
-```bash
-./run.sh --with-internals
-```
-
-### 5. Run the diagnostic agent
-
-Analyze an existing run (post-hoc mode):
-
-```bash
-./run.sh diagnose --run-dir ./outputs/your_run_folder --dataset your/dataset_id
-```
-
-Or run a full inspect + diagnose in one pass:
-
-```bash
+# 4. Diagnostic agent — "why does my model fail?"
 ./run.sh diagnose --model your/model_id --dataset your/dataset_id --episode 0
 ```
 
-See [Diagnostic Agent](#diagnostic-agent) for details.
-
-### 6. Launch the web viewer
-
-```bash
-source .venv/bin/activate
-./start_servers.sh
-```
-
-Results are written to `outputs/` by default.
+Results are written to `outputs/`. Launch the web viewer with `./start_servers.sh`.
 
 ## What This Tool Does
 
-SmolVLA is a vision-language-action policy: it takes camera images and a language instruction, then predicts robot actions. This repository gives you four practical ways to inspect that behavior:
+SmolVLA is a vision-language-action policy: it takes camera images and a language instruction, then predicts robot actions. This repository gives you four ways to inspect that behavior:
 
-| Capability | Primary flags | What it answers | Main outputs |
-|------------|---------------|-----------------|--------------|
-| Attention visualization | default, `--cross-attention`, `--show-heads` | Where does the encoder or action decoder focus? | `episode_dashboard_ep*.png`, `per_head_ep*.png` |
-| Gradient attribution | `--gradient` | Which pixels causally affect the predicted action? | extra rows in the dashboard |
-| Extended attribution | `--gradcam-connector`, `--gradcam-vlm-layers`, `--vision-vs-state`, `--per-action-dim`, `--language-diff` | How information moves through the connector, VLM, and action heads | feature-specific PNGs / reports |
-| Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved internally? | `model_internals_report.md`, `model_internals_report.png` |
-| **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? | `diagnostic/report.md`, `diagnostic/report.json` |
+| Capability | Flags | What it answers |
+|------------|-------|-----------------|
+| Attention visualization | default, `--cross-attention`, `--show-heads` | Where does the encoder or action decoder focus? |
+| Gradient attribution | `--gradient`, `--gradcam-connector`, `--per-action-dim`, etc. | Which pixels causally affect the predicted action? |
+| Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved? |
+| **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? |
 
-### Core outputs
-
-- Main grid per episode: attention, overlays, and optional gradient rows.
-- Optional per-head grid for SigLIP attention heads on the first frame.
-- Structured run directory for the web viewer when `--export-data` is enabled.
-- Model internals report covering spectral alpha, attention entropy, and head redundancy.
-
-### Model internals at a glance
-
-The internals report runs three checks across the SigLIP vision encoder, VLM text model, action expert, connector, and projection heads:
-
-1. Weight spectral analysis with WeightWatcher.
-2. Attention entropy across key attention operations.
-3. Head redundancy within each layer.
-
-Use `--internals-only` when you want just that report. Use `--with-internals` when you want it in addition to the normal attention / gradient run.
+The internals report runs spectral analysis (WeightWatcher), attention entropy, and head redundancy checks across the SigLIP encoder, VLM, action expert, connector, and projection heads.
 
 ![Example model internals report](assets/example_model_internals_report.png)
-*Example 3-panel internals report. The full markdown version lives at [assets/example_model_internals_report.md](assets/example_model_internals_report.md).*
+*Example 3-panel internals report. Full markdown version: [assets/example_model_internals_report.md](assets/example_model_internals_report.md).*
 
-For a visual walkthrough of the architecture behind these views, see [assets/architecture.md](assets/architecture.md).
+For a visual walkthrough of the architecture, see [assets/architecture.md](assets/architecture.md).
 
 ## Diagnostic Agent
 
-The diagnostic agent goes beyond visualization — it automatically answers "why does my model fail?" and "what should I fix first?" by running a full analysis pipeline:
+The diagnostic agent goes beyond visualization — it automatically answers "why does my model fail?" by running a six-stage pipeline:
 
-1. **Scene understanding** — detects task-relevant objects (OWL-ViT v2) and segments them (SAM) to create semantic regions
-2. **Diagnostic matrix** — cross-references every signal type (attention, GradCAM, saliency, etc.) against every detected region to compute attribution mass percentages
-3. **Anomaly detection** — automatically flags issues like high background attribution, spatial shortcuts, dead state pathways, attention-GradCAM divergence, and more
-4. **LLM hypothesis formation** — sends the matrix + anomalies to an LLM, which selects the most discriminating counterfactual tests to run
-5. **Counterfactual verification** — digitally perturbs the scene (swap backgrounds, relocate objects, shift lighting, recolor objects) and measures how action predictions change
-6. **Report synthesis** — produces ranked findings with evidence chains and specific, actionable fixes
+1. **Scene understanding** — detects objects (OWL-ViT v2) and segments them (SAM) to create semantic regions
+2. **Diagnostic matrix** — cross-references every signal type against every region to compute attribution mass
+3. **Anomaly detection** — flags issues like high background attribution, spatial shortcuts, dead state pathways
+4. **LLM hypothesis formation** — selects the most discriminating counterfactual tests to run
+5. **Counterfactual verification** — perturbs the scene (swap backgrounds, relocate objects, recolor, occlude) and measures action change
+6. **Report synthesis** — produces ranked findings with evidence chains and actionable fixes
 
-### Two run modes
+### Run modes
 
-**Post-hoc mode** — analyze an existing inspection run without re-loading the model:
-
-```bash
-./run.sh diagnose \
-    --run-dir ./outputs/your_run_folder \
-    --dataset your/dataset_id
-```
-
-This loads saved heatmaps from the run's NPZ files and runs scene understanding + matrix + LLM reasoning. Add `--model your/model_id` to also run counterfactual tests (requires loading the model).
-
-**Integrated mode** — run the full inspect + diagnose pipeline in one command:
+**Integrated** — full inspect + diagnose in one pass:
 
 ```bash
 ./run.sh diagnose \
-    --model your/model_id \
-    --dataset your/dataset_id \
-    --episode 0 \
-    --device cuda
+    --model your/model_id --dataset your/dataset_id --episode 0 --device cuda
 ```
+
+**Post-hoc** — analyze an existing run without re-loading the model:
+
+```bash
+./run.sh diagnose \
+    --run-dir ./outputs/your_run_folder --dataset your/dataset_id
+```
+
+Add `--model your/model_id` to also run counterfactual tests (requires the model).
 
 ### LLM configuration
-
-The diagnostic agent uses an LLM for hypothesis formation and report synthesis. Configure via environment variables:
 
 ```bash
 # Anthropic (default)
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Or OpenAI / compatible
+# OpenAI / compatible
 export SMOLVLA_LLM_PROVIDER=openai
 export SMOLVLA_LLM_MODEL=gpt-4o
 export OPENAI_API_KEY=sk-...
 
-# Or local models via Ollama/vLLM
+# Local models via Ollama/vLLM
 export SMOLVLA_LLM_PROVIDER=openai
 export SMOLVLA_LLM_MODEL=llama3
 export SMOLVLA_LLM_BASE_URL=http://localhost:11434/v1
 export SMOLVLA_LLM_API_KEY=ollama
 ```
 
-If no API key is set, the agent falls back to rule-based hypothesis generation — you still get the diagnostic matrix, anomaly detection, and counterfactual results, just without LLM-generated narrative.
+If no API key is set, the agent falls back to rule-based hypothesis generation — you still get the matrix, anomaly detection, and counterfactual results, just without LLM-generated narrative.
 
-### Extra dependencies
-
-The diagnostic agent needs two additional packages for scene understanding:
+<details>
+<summary><strong>Extra dependencies</strong></summary>
 
 ```bash
 pip install scipy
 pip install git+https://github.com/facebookresearch/segment-anything.git
 ```
 
-The SAM model checkpoint (`sam_vit_b`) is downloaded automatically to `~/.cache/smolvla_inspect/` on first use. OWL-ViT v2 loads from HuggingFace via `transformers` (already a dependency).
+The SAM checkpoint (`sam_vit_b`) is downloaded automatically to `~/.cache/smolvla_inspect/` on first use. OWL-ViT v2 loads from HuggingFace via `transformers` (already a dependency). When SAM is unavailable, the agent falls back to bounding-box masks.
 
-### Diagnostic config
+</details>
+
+<details>
+<summary><strong>Config options</strong></summary>
 
 Use `configs/diagnostic.yaml` for defaults, or pass flags directly:
 
@@ -193,7 +112,7 @@ Use `configs/diagnostic.yaml` for defaults, or pass flags directly:
 ./run.sh diagnose --config configs/diagnostic.yaml \
     --model your/model_id --dataset your/dataset_id
 
-# Control the analysis depth
+# Control analysis depth
 ./run.sh diagnose --run-dir ./outputs/run_folder --dataset your/dataset_id \
     --max-counterfactuals 5 --max-hypotheses 8
 
@@ -202,9 +121,10 @@ Use `configs/diagnostic.yaml` for defaults, or pass flags directly:
     --skip-counterfactuals
 ```
 
-### Diagnostic output
+</details>
 
-Reports are saved inside the run directory:
+<details>
+<summary><strong>Output layout</strong></summary>
 
 ```text
 run_folder/
@@ -226,11 +146,10 @@ run_folder/
     evidence_chain.json  # Full evidence log
 ```
 
-### Web viewer integration
+</details>
 
-The diagnostic is also available in the web viewer. Select a run, then click "Diagnostic Agent" in the sidebar. You can trigger a diagnostic run from the UI and view the interactive matrix, expandable findings, and counterfactual comparison images.
-
-### What it detects
+<details>
+<summary><strong>Detected anomalies</strong></summary>
 
 | Anomaly | Severity | What it means |
 |---------|----------|---------------|
@@ -242,39 +161,28 @@ The diagnostic is also available in the web viewer. Select a run, then click "Di
 | Language insensitivity | Warning | Changing the task instruction doesn't shift visual attention |
 | Unstable GradCAM | Info | Gradient attribution varies significantly across frames |
 
+</details>
+
+The diagnostic is also available in the web viewer — select a run, then click "Diagnostic Agent" in the sidebar.
+
 ## Setup
 
 ### Requirements
 
 - Python 3.10+
 - FFmpeg 4-7 for video decoding through TorchCodec
-- Node.js 20.19+ for the web viewer
+- Node.js 20.19+ for the web viewer (optional)
 
 ### macOS
 
-Install FFmpeg 6:
-
 ```bash
 brew install ffmpeg@6
-```
-
-Then install Python dependencies:
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Install Node.js if you want the web viewer:
-
-```bash
-brew install node
+brew install node   # optional, for web viewer
 ```
 
 ### Ubuntu + CUDA
-
-For an NVIDIA GPU machine, use the setup helper:
 
 ```bash
 chmod +x clone-and-setup.sh && ./clone-and-setup.sh
@@ -288,20 +196,18 @@ chmod +x setup-gpu.sh && ./setup-gpu.sh
 
 `setup-gpu.sh` installs CUDA-compatible PyTorch, creates a virtualenv, installs dependencies, and checks GPU access.
 
-### Node.js note
-
 On Ubuntu, the default `apt install nodejs` is often too old. Prefer [NodeSource](https://github.com/nodesource/distributions) or `nvm`.
 
 ## Run
 
-Use `run.sh` on macOS so TorchCodec can find FFmpeg 6:
-
 ```bash
 source .venv/bin/activate
-./run.sh
+./run.sh                              # basic inspection
+./run.sh --config configs/gpu.yaml    # with gradients
+./run.sh --internals-only             # model internals report only
 ```
 
-If you prefer calling Python directly:
+If calling Python directly (macOS):
 
 ```bash
 export DYLD_LIBRARY_PATH="/opt/homebrew/opt/ffmpeg@6/lib:$DYLD_LIBRARY_PATH"
@@ -310,41 +216,32 @@ python inspect_attention.py
 
 ### Config files
 
-Defaults come from `configs/defaults.yaml`. Use `--config` to load another config; direct CLI flags still override config values.
+Defaults come from `configs/defaults.yaml`. Use `--config` to load another; CLI flags override config values.
 
 | Config | Purpose |
 |--------|---------|
 | `configs/defaults.yaml` | Conservative CPU-friendly defaults |
-| `configs/gpu.yaml` | CUDA-oriented config with gradients and extended attribution enabled |
-| `configs/diagnostic.yaml` | Diagnostic agent defaults (scene models, hypothesis/counterfactual limits) |
+| `configs/gpu.yaml` | CUDA-oriented config with gradients and extended attribution |
+| `configs/diagnostic.yaml` | Diagnostic agent defaults |
 
-Example:
+<details>
+<summary><strong>Common commands</strong></summary>
 
-```bash
-./run.sh --config configs/gpu.yaml
-./run.sh --config configs/gpu.yaml --episode 3
-```
-
-### Common commands
-
-#### Basic attention inspection
+#### Basic attention
 
 ```bash
-./run.sh
-./run.sh --model path/to/finetuned_checkpoint --dataset path/to/dataset
+./run.sh --model path/to/checkpoint --dataset path/to/dataset
 ./run.sh --episode 3 --num-frames 12
 ./run.sh --task "pick up the red cube"
 ./run.sh --method last-layer
 ./run.sh --raw-attention
 ./run.sh --attn-threshold 0.7
-./run.sh --attn-threshold 0
 ```
 
 #### Gradient attribution
 
 ```bash
 ./run.sh --gradient
-./run.sh --gradient saliency
 ./run.sh --gradient saliency --smooth-grad 20
 ./run.sh --device mps --gradient both --gradient-device cpu
 ```
@@ -368,7 +265,9 @@ Example:
 ./run.sh --internals-only --entropy-warn 0.85 --redundancy-warn 0.75
 ```
 
-Backward-compatible aliases `--model-health` and `--health-frames` are still accepted, but `--internals-only` and `--internals-frames` are the primary names now.
+Backward-compatible aliases `--model-health` and `--health-frames` are still accepted.
+
+</details>
 
 ### Output layout
 
@@ -385,13 +284,7 @@ That structure is what the web viewer reads.
 
 ## Web Viewer
 
-The web viewer lets you:
-
-- browse generated runs and available visualizations,
-- inspect frames interactively,
-- compare runs side by side,
-- view model internals when exported,
-- attach LLM-generated analysis to runs and visualizations.
+The web viewer lets you browse runs, inspect frames interactively, compare runs side by side, view model internals, and attach LLM-generated analysis.
 
 ![Main visualization view](assets/web_viewer_main.png)
 *Browsing per-frame visualizations in the main viewer.*
@@ -410,33 +303,16 @@ source .venv/bin/activate
 ./start_servers.sh --base-dir ./my_outputs
 ```
 
-This starts:
-
-- backend on `http://localhost:8080`
-- frontend on `http://localhost:5173`
+This starts the backend on `http://localhost:8080` and frontend on `http://localhost:5173`.
 
 ### Production-style launch
 
-Build the frontend once, then serve from FastAPI:
-
 ```bash
-cd web/frontend
-npm install
-npm run build
-cd ../..
+cd web/frontend && npm install && npm run build && cd ../..
 python inspect_attention.py serve --port 8080 --base-dir ./outputs
 ```
 
-### LLM setup
-
-Set one of these before launching if you want LLM analysis:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-```
-
-### `serve` flags
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before launching if you want LLM analysis.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -449,8 +325,6 @@ export OPENAI_API_KEY=sk-...
 
 ![Architecture and attention-to-heatmap pipeline](assets/how_it_works_architecture.png)
 *Left: where attention is captured. Right: how patch attention becomes a spatial heatmap.*
-
-### Pipeline
 
 1. Load a SmolVLA policy and a LeRobot dataset.
 2. Capture self-attention from the SigLIP vision encoder.
@@ -473,8 +347,6 @@ export OPENAI_API_KEY=sk-...
 | 8 | GradCAM overlay (Connector) | `--gradcam-connector` |
 | 9 | Language-conditional diff | `--language-diff` |
 
-### Per-head grid
-
 With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 
 ![Per-head attention grid](assets/example_per_head.png)
@@ -482,7 +354,8 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 
 ## Interpreting Results
 
-### Self-attention
+<details>
+<summary><strong>Self-attention patterns</strong></summary>
 
 | Pattern | Interpretation |
 |---------|----------------|
@@ -491,7 +364,10 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 | Uniform / diffuse everywhere | weak or unfocused visual features |
 | Focus shifts sensibly over time | model is tracking task progression |
 
-### Cross-attention
+</details>
+
+<details>
+<summary><strong>Cross-attention patterns</strong></summary>
 
 | Pattern | Interpretation |
 |---------|----------------|
@@ -500,7 +376,10 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 | Self-attn diffuse but cross-attn focused | decoder is filtering noisy encoder features |
 | Self-attn focused but cross-attn diffuse | encoder is better than the decoder's use of it |
 
-### Gradient attribution
+</details>
+
+<details>
+<summary><strong>Gradient attribution patterns</strong></summary>
 
 | Pattern | Interpretation |
 |---------|----------------|
@@ -509,7 +388,10 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 | Attention focused but saliency diffuse | model may look there without using it |
 | Saliency spikes on irrelevant structure | likely shortcut or bias |
 
-### Extended attribution checks
+</details>
+
+<details>
+<summary><strong>Extended attribution checks</strong></summary>
 
 | Feature | What to look for |
 |---------|-----------------|
@@ -520,7 +402,10 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 | Per-action-dim | different joints should not all attend to identical regions |
 | Language diff | changing the instruction should move visual emphasis |
 
-### Attention vs. gradient
+</details>
+
+<details>
+<summary><strong>Attention vs. gradient</strong></summary>
 
 | Case | Meaning |
 |------|---------|
@@ -528,7 +413,10 @@ With `--show-heads`, the first frame gets a separate 12-head SigLIP grid:
 | Low attention, high gradient | subtle but causally important region |
 | High attention, high gradient | strongest evidence of behavior-driving focus |
 
-### Model internals report
+</details>
+
+<details>
+<summary><strong>Model internals thresholds</strong></summary>
 
 | Metric | Healthy | Warning | Critical |
 |--------|---------|---------|----------|
@@ -544,9 +432,9 @@ The report covers three attention components:
 | VLM+Expert Joint Self-Attn (16L, 15H) | joint prefill self-attention |
 | Expert-to-VLM Cross-Attn (16L, 8H) | action decoding cross-attention |
 
-### Split-device tip
+</details>
 
-If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
+**Split-device tip**: If MPS backward is unstable, run attention on MPS and gradients on CPU:
 
 ```bash
 ./run.sh --device mps --gradient both --gradient-device cpu
@@ -554,7 +442,8 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 
 ## CLI Reference
 
-### Diagnostic agent (`diagnose` subcommand)
+<details>
+<summary><strong>Diagnostic agent (<code>diagnose</code> subcommand)</strong></summary>
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -571,7 +460,10 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 | `--skip-counterfactuals` | off | Skip counterfactual testing entirely |
 | `--max-hypotheses` | `5` | Maximum hypotheses to generate |
 
-### General
+</details>
+
+<details>
+<summary><strong>General flags</strong></summary>
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -590,7 +482,10 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 | `--no-export-data` | off | Disable structured run export |
 | `--run-name` | timestamped | Override the generated run folder name |
 
-### Attention
+</details>
+
+<details>
+<summary><strong>Attention flags</strong></summary>
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -601,7 +496,10 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 | `--attn-threshold` | `0.5` | Zero out low attention values after normalization |
 | `--skip-attention` | `false` | Skip hook-based attention extraction and only run gradient features |
 
-### Gradients and extended attribution
+</details>
+
+<details>
+<summary><strong>Gradient and extended attribution flags</strong></summary>
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -617,7 +515,10 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 | `--per-action-dim` | `false` | Per-action-dimension GradCAM |
 | `--language-diff` | off | Compare attribution between two task prompts |
 
-### Model internals
+</details>
+
+<details>
+<summary><strong>Model internals flags</strong></summary>
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -630,7 +531,12 @@ If MPS backward is unstable or slow, run attention on MPS and gradients on CPU:
 | `--redundancy-warn` | `0.7` | High-redundancy threshold |
 | `--redundancy-critical` | `0.9` | Collapsed-redundancy threshold |
 
+</details>
+
 ## Project Layout
+
+<details>
+<summary><strong>Directory structure</strong></summary>
 
 ```text
 smolvla-inspect/
@@ -657,7 +563,8 @@ smolvla-inspect/
 │       ├── regions.py           # Region attribution scoring
 │       ├── registry.py          # Primitive registry
 │       ├── report.py            # Report generation + export
-│       └── scene.py             # Scene understanding (OWL-ViT + SAM)
+│       ├── scene.py             # Scene understanding (OWL-ViT + SAM)
+│       └── semantic_probe.py    # Semantic and QK probes
 ├── web/
 │   ├── backend/
 │   │   ├── routers/
@@ -681,6 +588,8 @@ smolvla-inspect/
 ├── requirements.txt
 └── README.md
 ```
+
+</details>
 
 ## Roadmap
 
