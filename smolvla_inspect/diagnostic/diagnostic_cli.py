@@ -10,26 +10,33 @@ import sys
 import yaml
 
 
-def add_diagnose_args(parser: argparse.ArgumentParser):
-    """Add diagnose subcommand arguments to an existing parser."""
+def add_diagnose_args(parser: argparse.ArgumentParser, defaults=None):
+    """Add diagnose subcommand arguments to an existing parser.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+    defaults : dict | None
+        Loaded YAML defaults (from ``load_defaults``).  When provided the
+        full inspection-pipeline flags are also registered so that
+        integrated mode (``--model`` + ``--dataset``) runs the complete
+        pipeline before diagnosing.
+    """
+    if defaults is None:
+        defaults = {}
+
+    # Diagnose-specific args
     parser.add_argument("--run-dir", type=str, default=None,
                         help="Path to existing run directory (post-hoc mode)")
     parser.add_argument("--model", type=str, default=None,
                         help="Model ID (HuggingFace repo or local path)")
     parser.add_argument("--dataset", type=str, default=None,
                         help="Dataset ID (HuggingFace repo or local path)")
-    parser.add_argument("--episode", type=int, default=0,
+    parser.add_argument("--episode", type=int,
+                        default=defaults.get("episode", 0),
                         help="Episode index to analyze")
-    parser.add_argument("--image-key", type=str, default=None,
-                        help="Dataset image key to use")
-    parser.add_argument("--image-map", type=str, default=None,
-                        help="Image key mapping (e.g. 'front=camera2,side=camera3')")
     parser.add_argument("--config", type=str, default=None,
                         help="Diagnostic config YAML path")
-    parser.add_argument("--device", type=str, default=None,
-                        help="Device (cuda, mps, cpu)")
-    parser.add_argument("--output-dir", type=str, default="./outputs",
-                        help="Output directory for the report")
     parser.add_argument("--max-counterfactuals", type=int, default=3,
                         help="Maximum counterfactual tests to run")
     parser.add_argument("--skip-counterfactuals", action="store_true",
@@ -37,9 +44,18 @@ def add_diagnose_args(parser: argparse.ArgumentParser):
     parser.add_argument("--max-hypotheses", type=int, default=7,
                         help="Maximum hypotheses to generate")
 
+    # Pipeline flags (shared with the main CLI).  The exclude set avoids
+    # clashes with args that diagnose already registers above.
+    from ..cli import add_pipeline_args
+    add_pipeline_args(parser, defaults, exclude={
+        "--episode",
+    })
+
 
 def diagnose_main(args: argparse.Namespace):
     """Main entry point for the diagnose subcommand."""
+    import torch
+
     # Load .env if available
     try:
         from dotenv import load_dotenv
@@ -51,22 +67,28 @@ def diagnose_main(args: argparse.Namespace):
     print("  SmolVLA Diagnostic Agent")
     print("=" * 60)
 
-    # Load config
-    config = {}
-    if args.config:
-        with open(args.config) as f:
-            config = yaml.safe_load(f) or {}
+    # Load diagnostic config
+    diag_config = {}
+    diag_config_path = args.config
+    if diag_config_path is None:
+        # Try the default diagnostic config
+        _default_diag = os.path.join(
+            os.path.dirname(__file__), os.pardir, os.pardir, "configs", "diagnostic.yaml")
+        if os.path.exists(_default_diag):
+            diag_config_path = _default_diag
+    if diag_config_path and os.path.exists(diag_config_path):
+        with open(diag_config_path) as f:
+            diag_config = yaml.safe_load(f) or {}
 
     # Override config with CLI args
-    config["max_counterfactuals"] = args.max_counterfactuals
-    config["max_hypotheses"] = args.max_hypotheses
+    diag_config["max_counterfactuals"] = args.max_counterfactuals
+    diag_config["max_hypotheses"] = args.max_hypotheses
     if args.skip_counterfactuals:
-        config["max_counterfactuals"] = 0
+        diag_config["max_counterfactuals"] = 0
 
     # Auto-detect device
     device = args.device
-    if device is None:
-        import torch
+    if device is None or device == "auto":
         if torch.cuda.is_available():
             device = "cuda"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -82,7 +104,7 @@ def diagnose_main(args: argparse.Namespace):
     existing_run_dir = args.run_dir
 
     if args.run_dir:
-        # Post-hoc mode
+        # ── Post-hoc mode ──────────────────────────────────────
         print(f"  Mode: Post-hoc analysis of {args.run_dir}")
         if not os.path.isdir(args.run_dir):
             print(f"  ERROR: Run directory not found: {args.run_dir}")
@@ -115,7 +137,7 @@ def diagnose_main(args: argparse.Namespace):
             print(f"  Loading model: {args.model}")
             policy = _load_policy(args.model, device)
     else:
-        # Integrated mode
+        # ── Integrated mode: full pipeline + diagnose ──────────
         if not args.model:
             print("  ERROR: --model is required for integrated mode (or use --run-dir for post-hoc)")
             sys.exit(1)
@@ -123,12 +145,57 @@ def diagnose_main(args: argparse.Namespace):
             print("  ERROR: --dataset is required")
             sys.exit(1)
 
-        print(f"  Mode: Integrated (inspect + diagnose)")
-        print(f"  Loading model: {args.model}")
+        print(f"  Mode: Integrated (full pipeline + diagnose)")
+
+        # --- Run the full inspection pipeline first ---
+        from ..cli import run_inspection_pipeline, load_defaults
+        from ..export import create_run_dir
+        from ..data import parse_image_map
+
+        # Force export on — the diagnostic agent reads the exported data
+        args.export_data = True
+
+        # Set up run directory
+        base_output_dir = args.output_dir
+        os.makedirs(base_output_dir, exist_ok=True)
+        run_dir = create_run_dir(base_output_dir, getattr(args, "run_name", None))
+        images_dir = os.path.join(run_dir, "images")
+        os.makedirs(images_dir, exist_ok=True)
+        args.output_dir = images_dir  # PNGs go into images/ under the run folder
+
+        # Resolve devices
+        torch_device = torch.device(device)
+        grad_device_str = getattr(args, "gradient_device", None) or device
+        grad_device = torch.device(grad_device_str)
+
+        # Ensure args.device is a string for the pipeline
+        args.device = device
+
+        # Auto-enable cross-attention if per-step is requested
+        if getattr(args, "per_step_cross_attention", False) and not getattr(args, "cross_attention", False):
+            args.cross_attention = True
+        # Auto-enable gradient if language-diff is requested
+        if getattr(args, "language_diff", None) and not getattr(args, "gradient", None):
+            args.gradient = "gradcam"
+
+        # Load model
+        print(f"\n  Loading model: {args.model}")
         policy = _load_policy(args.model, device)
 
+        # Load dataset
         print(f"  Loading dataset: {args.dataset}")
         dataset, image_key = _load_dataset(args.dataset, args.episode, args.image_key)
+
+        # Parse image map
+        image_map = parse_image_map(getattr(args, "image_map", None))
+
+        print(f"\n  Running full inspection pipeline...")
+        run_inspection_pipeline(args, policy, dataset, torch_device, grad_device, run_dir, image_map)
+
+        # Now switch to post-hoc mode for the diagnostic agent
+        existing_run_dir = run_dir
+        # Restore output_dir for the diagnostic report path
+        args.output_dir = base_output_dir
 
     if image_key is None:
         from ..data import find_image_keys
@@ -138,7 +205,7 @@ def diagnose_main(args: argparse.Namespace):
     print(f"  Image key: {image_key}")
     print(f"  Episode: {args.episode}")
 
-    # Parse image map
+    # Parse image map (for post-hoc mode; integrated mode already parsed above)
     image_map = None
     if args.image_map:
         from ..data import parse_image_map
@@ -164,11 +231,11 @@ def diagnose_main(args: argparse.Namespace):
 
     # Config summary
     print(f"\n  Config:")
-    print(f"    Max hypotheses:      {config.get('max_hypotheses', 5)}")
-    print(f"    Max counterfactuals:  {config.get('max_counterfactuals', 3)}")
-    print(f"    Max expensive signals:{config.get('max_expensive_signals', 4)}")
-    print(f"    Num frames:          {config.get('num_frames', 4)}")
-    if config.get("max_counterfactuals", 3) == 0:
+    print(f"    Max hypotheses:      {diag_config.get('max_hypotheses', 5)}")
+    print(f"    Max counterfactuals:  {diag_config.get('max_counterfactuals', 3)}")
+    print(f"    Max expensive signals:{diag_config.get('max_expensive_signals', 4)}")
+    print(f"    Num frames:          {diag_config.get('num_frames', 4)}")
+    if diag_config.get("max_counterfactuals", 3) == 0:
         print(f"    ** Counterfactuals:  SKIPPED **")
 
     print("\n" + "-" * 60)
@@ -187,7 +254,7 @@ def diagnose_main(args: argparse.Namespace):
         image_key=image_key,
         device=device,
         llm_settings=llm_settings,
-        config=config,
+        config=diag_config,
         existing_run_dir=existing_run_dir,
         output_dir=output_dir,
         image_map=image_map,

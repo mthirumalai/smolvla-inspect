@@ -4,7 +4,7 @@ model: lerobot/smolvla_base              # HuggingFace ID or local path
 dataset: lerobot/svla_so101_pickplace    # SO101 pick-and-place dataset
 episode: 0
 num_frames: 8
-device: auto                             # auto | cpu | cuda | mps
+device: cuda                             # auto | cpu | cuda | mps
 task: null                               # override task/language instruction (default: from dataset)
 output_dir: ./outputs/mthirumalai/
 save_individual: true                   # true to also save each frame separately
@@ -14,22 +14,22 @@ image_map: null                        # dataset→policy image key mapping, e.g
 method: rollout                         # last-layer | rollout | all-layers
 cross_attention: true                   # true to capture action-expert → vision cross-attention (slower)
 show_heads: true                        # true to save a per-head attention grid for the first frame
-raw_attention: false                    # true to skip positional baseline subtraction
+raw_attention: true                     # true to skip positional baseline subtraction
 attn_threshold: 0.5                    # percentile (0-1) below which attention values are zeroed
 
 # Gradient-based attribution
-gradient: null                         # null | saliency | gradcam | both
-gradient_device: cpu                  # null (same as device) | cpu | cuda | mps
+gradient: both                         # null | saliency | gradcam | both
+gradient_device: cuda                  # null (same as device) | cpu | cuda | mps
 gradient_seed: 42                      # fixed noise seed for reproducible gradient attribution
-smooth_grad: 1                         # SmoothGrad samples (1 = vanilla saliency, >1 = averaged)
+smooth_grad: 20                        # SmoothGrad samples (1 = vanilla saliency, >1 = averaged)
 smooth_grad_sigma: 0.15                # Gaussian noise std for SmoothGrad
 
 # Extended attribution features
 gradcam_connector: true
-gradcam_vlm_layers: null
+gradcam_vlm_layers: "4,8,12,16"
 per_step_cross_attention: true
 vision_vs_state: true
-per_action_dim: false
+per_action_dim: true
 language_diff: true
 
 # Data export (for web viewer)
@@ -38,7 +38,7 @@ run_name: null                         # run folder name (default: timestamped r
 
 # Model internals report
 internals_only: false
-with_internals: false
+with_internals: true
 internals_frames: 5
 entropy_warn: 0.8
 entropy_critical: 0.95
