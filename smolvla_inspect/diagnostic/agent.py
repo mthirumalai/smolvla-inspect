@@ -1121,11 +1121,15 @@ class DiagnosticAgent:
         except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM hypotheses: {e}")
 
-        # If LLM failed, generate rule-based hypotheses from anomalies
-        if not hypotheses:
-            hypotheses = self._rule_based_hypotheses(anomalies, scene)
+        # Merge rule-based hypotheses for any anomaly-test mappings the LLM missed
+        rule_based = self._rule_based_hypotheses(anomalies, scene)
+        llm_test_types = {h.test_type for h in hypotheses}
+        for rh in rule_based:
+            if rh.test_type not in llm_test_types:
+                hypotheses.append(rh)
+                llm_test_types.add(rh.test_type)
 
-        return hypotheses[:self.config.get("max_hypotheses", 5)]
+        return hypotheses[:self.config.get("max_hypotheses", 7)]
 
     def _rule_based_hypotheses(self, anomalies: list[Anomaly],
                                 scene: SceneSegmentation) -> list[Hypothesis]:

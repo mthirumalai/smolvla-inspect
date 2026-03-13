@@ -34,7 +34,7 @@ def add_diagnose_args(parser: argparse.ArgumentParser):
                         help="Maximum counterfactual tests to run")
     parser.add_argument("--skip-counterfactuals", action="store_true",
                         help="Skip counterfactual testing")
-    parser.add_argument("--max-hypotheses", type=int, default=5,
+    parser.add_argument("--max-hypotheses", type=int, default=7,
                         help="Maximum hypotheses to generate")
 
 
