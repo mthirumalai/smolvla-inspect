@@ -7,12 +7,13 @@ segmentation_model: "facebook/sam-vit-base"
 detection_confidence: 0.1
 
 # Dataset diversity analysis
-diversity_episodes: 20
+diversity_episodes: 10
 diversity_frames_per_episode: 3
 
 # Agent settings
 max_hypotheses: 5
 max_counterfactuals: 3
+max_expensive_signals: 4
 num_frames: 4
 
 # LLM settings (can also use env vars SMOLVLA_LLM_*)

@@ -174,51 +174,94 @@ class DiagnosticMatrix:
     def to_markdown(self) -> str:
         """Render the attribution matrix as a Markdown table.
 
-        Signal types are rows; regions are columns.
+        Signal types are rows; regions are columns.  Each cell shows the
+        fraction of total attribution mass that falls in that region for that
+        signal (values sum to ~1.0 across each row).
         """
+        _SIG_LABELS = {
+            "attention": "Self-attention",
+            "gradcam_siglip": "GradCAM (SigLIP)",
+            "gradcam_connector": "GradCAM (Connector)",
+            "saliency": "Saliency",
+            "cross_attention": "Cross-attention",
+        }
         lines: list[str] = []
+
+        lines.append("Each cell is the fraction of total attribution mass in that region (rows sum to 1.0).")
+        lines.append("")
         header = "| Signal \\ Region | " + " | ".join(self.regions) + " |"
-        sep = "|" + "---|" * (len(self.regions) + 1)
+        sep = "|---|" + "---|" * len(self.regions)
         lines.append(header)
         lines.append(sep)
         for sig in self.signal_types:
             row_data = self.attribution_mass.get(sig, {})
             cells = [f"{row_data.get(r, 0.0):.4f}" for r in self.regions]
-            lines.append(f"| {sig} | " + " | ".join(cells) + " |")
+            label = _SIG_LABELS.get(sig, sig)
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
 
         if self.scalars:
+            _SCALAR_HELP = {
+                "vision_share": ("Vision share",
+                                 "Fraction of gradient norm from vision vs proprioceptive state "
+                                 "(1.0 = vision-only, 0.5 = balanced). Values near 1.0 suggest "
+                                 "proprioceptive state is ignored."),
+                "positional_baseline_ratio": ("Positional baseline ratio",
+                                              "Cosine similarity between the model's attention and "
+                                              "a blank-image positional baseline (0.0 = no spatial "
+                                              "shortcut, 1.0 = pure memorized coordinates). "
+                                              "Values > 0.7 indicate spatial shortcut learning."),
+                "foreground_ratio_attn": ("Foreground ratio (attention)",
+                                          "Fraction of self-attention on foreground objects vs "
+                                          "background (1.0 = all foreground, 0.0 = all background). "
+                                          "Values < 0.3 indicate weak object grounding."),
+                "foreground_ratio_gradcam": ("Foreground ratio (GradCAM)",
+                                             "Fraction of GradCAM attribution on foreground objects "
+                                             "vs background. Values < 0.3 indicate the model's "
+                                             "causal signal is dominated by background."),
+            }
             lines.append("")
-            lines.append("**Scalars**")
+            lines.append("### Scalar Metrics")
             lines.append("")
+            lines.append("| Metric | Value | Interpretation |")
+            lines.append("|---|---|---|")
             for key, val in self.scalars.items():
-                lines.append(f"- {key}: {val}")
+                label, desc = _SCALAR_HELP.get(key, (key, ""))
+                lines.append(f"| {label} | {float(val):.4f} | {desc} |")
 
         if self.temporal_trajectories:
             lines.append("")
-            lines.append("**Temporal Trajectories**")
+            lines.append("### Temporal Trajectories")
             lines.append("")
             for t in self.temporal_trajectories:
                 lines.append(
-                    f"- {t.signal_type}: smoothness={t.smoothness:.3f}, "
-                    f"object_tracking_corr={t.object_tracking_correlation:.3f}, "
+                    f"- {t.signal_type}: smoothness={t.smoothness:.4f}, "
+                    f"object tracking correlation={t.object_tracking_correlation:.4f}, "
                     f"{len(t.frame_indices)} frames"
                 )
 
         if self.occlusion is not None:
             lines.append("")
-            lines.append("**Occlusion Sensitivity**")
+            lines.append("### Occlusion Sensitivity")
             lines.append("")
-            lines.append(f"- Patch size: {self.occlusion.patch_size}, stride: {self.occlusion.stride}")
+            lines.append(f"- Patch size: {self.occlusion.patch_size}px, stride: {self.occlusion.stride}px")
             lines.append(f"- Max delta: {self.occlusion.max_delta:.4f}, mean delta: {self.occlusion.mean_delta:.4f}")
 
         if self.connector_analysis is not None:
             ca = self.connector_analysis
             lines.append("")
-            lines.append("**Connector Bottleneck Analysis**")
+            lines.append("### Connector Bottleneck Analysis")
             lines.append("")
-            lines.append(f"- Total information loss: {ca.total_information_loss:.4f}")
+            lines.append("The pixel-shuffle connector compresses 1024 SigLIP patches into 64 VLM tokens (16x compression).")
+            lines.append("This table shows how much attribution each region retains through the connector.")
+            lines.append("")
+            lines.append("| Region | Pre-connector | Post-connector | Loss | Loss % |")
+            lines.append("|---|---|---|---|---|")
             for r, loss in ca.information_loss_per_region.items():
-                lines.append(f"  - {r}: pre={ca.pre_connector_shares.get(r, 0):.4f} → post={ca.post_connector_shares.get(r, 0):.4f} (loss={loss:.4f})")
+                pre = ca.pre_connector_shares.get(r, 0)
+                post = ca.post_connector_shares.get(r, 0)
+                loss_pct = (loss / pre * 100) if pre > 1e-6 else 0.0
+                lines.append(f"| {r} | {pre:.4f} | {post:.4f} | {loss:.4f} | {loss_pct:.1f}% |")
+            lines.append(f"| **Total** | | | **{ca.total_information_loss:.4f}** | |")
 
         return "\n".join(lines)
 
@@ -381,120 +424,269 @@ class DiagnosticReport:
         """Generate a full Markdown report."""
         sections: list[str] = []
 
-        # Title
+        # ── Title & Executive Summary ─────────────────────────────
         sections.append("# Diagnostic Report")
         sections.append("")
 
-        # Metadata
-        sections.append("## Metadata")
-        sections.append("")
-        for k, v in self.metadata.items():
-            sections.append(f"- **{k}**: {v}")
-        sections.append("")
-
-        # Scene
-        sections.append("## Scene Segmentation")
-        sections.append("")
-        sections.append(f"Image shape: {self.scene.image_shape}")
-        sections.append(f"Detected objects: {len(self.scene.objects)}")
-        sections.append("")
-        if self.scene.objects:
-            sections.append("| Label | Box | Score |")
-            sections.append("|---|---|---|")
-            for obj in self.scene.objects:
-                sections.append(f"| {obj.label} | {obj.box} | {obj.score:.3f} |")
+        # Quick severity tally at top
+        n_crit = sum(1 for f in self.findings if f.severity == "critical")
+        n_warn = sum(1 for f in self.findings if f.severity == "warning")
+        n_info = sum(1 for f in self.findings if f.severity == "info")
+        if self.findings:
+            parts = []
+            if n_crit:
+                parts.append(f"**{n_crit} critical**")
+            if n_warn:
+                parts.append(f"**{n_warn} warning{'s' if n_warn != 1 else ''}**")
+            if n_info:
+                parts.append(f"{n_info} info")
+            sections.append(f"> {', '.join(parts)} finding{'s' if len(self.findings) != 1 else ''} detected.")
             sections.append("")
 
-        # Dataset diversity
+        # ── Metadata ──────────────────────────────────────────────
+        sections.append("## Run Configuration")
+        sections.append("")
+        _META_LABELS = {
+            "task_string": "Task instruction",
+            "episode_idx": "Episode index",
+            "image_key": "Image key",
+            "device": "Compute device",
+            "post_hoc": "Post-hoc mode",
+            "model_id": "Model",
+            "dataset_id": "Dataset",
+        }
+        for k, v in self.metadata.items():
+            label = _META_LABELS.get(k, k)
+            sections.append(f"| {label} | {v} |")
+        sections.append("")
+
+        # ── Scene Segmentation ────────────────────────────────────
+        sections.append("## Scene Segmentation")
+        sections.append("")
+        h, w = self.scene.image_shape
+        sections.append(f"Image: {w} x {h} pixels")
+        sections.append("")
+        if self.scene.objects:
+            sections.append("| Object | Bounding Box (x1, y1, x2, y2) | Detection Confidence |")
+            sections.append("|---|---|---|")
+            for obj in self.scene.objects:
+                x1, y1, x2, y2 = obj.box
+                sections.append(
+                    f"| {obj.label} | ({x1}, {y1}) to ({x2}, {y2}) | {obj.score:.4f} |"
+                )
+            sections.append("")
+            sections.append(
+                "*Bounding box coordinates are in pixels, origin at top-left. "
+                "(x1, y1) is the top-left corner, (x2, y2) is the bottom-right corner. "
+                "Detection confidence is a 0\u20131 score from OWL-ViT v2; higher means "
+                "the detector is more certain the object is present.*"
+            )
+            sections.append("")
+
+        # ── Dataset Diversity ─────────────────────────────────────
         if self.dataset_diversity:
             dd = self.dataset_diversity
             sections.append("## Dataset Diversity")
             sections.append("")
-            sections.append(f"- Episodes sampled: {dd.num_episodes_sampled}")
-            sections.append(f"- Background diversity score: {dd.background_diversity_score:.3f}")
-            sections.append(f"- Mean brightness: {dd.lighting_stats.get('mean_brightness', 'N/A')}")
-            sections.append(f"- Contrast variance: {dd.lighting_stats.get('contrast_variance', 'N/A')}")
-            sections.append(f"- Unique task strings: {dd.task_string_diversity.get('unique_count', 'N/A')}")
-            sections.append(f"- Task embedding spread: {dd.task_string_diversity.get('embedding_spread', 'N/A')}")
-            sections.append("")
-            sections.append("### Object Position Stats")
-            sections.append("")
-            for obj_label, stats in dd.object_position_stats.items():
-                sections.append(f"**{obj_label}**: {stats}")
+            sections.append(f"Sampled **{dd.num_episodes_sampled}** episodes from the dataset.")
             sections.append("")
 
-        # Diagnostic matrix
+            # Diversity metrics table
+            bg_score = dd.background_diversity_score
+            brightness = dd.lighting_stats.get("mean_brightness", 0)
+            contrast = dd.lighting_stats.get("contrast_variance", 0)
+            unique_tasks = dd.task_string_diversity.get("unique_count", 0)
+            embed_spread = dd.task_string_diversity.get("embedding_spread", 0)
+
+            # Assess quality
+            def _assess_bg(s: float) -> str:
+                if s < 0.05:
+                    return "Very low — near-identical backgrounds across episodes"
+                if s < 0.2:
+                    return "Low — limited background variation"
+                if s < 0.5:
+                    return "Moderate"
+                return "Good — diverse backgrounds"
+
+            def _assess_tasks(n: int) -> str:
+                if n <= 1:
+                    return "No language diversity — memorization risk"
+                if n < 5:
+                    return "Low — limited paraphrasing"
+                return "Good"
+
+            def _assess_spread(s: float) -> str:
+                if s < 0.01:
+                    return "No semantic variation"
+                if s < 0.1:
+                    return "Low semantic diversity"
+                return "Diverse instructions"
+
+            sections.append("| Metric | Value | Assessment |")
+            sections.append("|---|---|---|")
+            sections.append(
+                f"| Background diversity | {bg_score:.4f} | {_assess_bg(bg_score)} |"
+            )
+            sections.append(
+                f"| Mean brightness | {float(brightness):.4f} | "
+                f"{'Dark' if float(brightness) < 60 else 'Normal' if float(brightness) < 150 else 'Bright'} "
+                f"(0\u2013255 scale) |"
+            )
+            sections.append(
+                f"| Contrast variance | {float(contrast):.4f} | "
+                f"{'Low' if float(contrast) < 100 else 'Normal' if float(contrast) < 500 else 'High'} "
+                f"(higher = more contrast variation) |"
+            )
+            sections.append(
+                f"| Unique task strings | {unique_tasks} | {_assess_tasks(unique_tasks)} |"
+            )
+            sections.append(
+                f"| Task embedding spread | {float(embed_spread):.4f} | {_assess_spread(float(embed_spread))} |"
+            )
+            sections.append("")
+
+            sections.append(
+                "*Background diversity (0\u20131): cosine distance between average "
+                "background patches across episodes. 0 = identical, 1 = maximally "
+                "different. Task embedding spread: standard deviation of SigLIP text "
+                "embeddings for unique task strings; 0 = all identical.*"
+            )
+            sections.append("")
+
+            # Object position stats
+            sections.append("### Object Position Variability")
+            sections.append("")
+            sections.append(
+                "Position statistics across sampled frames. Low standard deviation "
+                "(< 15px) indicates the object appears in nearly the same position "
+                "every episode — a memorization risk."
+            )
+            sections.append("")
+            sections.append("| Object | Count | Mean (x, y) | Std Dev (x, y) | Risk |")
+            sections.append("|---|---|---|---|---|")
+            for obj_label, stats in dd.object_position_stats.items():
+                count = stats.get("count", 0)
+                mx = stats.get("mean_x", 0)
+                my = stats.get("mean_y", 0)
+                sx = stats.get("std_x", 0)
+                sy = stats.get("std_y", 0)
+                risk = ""
+                if sx < 15 and sy < 15:
+                    risk = "HIGH — near-fixed position"
+                elif sx < 30 and sy < 30:
+                    risk = "Medium"
+                else:
+                    risk = "Low"
+                sections.append(
+                    f"| {obj_label} | {count} | ({mx:.1f}, {my:.1f}) | "
+                    f"({sx:.1f}, {sy:.1f}) | {risk} |"
+                )
+            sections.append("")
+
+        # ── Diagnostic Matrix ─────────────────────────────────────
         sections.append("## Diagnostic Matrix")
         sections.append("")
         sections.append(self.matrix.to_markdown())
         sections.append("")
 
-        # Anomalies
-        sections.append("## Anomalies")
+        # ── Anomalies ─────────────────────────────────────────────
+        sections.append("## Detected Anomalies")
         sections.append("")
         if self.anomalies:
+            sections.append("| Severity | Anomaly | Description |")
+            sections.append("|---|---|---|")
             for a in self.anomalies:
-                icon = {"critical": "[CRITICAL]", "warning": "[WARNING]", "info": "[INFO]"}.get(
-                    a.severity, f"[{a.severity.upper()}]"
+                icon = {"critical": "CRITICAL", "warning": "WARNING", "info": "INFO"}.get(
+                    a.severity, a.severity.upper()
                 )
-                sections.append(f"- {icon} **{a.type}**: {a.description}")
+                sections.append(f"| {icon} | {a.type} | {a.description} |")
         else:
             sections.append("No anomalies detected.")
         sections.append("")
 
-        # Hypotheses
-        sections.append("## Hypotheses")
+        # ── Hypotheses + Counterfactual Results (merged) ──────────
+        sections.append("## Hypotheses & Counterfactual Tests")
         sections.append("")
+        sections.append(
+            "Each hypothesis is a testable claim about model behavior derived from "
+            "the anomalies above. Confidence (0\u2013100%) reflects how strongly the "
+            "diagnostic evidence supports the hypothesis *before* running the "
+            "counterfactual test. The counterfactual test then attempts to confirm "
+            "or reject the hypothesis by applying a controlled perturbation (e.g., "
+            "moving an object, swapping the background) and measuring the change in "
+            "the model's predicted actions."
+        )
+        sections.append("")
+
         if self.hypotheses:
+            # Build a lookup from hypothesis_id to counterfactual result
+            cf_map = {cr.hypothesis_id: cr for cr in self.counterfactual_results}
+
             for h in self.hypotheses:
+                cr = cf_map.get(h.id)
+                if cr:
+                    verdict = "CONFIRMED" if cr.confirmed else "NOT CONFIRMED"
+                    verdict_icon = "CONFIRMED" if cr.confirmed else "NOT CONFIRMED"
+                else:
+                    verdict = "Not tested"
+                    verdict_icon = "UNTESTED"
+
                 sections.append(f"### {h.id}: {h.description}")
                 sections.append("")
-                sections.append(f"- Confidence: {h.confidence:.2f}")
-                sections.append(f"- Test type: {h.test_type}")
-                sections.append(f"- Expected if true: {h.expected_if_true}")
-                sections.append(f"- Expected if false: {h.expected_if_false}")
-                sections.append(f"- Supporting anomalies: {', '.join(h.supporting_anomalies)}")
+
+                # Summary table
+                sections.append(f"| | |")
+                sections.append(f"|---|---|")
+                sections.append(f"| **Confidence** | {h.confidence:.0%} |")
+                sections.append(f"| **Supporting anomalies** | {', '.join(h.supporting_anomalies)} |")
+                sections.append(f"| **Test type** | {h.test_type} |")
+
+                if cr:
+                    sections.append(f"| **Verdict** | **{verdict_icon}** |")
+                    sections.append(f"| **Action delta (L2)** | {cr.action_delta_l2:.4f} |")
+                    if cr.gradcam_shift > 0:
+                        sections.append(f"| **GradCAM shift** | {cr.gradcam_shift:.4f} |")
+                    if cr.attribution_shift_per_region:
+                        shifts = ", ".join(
+                            f"{k}: {v:+.4f}" for k, v in cr.attribution_shift_per_region.items()
+                        )
+                        sections.append(f"| **Attribution shifts** | {shifts} |")
+                elif h.test_type == "none":
+                    sections.append(f"| **Verdict** | Matrix evidence sufficient (no test needed) |")
+                else:
+                    reason_msg = {
+                        "skipped": "Counterfactuals skipped by user",
+                        "no_model": "No model loaded (post-hoc mode)",
+                        "budget_exhausted": "Counterfactual budget exhausted",
+                    }.get(self.cf_skip_reason, "Not run")
+                    sections.append(f"| **Verdict** | {reason_msg} |")
+
+                sections.append("")
+
+                # Expected outcomes
+                sections.append(f"- **If true**: {h.expected_if_true}")
+                sections.append(f"- **If false**: {h.expected_if_false}")
                 sections.append("")
         else:
             sections.append("No hypotheses generated.")
             sections.append("")
 
-        # Counterfactual results
-        sections.append("## Counterfactual Results")
-        sections.append("")
-        if self.counterfactual_results:
-            for cr in self.counterfactual_results:
-                status = "CONFIRMED" if cr.confirmed else "NOT CONFIRMED"
-                sections.append(f"### {cr.hypothesis_id} [{status}]")
-                sections.append("")
-                sections.append(f"- Test type: {cr.test_type}")
-                sections.append(f"- Action delta L2: {cr.action_delta_l2:.4f}")
-                sections.append(f"- GradCAM shift: {cr.gradcam_shift:.4f}")
-                sections.append(f"- Attribution shift per region: {cr.attribution_shift_per_region}")
-                sections.append("")
-        else:
-            reason_msg = {
-                "skipped": "Counterfactual tests skipped by user (--skip-counterfactuals).",
-                "no_model": "No counterfactual tests run (no model loaded — post-hoc mode).",
-                "budget_exhausted": "Counterfactual budget exhausted.",
-            }.get(self.cf_skip_reason, "No counterfactual tests run.")
-            sections.append(reason_msg)
-            sections.append("")
-
-        # Findings
-        sections.append("## Findings")
+        # ── Findings ──────────────────────────────────────────────
+        sections.append("## Findings & Recommendations")
         sections.append("")
         if self.findings:
-            for f in self.findings:
+            for i, f in enumerate(self.findings):
                 sev = f.severity.upper()
-                sections.append(f"### [{sev}] {f.title}")
+                sections.append(f"### {i+1}. [{sev}] {f.title}")
                 sections.append("")
                 sections.append(f"**Observation**: {f.observation}")
                 sections.append("")
-                sections.append(f"**Test**: {f.test_description}")
-                sections.append("")
-                sections.append(f"**Result**: {f.test_result}")
-                sections.append("")
+                if f.test_description and f.test_description != "See counterfactual results below.":
+                    sections.append(f"**Test**: {f.test_description}")
+                    sections.append("")
+                if f.test_result:
+                    sections.append(f"**Result**: {f.test_result}")
+                    sections.append("")
                 sections.append(f"**Interpretation**: {f.interpretation}")
                 sections.append("")
                 sections.append(f"**Recommended fix**: {f.fix}")
@@ -505,9 +697,9 @@ class DiagnosticReport:
             sections.append("No findings.")
             sections.append("")
 
-        # LLM synthesis
+        # ── Narrative Synthesis ───────────────────────────────────
         if self.llm_synthesis:
-            sections.append("## LLM Synthesis")
+            sections.append("## Overall Assessment")
             sections.append("")
             sections.append(self.llm_synthesis)
             sections.append("")
