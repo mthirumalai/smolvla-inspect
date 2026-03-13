@@ -66,11 +66,12 @@ Output ONLY a JSON array. Each element must have these exact keys:
 - "test_params": object (parameters for the counterfactual, or empty object for "none")
 - "expected_if_true": string
 - "expected_if_false": string
+- "confirms_on_change": boolean (true if the hypothesis is confirmed when the model's action CHANGES after the perturbation, false if confirmed when the action stays the SAME — e.g. false for weak-grounding or language-blindness hypotheses where insensitivity is the signal)
 
 Maximum 5 hypotheses, ranked by severity/confidence. Output valid JSON only, no markdown fences.
 
 Example output format (abbreviated):
-[{{"id": "h1", "description": "Model relies on background texture...", "confidence": 0.8, "supporting_anomalies": ["high_background_attribution"], "test_type": "background_substitution", "test_params": {{"replacement": "gray"}}, "expected_if_true": "Action delta > 0.05", "expected_if_false": "Action delta < 0.01"}}]"""
+[{{"id": "h1", "description": "Model relies on background texture...", "confidence": 0.8, "supporting_anomalies": ["high_background_attribution"], "test_type": "background_substitution", "test_params": {{"replacement": "gray"}}, "expected_if_true": "Action delta > 0.05", "expected_if_false": "Action delta < 0.01", "confirms_on_change": true}}, {{"id": "h2", "description": "Model ignores language instruction...", "confidence": 0.7, "supporting_anomalies": ["language_blindness"], "test_type": "task_string_swap", "test_params": {{"replacement_task": "do nothing"}}, "expected_if_true": "Action unchanged despite new instruction", "expected_if_false": "Action changes, showing language sensitivity", "confirms_on_change": false}}]"""
 
 
 SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnostic report for a vision-language-action model.

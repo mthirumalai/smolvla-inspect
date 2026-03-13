@@ -490,7 +490,18 @@ class DiagnosticAgent:
             if missing:
                 _progress("counterfactuals",
                           f"Running {len(missing)} mandatory tests for comparability: {missing}")
+                # Pick a default target object for tests that require one
+                _object_labels = [o.label for o in scene.objects] if scene and scene.objects else []
+                _default_target = _object_labels[0] if _object_labels else None
                 for test_type in missing:
+                    # Build test_params with target_object when the test requires it
+                    synth_params: dict = {}
+                    if test_type in ("object_relocation", "occlusion_targeted"):
+                        if _default_target is None:
+                            _progress("counterfactuals",
+                                      f"  Skipping {test_type}: no detected objects for target_object")
+                            continue
+                        synth_params["target_object"] = _default_target
                     # Create a synthetic hypothesis for the mandatory test
                     synth_h = Hypothesis(
                         id=f"mandatory_{test_type}",
@@ -498,7 +509,7 @@ class DiagnosticAgent:
                         confidence=0.5,
                         supporting_anomalies=[],
                         test_type=test_type,
-                        test_params={},
+                        test_params=synth_params,
                         expected_if_true="Model output changes significantly",
                         expected_if_false="Model output remains stable",
                     )
