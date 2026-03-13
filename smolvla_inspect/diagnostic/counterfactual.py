@@ -488,14 +488,12 @@ def background_substitution(
     policy.reset()
     modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
 
-    # For background sub, highlight the foreground (non-background) region
-    foreground_mask = ~bg_mask
     return _compute_result(
         baseline_actions, modified_actions,
         img_hwc, modified_hwc,
         hypothesis_id=f"background_substitution_{replacement}",
         test_type="background_substitution",
-        affected_mask=foreground_mask,
+        affected_mask=bg_mask,
         metrics={"replacement": replacement},
     )
 
@@ -660,7 +658,7 @@ def object_relocation(
         img_hwc, modified_hwc,
         hypothesis_id=f"object_relocation_{target_object}",
         test_type="object_relocation",
-        affected_mask=obj_mask,
+        affected_mask=obj_mask | moved_mask,
         metrics=metrics,
     )
 
@@ -1101,7 +1099,7 @@ def temporal_consistency(
         if first_img_hwc is None:
             first_img_hwc = img_hwc
             first_modified_hwc = modified_hwc
-            first_affected_mask = ~bg_mask  # highlight foreground
+            first_affected_mask = bg_mask
 
     # Aggregate: mean L2 delta and std of deltas across frames
     deltas_array = np.stack(per_frame_deltas, axis=0)  # (num_frames, action_dim)
