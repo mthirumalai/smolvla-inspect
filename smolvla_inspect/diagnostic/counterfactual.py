@@ -52,50 +52,61 @@ def _make_comparison(
 ) -> np.ndarray:
     """Create annotated side-by-side comparison. Both are (H, W, 3) uint8 numpy arrays.
 
-    If *mask* is provided, draws a highlight rectangle around the modified region
-    and appends a zoomed inset of original vs modified below the main comparison.
+    If *mask* is provided, dims the *unaffected* region so the affected area
+    stands out, draws a highlight rectangle, and (when the region is small
+    enough to benefit) appends a zoomed inset below the main comparison.
     """
     h, w = original_img.shape[:2]
-    top = np.concatenate([original_img.copy(), modified_img.copy()], axis=1)
+    orig_panel = original_img.copy()
+    mod_panel = modified_img.copy()
 
-    if mask is None or not mask.any():
-        return top
+    if mask is not None and mask.any():
+        clipped_mask = mask[:h, :w] if mask.shape[0] >= h else mask
+        ys, xs = np.where(clipped_mask)
 
-    # Find the bounding box of the mask
-    ys, xs = np.where(mask[:h, :w] if mask.shape[0] >= h else mask)
-    if len(ys) == 0:
-        return top
+        if len(ys) > 0:
+            # Dim the *unaffected* region so the affected area pops out.
+            # This keeps original pixel values intact in the region of interest.
+            outside = ~clipped_mask
+            orig_panel[outside] = (orig_panel[outside].astype(np.float32) * 0.4).astype(np.uint8)
+            mod_panel[outside] = (mod_panel[outside].astype(np.float32) * 0.4).astype(np.uint8)
 
-    y1, y2 = max(int(ys.min()) - zoom_padding, 0), min(int(ys.max()) + zoom_padding, h)
-    x1, x2 = max(int(xs.min()) - zoom_padding, 0), min(int(xs.max()) + zoom_padding, w)
+            y1 = max(int(ys.min()) - zoom_padding, 0)
+            y2 = min(int(ys.max()) + zoom_padding, h)
+            x1 = max(int(xs.min()) - zoom_padding, 0)
+            x2 = min(int(xs.max()) + zoom_padding, w)
 
-    # Draw rectangles on both halves (green = original, red = modified)
-    _draw_rect(top, y1, x1, y2, x2, color=(0, 255, 0), thickness=2)
-    _draw_rect(top, y1, x1 + w, y2, x2 + w, color=(255, 0, 0), thickness=2)
+            # Draw rectangles on both halves
+            top = np.concatenate([orig_panel, mod_panel], axis=1)
+            _draw_rect(top, y1, x1, y2, x2, color=(0, 255, 0), thickness=2)
+            _draw_rect(top, y1, x1 + w, y2, x2 + w, color=(255, 0, 0), thickness=2)
 
-    # Build zoomed inset row — scale crop to a readable height (min 120px)
-    crop_h = y2 - y1
-    crop_w = x2 - x1
-    if crop_h > 0 and crop_w > 0:
-        scale = max(1, 120 // crop_h)
-        orig_crop = original_img[y1:y2, x1:x2]
-        mod_crop = modified_img[y1:y2, x1:x2]
-        orig_zoom = np.repeat(np.repeat(orig_crop, scale, axis=0), scale, axis=1)
-        mod_zoom = np.repeat(np.repeat(mod_crop, scale, axis=0), scale, axis=1)
+            # Only add zoom inset when the bounding box is a small portion of
+            # the image — a full-image zoom at 1x is useless.
+            crop_h = y2 - y1
+            crop_w = x2 - x1
+            mask_area_frac = (crop_h * crop_w) / (h * w)
+            if mask_area_frac < 0.6 and crop_h > 0 and crop_w > 0:
+                scale = max(1, 120 // crop_h)
+                orig_crop = original_img[y1:y2, x1:x2]
+                mod_crop = modified_img[y1:y2, x1:x2]
+                orig_zoom = np.repeat(np.repeat(orig_crop, scale, axis=0), scale, axis=1)
+                mod_zoom = np.repeat(np.repeat(mod_crop, scale, axis=0), scale, axis=1)
 
-        # Pad zoomed crops so they match the top width
-        zoom_row = np.concatenate([orig_zoom, mod_zoom], axis=1)
-        pad_w = top.shape[1] - zoom_row.shape[1]
-        if pad_w > 0:
-            zoom_row = np.pad(zoom_row, ((0, 0), (0, pad_w), (0, 0)), constant_values=32)
-        elif pad_w < 0:
-            zoom_row = zoom_row[:, :top.shape[1]]
+                zoom_row = np.concatenate([orig_zoom, mod_zoom], axis=1)
+                pad_w = top.shape[1] - zoom_row.shape[1]
+                if pad_w > 0:
+                    zoom_row = np.pad(zoom_row, ((0, 0), (0, pad_w), (0, 0)),
+                                      constant_values=32)
+                elif pad_w < 0:
+                    zoom_row = zoom_row[:, :top.shape[1]]
 
-        # Add a 2px separator
-        sep = np.full((2, top.shape[1], 3), 128, dtype=np.uint8)
-        top = np.concatenate([top, sep, zoom_row], axis=0)
+                sep = np.full((2, top.shape[1], 3), 128, dtype=np.uint8)
+                top = np.concatenate([top, sep, zoom_row], axis=0)
 
-    return top
+            return top
+
+    return np.concatenate([orig_panel, mod_panel], axis=1)
 
 
 def _draw_rect(img: np.ndarray, y1: int, x1: int, y2: int, x2: int,

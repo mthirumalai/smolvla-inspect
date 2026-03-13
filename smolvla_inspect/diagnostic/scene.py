@@ -303,6 +303,27 @@ def _ensure_sam_checkpoint() -> str:
     return _SAM_CHECKPOINT_PATH
 
 
+def _bbox_fallback_masks(
+    detections: list[DetectedObject], h: int, w: int,
+) -> SceneSegmentation:
+    """Create rectangular masks from bounding boxes when SAM is unavailable."""
+    union_mask = np.zeros((h, w), dtype=bool)
+    objects_with_masks: list[DetectedObject] = []
+    for det in detections:
+        x1, y1, x2, y2 = det.box
+        mask = np.zeros((h, w), dtype=bool)
+        mask[max(y1, 0):min(y2, h), max(x1, 0):min(x2, w)] = True
+        objects_with_masks.append(DetectedObject(
+            label=det.label, box=det.box, score=det.score, mask=mask,
+        ))
+        union_mask |= mask
+    return SceneSegmentation(
+        objects=objects_with_masks,
+        background_mask=~union_mask,
+        image_shape=(h, w),
+    )
+
+
 @register_primitive(
     "scene.segment_scene",
     category="scene",
@@ -344,12 +365,8 @@ def segment_scene(
     try:
         from segment_anything import SamPredictor, sam_model_registry
     except ImportError:
-        print("  WARNING: segment_anything not installed. Returning detections without masks.")
-        return SceneSegmentation(
-            objects=detections,
-            background_mask=np.ones((h, w), dtype=bool),
-            image_shape=(h, w),
-        )
+        print("  WARNING: segment_anything not installed. Falling back to bounding-box masks.")
+        return _bbox_fallback_masks(detections, h, w)
 
     predictor = None
     try:
@@ -393,9 +410,10 @@ def segment_scene(
         print(f"  Background: {background_mask.sum()} px")
 
     except Exception as e:
-        print(f"  WARNING: SAM segmentation failed: {e}")
-        segmented_objects = detections
-        background_mask = np.ones((h, w), dtype=bool)
+        print(f"  WARNING: SAM segmentation failed: {e}. Falling back to bounding-box masks.")
+        fallback = _bbox_fallback_masks(detections, h, w)
+        segmented_objects = fallback.objects
+        background_mask = fallback.background_mask
 
     finally:
         # Clean up SAM from GPU
