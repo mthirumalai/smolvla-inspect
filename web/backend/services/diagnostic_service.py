@@ -35,7 +35,11 @@ def load_diagnostic_report(run_dir: Path) -> dict | None:
     if not report_path.exists():
         return None
     with open(report_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    # Handle legacy double-encoded files (string instead of dict)
+    if isinstance(data, str):
+        data = json.loads(data)
+    return data
 
 
 def load_diagnostic_matrix(run_dir: Path) -> dict | None:

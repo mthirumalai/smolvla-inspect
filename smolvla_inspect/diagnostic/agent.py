@@ -337,7 +337,10 @@ class DiagnosticAgent:
 
         # ── Phase 4: Build Diagnostic Matrix ────────────────────
         _progress("matrix", "Building diagnostic matrix...")
-        frames_for_matrix = [first_frame]
+        # Use all frames that were collected during triage (not just the first)
+        attn_heatmaps = signals.get("attention")
+        n_signal_frames = len(attn_heatmaps) if attn_heatmaps else 1
+        frames_for_matrix = list(range(n_signal_frames))
 
         matrix = build_diagnostic_matrix(
             frames=frames_for_matrix,
@@ -537,7 +540,16 @@ class DiagnosticAgent:
             "post_hoc": self.post_hoc,
         }
         try:
-            metadata["model_id"] = getattr(self.policy.config, "pretrained_model_name_or_path", "unknown") if self.policy else "none"
+            if self.policy is not None:
+                cfg = self.policy.config
+                metadata["model_id"] = (
+                    getattr(cfg, "repo_id", None)
+                    or getattr(cfg, "pretrained_model_name_or_path", None)
+                    or getattr(cfg, "_name_or_path", None)
+                    or "unknown"
+                )
+            else:
+                metadata["model_id"] = "none"
         except Exception:
             metadata["model_id"] = "unknown"
         try:
@@ -949,14 +961,18 @@ class DiagnosticAgent:
         return result
 
     def _evaluate_result(self, hypothesis: Hypothesis, result: CounterfactualResult) -> bool:
-        """Evaluate whether a counterfactual result confirms the hypothesis."""
-        # Simple heuristic: if action prediction changed significantly, the
-        # model was relying on whatever we perturbed
-        if result.action_delta_l2 > 0.02:
-            # Significant change — model was sensitive to the perturbation
-            # For most hypotheses about reliance on X, this confirms
-            return True
-        return False
+        """Evaluate whether a counterfactual result confirms the hypothesis.
+
+        Uses ``hypothesis.confirms_on_change``:
+        - True (default): confirmed when action_delta_l2 > threshold (model
+          was sensitive to the perturbation).
+        - False: confirmed when action_delta_l2 <= threshold (model was
+          *insensitive*, e.g. weak grounding or language blindness).
+        """
+        significant_change = result.action_delta_l2 > 0.02
+        if hypothesis.confirms_on_change:
+            return significant_change
+        return not significant_change
 
     async def _call_llm(self, prompt: str) -> str:
         """Call LLM via the configured provider."""
@@ -1085,6 +1101,7 @@ class DiagnosticAgent:
                     test_params=item.get("test_params", {}),
                     expected_if_true=item.get("expected_if_true", ""),
                     expected_if_false=item.get("expected_if_false", ""),
+                    confirms_on_change=item.get("confirms_on_change", True),
                 ))
             if not dict_items:
                 preview = response[:500] if len(response) > 500 else response
@@ -1139,6 +1156,7 @@ class DiagnosticAgent:
                     test_params={"target_object": target, "hue_shift": 0.5},
                     expected_if_true="Model is insensitive to object appearance changes",
                     expected_if_false="Action changes, showing some object-appearance sensitivity",
+                    confirms_on_change=False,
                 ))
             elif anomaly.type == "dead_state_pathway":
                 hypotheses.append(Hypothesis(
@@ -1172,6 +1190,7 @@ class DiagnosticAgent:
                     test_params={"target_object": target, "fill": "gray"},
                     expected_if_true="Occluding target object has minimal effect (model relies on gripper)",
                     expected_if_false="Occluding target changes actions significantly",
+                    confirms_on_change=False,
                 ))
             elif anomaly.type == "cross_attention_diffuse":
                 hypotheses.append(Hypothesis(
@@ -1194,6 +1213,7 @@ class DiagnosticAgent:
                     test_params={"replacement_task": "do nothing"},
                     expected_if_true="Changing instruction to 'do nothing' has no effect on actions",
                     expected_if_false="Actions change, suggesting some language sensitivity",
+                    confirms_on_change=False,
                 ))
             elif anomaly.type == "temporal_attention_instability":
                 hypotheses.append(Hypothesis(

@@ -119,6 +119,109 @@ def _to_uint8(img: np.ndarray) -> np.ndarray:
     return np.clip(img * 255, 0, 255).astype(np.uint8)
 
 
+_ACTION_DIM_LABELS = [
+    "x", "y", "z", "roll", "pitch", "yaw",
+    "gripper",
+]
+
+
+def _make_action_delta_chart(
+    baseline: np.ndarray,
+    modified: np.ndarray,
+    original_task: str,
+    replacement_task: str,
+    width: int = 640,
+    height: int = 400,
+) -> np.ndarray:
+    """Render a per-dimension action delta bar chart as a uint8 (H, W, 3) image.
+
+    Used for language-only perturbations where a side-by-side image comparison
+    would show two identical frames.
+    """
+    delta = modified - baseline
+    n_dims = len(delta)
+    delta_l2 = float(np.linalg.norm(delta))
+
+    # Canvas
+    img = np.full((height, width, 3), 255, dtype=np.uint8)
+
+    # Layout constants
+    margin_top = 70
+    margin_bottom = 55
+    margin_left = 60
+    margin_right = 20
+    chart_w = width - margin_left - margin_right
+    chart_h = height - margin_top - margin_bottom
+
+    # Bar geometry
+    bar_w = max(2, chart_w // max(n_dims, 1) - 2)
+    spacing = chart_w // max(n_dims, 1)
+
+    # Scale
+    max_abs = max(abs(delta.max()), abs(delta.min()), 0.01)
+    zero_y = margin_top + chart_h // 2
+
+    # Draw zero line
+    img[zero_y, margin_left:margin_left + chart_w] = (180, 180, 180)
+
+    # Draw bars
+    for i in range(n_dims):
+        x = margin_left + i * spacing + (spacing - bar_w) // 2
+        val = delta[i]
+        bar_h = int(abs(val) / max_abs * (chart_h // 2))
+        bar_h = max(bar_h, 1)
+
+        if val >= 0:
+            y1, y2 = zero_y - bar_h, zero_y
+            color = (66, 133, 244)  # blue
+        else:
+            y1, y2 = zero_y, zero_y + bar_h
+            color = (219, 68, 55)  # red
+
+        img[y1:y2, x:x + bar_w] = color
+
+        # Dim label below chart
+        label = _ACTION_DIM_LABELS[i] if i < len(_ACTION_DIM_LABELS) else str(i)
+        _draw_text_simple(img, label, x + bar_w // 2 - 3 * len(label),
+                          height - margin_bottom + 5, color=(80, 80, 80), scale=1)
+
+    # Y-axis labels
+    _draw_text_simple(img, f"+{max_abs:.3f}", margin_left - 55, margin_top, color=(80, 80, 80), scale=1)
+    _draw_text_simple(img, "0", margin_left - 15, zero_y - 4, color=(80, 80, 80), scale=1)
+    _draw_text_simple(img, f"-{max_abs:.3f}", margin_left - 55, margin_top + chart_h - 8, color=(80, 80, 80), scale=1)
+
+    # Title and task labels
+    _draw_text_simple(img, f"Task String Swap — Action Delta (L2={delta_l2:.4f})",
+                      margin_left, 10, color=(40, 40, 40), scale=1)
+    orig_label = f"Original: \"{_truncate(original_task, 60)}\""
+    repl_label = f"Replaced: \"{_truncate(replacement_task, 60)}\""
+    _draw_text_simple(img, orig_label, margin_left, 28, color=(80, 80, 80), scale=1)
+    _draw_text_simple(img, repl_label, margin_left, 44, color=(219, 68, 55), scale=1)
+
+    return img
+
+
+def _truncate(s: str, max_len: int) -> str:
+    return s if len(s) <= max_len else s[:max_len - 3] + "..."
+
+
+def _draw_text_simple(img: np.ndarray, text: str, x: int, y: int,
+                      color: tuple = (0, 0, 0), scale: int = 1):
+    """Draw text onto image using PIL (fallback: skip silently)."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        pil_img = Image.fromarray(img)
+        draw = ImageDraw.Draw(pil_img)
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12 * scale)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+        draw.text((x, y), text, fill=color, font=font)
+        img[:] = np.array(pil_img)
+    except ImportError:
+        pass  # No PIL — skip text rendering
+
+
 # ---------------------------------------------------------------------------
 # Helpers: forward pass and mask resizing
 # ---------------------------------------------------------------------------
@@ -717,14 +820,29 @@ def task_string_swap(
 
     modified_actions = actions[0, 0].cpu().numpy()
 
-    # Visual comparison — same image on both sides (no image change)
-    img_hwc = _tensor_to_hwc(sample[image_key])
+    # Resolve original task string for labelling
+    from ..data import _resolve_task_string
+    original_task = _resolve_task_string(sample, dataset)
 
-    return _compute_result(
+    # Visual: per-dimension action delta bar chart (no image comparison —
+    # the perturbation is purely linguistic)
+    comparison = _make_action_delta_chart(
         baseline_actions, modified_actions,
-        img_hwc, img_hwc,
+        original_task, replacement_task,
+    )
+
+    delta = modified_actions - baseline_actions
+    delta_l2 = float(np.linalg.norm(delta))
+
+    return CounterfactualResult(
         hypothesis_id="task_string_swap",
         test_type="task_string_swap",
+        action_delta_l2=delta_l2,
+        action_delta_per_dim=delta.tolist(),
+        gradcam_shift=0.0,
+        attribution_shift_per_region={},
+        confirmed=delta_l2 > 0.01,
+        visual_comparison=comparison,
     )
 
 

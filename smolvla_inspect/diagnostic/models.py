@@ -282,6 +282,7 @@ class Hypothesis:
     test_params: dict
     expected_if_true: str
     expected_if_false: str
+    confirms_on_change: bool = True  # False = hypothesis confirmed when action does NOT change
 
 
 @dataclass

@@ -135,7 +135,8 @@ def build_diagnostic_matrix(
 
     if vision_vs_state is not None and len(vision_vs_state) > 0:
         vision_shares = [
-            vs["vision_share"] for vs in vision_vs_state if "vision_share" in vs
+            vs["vision_share"] for vs in vision_vs_state
+            if vs is not None and "vision_share" in vs
         ]
         if vision_shares:
             scalars["vision_share"] = float(np.mean(vision_shares))
@@ -271,14 +272,16 @@ def detect_dead_state_pathway(
     vision_share = matrix.scalars.get("vision_share")
     if vision_share is None:
         return None
-    if vision_share <= 99.5:
+    # vision_share is a 0–1 fraction from gradient.py
+    if vision_share <= 0.995:
         return None
 
+    pct = vision_share * 100
     return Anomaly(
         type="dead_state_pathway",
         severity="warning",
         description=(
-            f"Vision pathway accounts for {vision_share:.1f}% of action "
+            f"Vision pathway accounts for {pct:.1f}% of action "
             f"prediction, suggesting the proprioceptive/state input is ignored."
         ),
         evidence={"vision_share": vision_share},

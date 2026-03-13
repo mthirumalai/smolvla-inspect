@@ -34,7 +34,7 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
     # 1. Full report as JSON
     report_json = report.to_json()
     with open(os.path.join(diag_dir, "report.json"), "w") as f:
-        json.dump(report_json, f, indent=2, default=_json_default)
+        f.write(report_json)
 
     # 2. Full report as Markdown
     with open(os.path.join(diag_dir, "report.md"), "w") as f:
@@ -113,12 +113,17 @@ def load_diagnostic_report(run_dir: str) -> dict | None:
     """Load a saved diagnostic report from a run directory.
 
     Returns the report JSON dict, or None if no diagnostic exists.
+    Handles legacy double-encoded files transparently.
     """
     report_path = os.path.join(run_dir, "diagnostic", "report.json")
     if not os.path.exists(report_path):
         return None
     with open(report_path) as f:
-        return json.load(f)
+        data = json.load(f)
+    # Handle legacy double-encoded files (string instead of dict)
+    if isinstance(data, str):
+        data = json.loads(data)
+    return data
 
 
 def load_diagnostic_matrix(run_dir: str) -> dict | None:
