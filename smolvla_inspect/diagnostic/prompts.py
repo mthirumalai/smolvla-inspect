@@ -28,6 +28,9 @@ HYPOTHESIS_PROMPT = """You are an expert robotics ML researcher diagnosing a vis
 **Diagnostic Matrix (attribution mass: signal type × region):**
 {matrix_markdown}
 
+**Spatial vs Object Diagnosis:**
+{spatial_object_summary}
+
 **Detected Anomalies:**
 {anomalies_json}
 
@@ -85,6 +88,9 @@ SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnos
 **Diagnostic Matrix:**
 {matrix_markdown}
 
+**Spatial vs Object Diagnosis:**
+{spatial_object_summary}
+
 **Anomalies detected:** {anomalies_summary}
 
 **Dataset diversity:** {diversity_summary}
@@ -128,7 +134,9 @@ The model shows critical dependence on background features..."""
 
 def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
                             diversity_summary: str, matrix_markdown: str,
-                            anomalies_json: str) -> str:
+                            anomalies_json: str,
+                            spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
+                            ) -> str:
     """Build the hypothesis formation prompt with all context filled in."""
     return HYPOTHESIS_PROMPT.format(
         arch_context=_ARCH_CONTEXT,
@@ -136,6 +144,7 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
         detected_objects=", ".join(detected_objects),
         diversity_summary=diversity_summary,
         matrix_markdown=matrix_markdown,
+        spatial_object_summary=spatial_object_summary,
         anomalies_json=anomalies_json,
     )
 
@@ -143,13 +152,16 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
 def build_synthesis_prompt(task_string: str, detected_objects: list[str],
                            matrix_markdown: str, anomalies_summary: str,
                            diversity_summary: str,
-                           hypotheses_with_results: str) -> str:
+                           hypotheses_with_results: str,
+                           spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
+                           ) -> str:
     """Build the synthesis/report prompt with all context filled in."""
     return SYNTHESIS_PROMPT.format(
         arch_context=_ARCH_CONTEXT,
         task_string=task_string,
         detected_objects=", ".join(detected_objects),
         matrix_markdown=matrix_markdown,
+        spatial_object_summary=spatial_object_summary,
         anomalies_summary=anomalies_summary,
         diversity_summary=diversity_summary,
         hypotheses_with_results=hypotheses_with_results,
@@ -219,6 +231,15 @@ def format_hypotheses_with_results(hypotheses, cf_results, *, skip_reason: str =
             lines.append(f"Action delta L2: {result.action_delta_l2:.4f}")
             lines.append(f"GradCAM shift: {result.gradcam_shift:.4f}")
             lines.append(f"Confirmed: {result.confirmed}")
+            metrics = result.metrics or {}
+            if metrics:
+                metric_parts = []
+                for key, value in metrics.items():
+                    if isinstance(value, float):
+                        metric_parts.append(f"{key}={value:.4f}")
+                    else:
+                        metric_parts.append(f"{key}={value}")
+                lines.append(f"Probe metrics: {', '.join(metric_parts)}")
             if result.attribution_shift_per_region:
                 shifts = ", ".join(f"{k}: {v:+.3f}" for k, v in result.attribution_shift_per_region.items())
                 lines.append(f"Attribution shifts: {shifts}")

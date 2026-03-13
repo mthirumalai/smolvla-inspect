@@ -296,12 +296,38 @@ class CounterfactualResult:
     gradcam_shift: float
     attribution_shift_per_region: dict[str, float]
     confirmed: bool
+    metrics: dict = field(default_factory=dict)
     visual_comparison: np.ndarray | None = None
 
 
 # ---------------------------------------------------------------------------
 # Evidence & findings
 # ---------------------------------------------------------------------------
+
+@dataclass
+class DiagnosticEvidence:
+    """A weighted piece of evidence for a diagnosis."""
+
+    source: str
+    score: float  # 0-1 normalized contribution
+    summary: str
+    details: dict = field(default_factory=dict)
+
+
+@dataclass
+class SpatialObjectDiagnosis:
+    """Structured diagnosis separating spatial priors from object grounding."""
+
+    target_object: str | None
+    verdict: str  # "spatial_prior" | "object_grounded" | "mixed" | "inconclusive"
+    confidence: float  # 0-1
+    spatial_score: float  # 0-1
+    object_score: float  # 0-1
+    summary: str
+    key_metrics: dict = field(default_factory=dict)
+    spatial_evidence: list[DiagnosticEvidence] = field(default_factory=list)
+    object_evidence: list[DiagnosticEvidence] = field(default_factory=list)
+
 
 @dataclass
 class EvidenceEntry:
@@ -354,6 +380,7 @@ class DiagnosticReport:
     scene: SceneSegmentation
     dataset_diversity: DatasetDiversityReport | None
     matrix: DiagnosticMatrix
+    spatial_object_diagnosis: SpatialObjectDiagnosis | None
     anomalies: list[Anomaly]
     hypotheses: list[Hypothesis]
     counterfactual_results: list[CounterfactualResult]
@@ -392,6 +419,7 @@ class DiagnosticReport:
                 "gradcam_shift": cr.gradcam_shift,
                 "attribution_shift_per_region": cr.attribution_shift_per_region,
                 "confirmed": cr.confirmed,
+                "metrics": cr.metrics,
             }
             if cr.visual_comparison is not None:
                 d["visual_comparison_shape"] = list(cr.visual_comparison.shape)
@@ -411,6 +439,11 @@ class DiagnosticReport:
             "scene": self._serialisable_scene(),
             "dataset_diversity": asdict(self.dataset_diversity) if self.dataset_diversity else None,
             "matrix": self.matrix.to_dict(),
+            "spatial_object_diagnosis": (
+                asdict(self.spatial_object_diagnosis)
+                if self.spatial_object_diagnosis
+                else None
+            ),
             "anomalies": [asdict(a) for a in self.anomalies],
             "hypotheses": [asdict(h) for h in self.hypotheses],
             "counterfactual_results": self._serialisable_counterfactuals(),
@@ -590,6 +623,48 @@ class DiagnosticReport:
         sections.append(self.matrix.to_markdown())
         sections.append("")
 
+        # ── Spatial vs Object Diagnosis ──────────────────────────
+        if self.spatial_object_diagnosis is not None:
+            diag = self.spatial_object_diagnosis
+            verdict_labels = {
+                "spatial_prior": "Primarily spatial-prior driven",
+                "object_grounded": "Primarily object-feature grounded",
+                "mixed": "Mixed strategy",
+                "inconclusive": "Inconclusive",
+            }
+            sections.append("## Spatial vs Object Learning")
+            sections.append("")
+            sections.append(diag.summary)
+            sections.append("")
+            sections.append("| Metric | Value |")
+            sections.append("|---|---|")
+            sections.append(f"| Target object | {diag.target_object or 'N/A'} |")
+            sections.append(f"| Verdict | {verdict_labels.get(diag.verdict, diag.verdict)} |")
+            sections.append(f"| Confidence | {diag.confidence:.0%} |")
+            sections.append(f"| Spatial-prior score | {diag.spatial_score:.4f} |")
+            sections.append(f"| Object-grounding score | {diag.object_score:.4f} |")
+            for key, val in diag.key_metrics.items():
+                if isinstance(val, float):
+                    rendered = f"{val:.4f}"
+                else:
+                    rendered = str(val)
+                sections.append(f"| {key.replace('_', ' ').title()} | {rendered} |")
+            sections.append("")
+
+            if diag.spatial_evidence:
+                sections.append("### Evidence For Spatial Priors")
+                sections.append("")
+                for item in diag.spatial_evidence:
+                    sections.append(f"- {item.summary} (score={item.score:.2f}, source={item.source})")
+                sections.append("")
+
+            if diag.object_evidence:
+                sections.append("### Evidence For Object Grounding")
+                sections.append("")
+                for item in diag.object_evidence:
+                    sections.append(f"- {item.summary} (score={item.score:.2f}, source={item.source})")
+                sections.append("")
+
         # ── Anomalies ─────────────────────────────────────────────
         sections.append("## Detected Anomalies")
         sections.append("")
@@ -647,6 +722,14 @@ class DiagnosticReport:
                     sections.append(f"| **Action delta (L2)** | {cr.action_delta_l2:.4f} |")
                     if cr.gradcam_shift > 0:
                         sections.append(f"| **GradCAM shift** | {cr.gradcam_shift:.4f} |")
+                    if cr.metrics:
+                        metric_parts = []
+                        for key, value in cr.metrics.items():
+                            if isinstance(value, float):
+                                metric_parts.append(f"{key}={value:.4f}")
+                            else:
+                                metric_parts.append(f"{key}={value}")
+                        sections.append(f"| **Probe metrics** | {'; '.join(metric_parts)} |")
                     if cr.attribution_shift_per_region:
                         shifts = ", ".join(
                             f"{k}: {v:+.4f}" for k, v in cr.attribution_shift_per_region.items()

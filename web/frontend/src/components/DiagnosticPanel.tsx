@@ -6,6 +6,27 @@ import CounterfactualComparison from "./CounterfactualComparison";
 
 interface DiagnosticReport {
   metadata: Record<string, unknown>;
+  spatial_object_diagnosis?: {
+    target_object: string | null;
+    verdict: string;
+    confidence: number;
+    spatial_score: number;
+    object_score: number;
+    summary: string;
+    key_metrics: Record<string, number | string>;
+    spatial_evidence: Array<{
+      source: string;
+      score: number;
+      summary: string;
+      details: Record<string, unknown>;
+    }>;
+    object_evidence: Array<{
+      source: string;
+      score: number;
+      summary: string;
+      details: Record<string, unknown>;
+    }>;
+  };
   anomalies: Array<{
     type: string;
     severity: string;
@@ -35,6 +56,7 @@ interface DiagnosticReport {
     test_type: string;
     action_delta_l2: number;
     confirmed: boolean;
+    metrics?: Record<string, number | string | boolean | number[] | string[]>;
   }>;
   llm_synthesis: string;
   scene?: {
@@ -267,6 +289,10 @@ export default function DiagnosticPanel() {
         </button>
       </div>
 
+      {report.spatial_object_diagnosis && (
+        <SpatialObjectDiagnosisCard diagnosis={report.spatial_object_diagnosis} />
+      )}
+
       {/* Scene Understanding */}
       {report.scene && report.scene.objects && report.scene.objects.length > 0 && (
         <div className="card" style={{ padding: 16 }}>
@@ -355,6 +381,7 @@ export default function DiagnosticPanel() {
                 hypothesisId={cf.hypothesis_id}
                 actionDelta={cf.action_delta_l2}
                 confirmed={cf.confirmed}
+                metrics={cf.metrics}
               />
             ))}
           </div>
@@ -395,6 +422,118 @@ export default function DiagnosticPanel() {
       )}
     </div>
   );
+}
+
+function SpatialObjectDiagnosisCard({
+  diagnosis,
+}: {
+  diagnosis: NonNullable<DiagnosticReport["spatial_object_diagnosis"]>;
+}) {
+  const verdictLabel: Record<string, string> = {
+    spatial_prior: "Spatial Prior",
+    object_grounded: "Object Grounding",
+    mixed: "Mixed Strategy",
+    inconclusive: "Inconclusive",
+  };
+
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <div>
+          <h4 style={{ color: "var(--text-heading)", marginBottom: 6, fontSize: 14 }}>
+            Spatial vs Object Learning
+          </h4>
+          <div style={{ color: "var(--text-body)", fontSize: 13, lineHeight: 1.5 }}>
+            {diagnosis.summary}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <span style={{ background: "#EDECFB", color: "#1820A0", borderRadius: 10, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
+            {verdictLabel[diagnosis.verdict] || diagnosis.verdict}
+          </span>
+          <span style={{ background: "#F3F6F7", color: "var(--text-heading)", borderRadius: 10, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
+            {Math.round(diagnosis.confidence * 100)}% confidence
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <MetricPill label="Target" value={diagnosis.target_object || "N/A"} />
+        <MetricPill label="Spatial Score" value={diagnosis.spatial_score.toFixed(3)} />
+        <MetricPill label="Object Score" value={diagnosis.object_score.toFixed(3)} />
+      </div>
+
+      {Object.keys(diagnosis.key_metrics || {}).length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: 12, marginBottom: 6 }}>
+            Key Metrics
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+            {Object.entries(diagnosis.key_metrics).map(([key, value]) => (
+              <MetricPill key={key} label={key.replace(/_/g, " ")} value={formatMetricValue(value)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+        <EvidenceList title="Evidence For Spatial Priors" items={diagnosis.spatial_evidence} emptyText="No strong spatial-prior evidence." />
+        <EvidenceList title="Evidence For Object Grounding" items={diagnosis.object_evidence} emptyText="No strong object-grounding evidence." />
+      </div>
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: "#F8FAFB", border: "1px solid #DBE4E8", borderRadius: 8, padding: "8px 10px" }}>
+      <div style={{ fontSize: 11, color: "var(--text-body)", textTransform: "uppercase", letterSpacing: 0.3 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-heading)" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceList({
+  title,
+  items,
+  emptyText,
+}: {
+  title: string;
+  items: Array<{ source: string; score: number; summary: string }>;
+  emptyText: string;
+}) {
+  return (
+    <div style={{ background: "#FCFDFD", border: "1px solid #DBE4E8", borderRadius: 8, padding: 12 }}>
+      <div style={{ fontWeight: 600, color: "var(--text-heading)", fontSize: 12, marginBottom: 8 }}>
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--text-body)" }}>{emptyText}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {items.map((item, idx) => (
+            <div key={`${item.source}-${idx}`} style={{ fontSize: 13 }}>
+              <div style={{ color: "var(--text-heading)", fontWeight: 500 }}>{item.summary}</div>
+              <div style={{ color: "var(--text-body)", fontSize: 12 }}>
+                score={item.score.toFixed(2)} · source={item.source}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatMetricValue(value: number | string) {
+  if (typeof value === "number") {
+    return Math.abs(value) >= 1 ? value.toFixed(3) : value.toFixed(4);
+  }
+  return String(value);
 }
 
 function SeverityBadge({ severity }: { severity: string }) {

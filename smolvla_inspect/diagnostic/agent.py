@@ -16,6 +16,11 @@ from .registry import REGISTRY
 from .scene import parse_task_objects, detect_objects, segment_scene, analyze_dataset_diversity
 from .regions import attribute_to_regions
 from .matrix import build_diagnostic_matrix, detect_anomalies
+from .spatial_object import (
+    build_spatial_object_diagnosis,
+    choose_target_object,
+    summarize_spatial_object_diagnosis,
+)
 from .prompts import (
     build_hypothesis_prompt, build_synthesis_prompt, build_triage_selection_prompt,
     format_diversity_summary, format_anomalies_json, format_hypotheses_with_results,
@@ -222,14 +227,15 @@ class DiagnosticAgent:
         """Run the full diagnostic pipeline."""
 
         _PHASE_LABELS = {
-            "scene_understanding": ("1/7", "Scene Understanding"),
-            "dataset_diversity":   ("2/7", "Dataset Diversity"),
-            "triage":              ("3/7", "Signal Triage"),
-            "matrix":              ("4/7", "Diagnostic Matrix"),
-            "hypothesize":         ("5/7", "Hypothesis Formation"),
-            "counterfactuals":     ("6/7", "Counterfactual Tests"),
-            "iteration":          ("6/7", "Follow-up Iteration"),
-            "synthesis":           ("7/7", "Report Synthesis"),
+            "scene_understanding": ("1/8", "Scene Understanding"),
+            "dataset_diversity":   ("2/8", "Dataset Diversity"),
+            "triage":              ("3/8", "Signal Triage"),
+            "matrix":              ("4/8", "Diagnostic Matrix"),
+            "hypothesize":         ("5/8", "Hypothesis Formation"),
+            "counterfactuals":     ("6/8", "Counterfactual Tests"),
+            "iteration":           ("6/8", "Follow-up Iteration"),
+            "disambiguation":      ("7/8", "Spatial vs Object Diagnosis"),
+            "synthesis":           ("8/8", "Report Synthesis"),
             "complete":            ("OK", "Complete"),
         }
         _run_start = time.time()
@@ -278,11 +284,20 @@ class DiagnosticAgent:
         _progress("scene_understanding", "Running segmentation...")
         scene = segment_scene(first_frame, detections, device=self.device)
         _progress("scene_understanding", f"Found {len(scene.objects)} objects, {len(scene.region_names())} regions")
+        target_object = choose_target_object(scene, object_queries)
+        if target_object:
+            _progress("scene_understanding", f"Primary manipulation target: {target_object}")
+        else:
+            _progress("scene_understanding", "Primary manipulation target: unavailable")
 
         self.evidence_log.append(EvidenceEntry(
             phase="scene_understanding",
             primitive_name="scene.segment_scene",
-            data={"regions": scene.region_names(), "num_objects": len(scene.objects)},
+            data={
+                "regions": scene.region_names(),
+                "num_objects": len(scene.objects),
+                "target_object": target_object,
+            },
         ))
 
         # ── Phase 2: Dataset Diversity Analysis ─────────────────
@@ -375,13 +390,21 @@ class DiagnosticAgent:
             data={"anomaly_types": [a.type for a in anomalies]},
         ))
 
+        preliminary_spatial_object = build_spatial_object_diagnosis(
+            matrix,
+            target_object=target_object,
+            cf_results=[],
+            dataset_diversity=diversity,
+        )
+
         # ── Phase 5: LLM Hypothesis Formation ──────────────────
         llm_label = self.llm_settings.get("provider", "rule-based")
         if not self.llm_settings.get("api_key"):
             llm_label = "rule-based (no API key)"
         _progress("hypothesize", f"Forming hypotheses via {llm_label}...")
         hypotheses = await self._form_hypotheses(
-            task_string, scene, diversity, matrix, anomalies)
+            task_string, scene, diversity, matrix, anomalies,
+            preliminary_spatial_object)
         _progress("hypothesize", f"Formed {len(hypotheses)} hypotheses:")
         for h in hypotheses:
             test_label = f" -> test: {h.test_type}" if h.test_type != "none" else " (no test needed)"
@@ -490,18 +513,15 @@ class DiagnosticAgent:
             if missing:
                 _progress("counterfactuals",
                           f"Running {len(missing)} mandatory tests for comparability: {missing}")
-                # Pick a default target object for tests that require one
-                _object_labels = [o.label for o in scene.objects] if scene and scene.objects else []
-                _default_target = _object_labels[0] if _object_labels else None
                 for test_type in missing:
                     # Build test_params with target_object when the test requires it
                     synth_params: dict = {}
                     if test_type in ("object_relocation", "occlusion_targeted"):
-                        if _default_target is None:
+                        if target_object is None:
                             _progress("counterfactuals",
                                       f"  Skipping {test_type}: no detected objects for target_object")
                             continue
-                        synth_params["target_object"] = _default_target
+                        synth_params["target_object"] = target_object
                     # Create a synthetic hypothesis for the mandatory test
                     synth_h = Hypothesis(
                         id=f"mandatory_{test_type}",
@@ -521,7 +541,7 @@ class DiagnosticAgent:
                         hypotheses.append(synth_h)
                         verdict = "CONFIRMED" if result.confirmed else "not confirmed"
                         _progress("counterfactuals",
-                                  f"  -> {verdict} (delta L2={result.action_delta_l2:.4f})")
+                              f"  -> {verdict} (delta L2={result.action_delta_l2:.4f})")
                         self.evidence_log.append(EvidenceEntry(
                             phase="counterfactual",
                             primitive_name=f"counterfactual.{test_type}",
@@ -532,11 +552,25 @@ class DiagnosticAgent:
                     except Exception as e:
                         _progress("counterfactuals", f"  -> FAILED: {e}")
 
-        # ── Phase 7: LLM Synthesis ─────────────────────────────
+        # ── Phase 7: Spatial vs Object Diagnosis ─────────────────
+        _progress("disambiguation", "Summarizing spatial priors vs object grounding...")
+        spatial_object_diagnosis = build_spatial_object_diagnosis(
+            matrix,
+            target_object=target_object,
+            cf_results=cf_results,
+            dataset_diversity=diversity,
+        )
+        _progress(
+            "disambiguation",
+            summarize_spatial_object_diagnosis(spatial_object_diagnosis),
+        )
+
+        # ── Phase 8: LLM Synthesis ─────────────────────────────
         _progress("synthesis", f"Synthesizing report via {llm_label}...")
         findings, narrative = await self._synthesize_report(
             task_string, scene, diversity, matrix, anomalies,
-            hypotheses, cf_results, cf_skip_reason=cf_skip_reason)
+            hypotheses, cf_results, spatial_object_diagnosis,
+            cf_skip_reason=cf_skip_reason)
         _progress("synthesis", f"Generated {len(findings)} findings:")
         for f in findings:
             sev_icon = {"critical": "!!", "warning": "! ", "info": "  "}.get(f.severity, "  ")
@@ -549,6 +583,7 @@ class DiagnosticAgent:
             "image_key": self.image_key,
             "device": self.device,
             "post_hoc": self.post_hoc,
+            "target_object": target_object or "unknown",
         }
         try:
             if self.policy is not None:
@@ -573,6 +608,7 @@ class DiagnosticAgent:
             scene=scene,
             dataset_diversity=diversity,
             matrix=matrix,
+            spatial_object_diagnosis=spatial_object_diagnosis,
             anomalies=anomalies,
             hypotheses=hypotheses,
             counterfactual_results=cf_results,
@@ -1084,7 +1120,8 @@ class DiagnosticAgent:
 
     async def _form_hypotheses(self, task_string: str, scene: SceneSegmentation,
                                 diversity, matrix: DiagnosticMatrix,
-                                anomalies: list[Anomaly]) -> list[Hypothesis]:
+                                anomalies: list[Anomaly],
+                                spatial_object_diagnosis=None) -> list[Hypothesis]:
         """Use LLM to form hypotheses from the diagnostic data."""
         prompt = build_hypothesis_prompt(
             task_string=task_string,
@@ -1092,6 +1129,7 @@ class DiagnosticAgent:
             diversity_summary=format_diversity_summary(diversity),
             matrix_markdown=matrix.to_markdown(),
             anomalies_json=format_anomalies_json(anomalies),
+            spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
         )
 
         response = await self._call_llm(prompt)
@@ -1122,7 +1160,11 @@ class DiagnosticAgent:
             print(f"  Warning: Failed to parse LLM hypotheses: {e}")
 
         # Merge rule-based hypotheses for any anomaly-test mappings the LLM missed
-        rule_based = self._rule_based_hypotheses(anomalies, scene)
+        rule_based = self._rule_based_hypotheses(
+            anomalies,
+            scene,
+            target_object=getattr(spatial_object_diagnosis, "target_object", None),
+        )
         llm_test_types = {h.test_type for h in hypotheses}
         for rh in rule_based:
             if rh.test_type not in llm_test_types:
@@ -1132,11 +1174,12 @@ class DiagnosticAgent:
         return hypotheses[:self.config.get("max_hypotheses", 7)]
 
     def _rule_based_hypotheses(self, anomalies: list[Anomaly],
-                                scene: SceneSegmentation) -> list[Hypothesis]:
+                                scene: SceneSegmentation,
+                                target_object: str | None = None) -> list[Hypothesis]:
         """Generate hypotheses from anomalies without LLM."""
         hypotheses = []
         target_objects = [r for r in scene.region_names() if r != "background" and r != "robot gripper"]
-        target = target_objects[0] if target_objects else "object"
+        target = target_object or (target_objects[0] if target_objects else "object")
 
         for anomaly in anomalies:
             if anomaly.type == "high_background_attribution":
@@ -1249,6 +1292,7 @@ class DiagnosticAgent:
                                   anomalies: list[Anomaly],
                                   hypotheses: list[Hypothesis],
                                   cf_results: list[CounterfactualResult],
+                                  spatial_object_diagnosis=None,
                                   cf_skip_reason: str = "",
                                   ) -> tuple[list[Finding], str]:
         """Use LLM to synthesize findings and narrative from all evidence."""
@@ -1256,6 +1300,7 @@ class DiagnosticAgent:
             task_string=task_string,
             detected_objects=scene.region_names(),
             matrix_markdown=matrix.to_markdown(),
+            spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
             anomalies_summary=format_anomalies_json(anomalies),
             diversity_summary=format_diversity_summary(diversity),
             hypotheses_with_results=format_hypotheses_with_results(
@@ -1313,19 +1358,99 @@ class DiagnosticAgent:
         # If LLM failed, generate rule-based findings
         if not findings:
             print("  Falling back to rule-based findings.")
-            findings = self._rule_based_findings(anomalies, hypotheses, cf_results)
+            findings = self._rule_based_findings(
+                anomalies,
+                hypotheses,
+                cf_results,
+                spatial_object_diagnosis=spatial_object_diagnosis,
+            )
 
         if not narrative:
-            narrative = self._rule_based_narrative(anomalies, findings)
+            narrative = self._rule_based_narrative(
+                anomalies,
+                findings,
+                spatial_object_diagnosis=spatial_object_diagnosis,
+            )
 
         return findings, narrative
 
     def _rule_based_findings(self, anomalies: list[Anomaly],
                               hypotheses: list[Hypothesis],
-                              cf_results: list[CounterfactualResult]) -> list[Finding]:
+                              cf_results: list[CounterfactualResult],
+                              spatial_object_diagnosis=None) -> list[Finding]:
         """Generate expert-quality findings without LLM, using anomaly-specific knowledge."""
         findings = []
         result_map = {r.hypothesis_id: r for r in cf_results}
+
+        if spatial_object_diagnosis is not None:
+            diag = spatial_object_diagnosis
+            verdict_titles = {
+                "spatial_prior": "Policy appears anchored to memorized spatial positions",
+                "object_grounded": "Policy appears grounded on object features",
+                "mixed": "Policy uses a mixed object-and-location strategy",
+                "inconclusive": "Spatial-vs-object verdict is inconclusive",
+            }
+            verdict_interpretations = {
+                "spatial_prior": (
+                    "The model is using location as a shortcut. It may succeed when objects remain in "
+                    "their usual positions, but it is likely to fail when object layout changes."
+                ),
+                "object_grounded": (
+                    "The model is using visual evidence from the target object itself. This is the "
+                    "desired behavior for robust generalization across positions."
+                ),
+                "mixed": (
+                    "The model has learned some object grounding, but it still retains a meaningful "
+                    "location prior. This will produce partial generalization with brittle failures at "
+                    "larger spatial shifts."
+                ),
+                "inconclusive": (
+                    "The current signals are not strong enough to cleanly determine whether the model "
+                    "is reading the object, the location, or both."
+                ),
+            }
+            verdict_fix = {
+                "spatial_prior": (
+                    "Prioritize breaking the spatial shortcut: randomize object positions, widen camera "
+                    "pose diversity, and use relocation-focused evaluations during training."
+                ),
+                "object_grounded": (
+                    "Preserve this behavior while stress-testing for edge cases: evaluate on larger "
+                    "position shifts, new object instances, and new backgrounds."
+                ),
+                "mixed": (
+                    "Reduce the remaining spatial prior without losing object grounding: train with "
+                    "larger object position variance and relocation-heavy augmentation, then re-run the "
+                    "relocation follow probe."
+                ),
+                "inconclusive": (
+                    "Collect stronger disambiguation evidence: ensure the target object is segmented "
+                    "cleanly and inspect relocation/occlusion probes on a representative episode."
+                ),
+            }
+            diag_severity = {
+                "spatial_prior": "critical",
+                "mixed": "warning",
+                "object_grounded": "info",
+                "inconclusive": "info",
+            }.get(diag.verdict, "info")
+            findings.append(Finding(
+                id=f"f{len(findings)+1}",
+                severity=diag_severity,
+                title=verdict_titles.get(diag.verdict, "Spatial-vs-object diagnosis"),
+                observation=diag.summary,
+                test_description="Combined positional-baseline, attribution, dataset-diversity, and counterfactual evidence.",
+                test_result=(
+                    f"Spatial score={diag.spatial_score:.4f}, object score={diag.object_score:.4f}, "
+                    f"confidence={diag.confidence:.0%}."
+                ),
+                interpretation=verdict_interpretations.get(diag.verdict, diag.summary),
+                fix=verdict_fix.get(diag.verdict, "Review the structured evidence and rerun the spatial-vs-object probes."),
+                expected_impact=(
+                    "Clarifies whether failures come from memorized coordinates, object recognition, or a mixed strategy."
+                ),
+                evidence_refs=[f"spatial_object:{diag.verdict}"],
+            ))
 
         # Anomaly-type → expert knowledge database
         _EXPERT_DB = {
@@ -1624,13 +1749,17 @@ class DiagnosticAgent:
         return findings
 
     def _rule_based_narrative(self, anomalies: list[Anomaly],
-                               findings: list[Finding]) -> str:
+                               findings: list[Finding],
+                               spatial_object_diagnosis=None) -> str:
         """Generate expert-quality narrative without LLM."""
         critical = [f for f in findings if f.severity == "critical"]
         warnings = [f for f in findings if f.severity == "warning"]
         info_items = [f for f in findings if f.severity == "info"]
 
         lines = ["## Diagnostic Summary\n"]
+
+        if spatial_object_diagnosis is not None:
+            lines.append(f"**Spatial vs object verdict**: {spatial_object_diagnosis.summary}\n")
 
         if critical:
             lines.append(f"**{len(critical)} critical issue(s) detected.**\n")

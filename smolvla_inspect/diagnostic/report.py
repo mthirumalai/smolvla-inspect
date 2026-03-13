@@ -63,6 +63,7 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
             "gradcam_shift": cf.gradcam_shift,
             "attribution_shift_per_region": cf.attribution_shift_per_region,
             "confirmed": cf.confirmed,
+            "metrics": cf.metrics,
         }
         with open(os.path.join(cf_dir, "result.json"), "w") as f:
             json.dump(cf_data, f, indent=2, default=_json_default)
@@ -100,6 +101,19 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
             "test_type": cf.test_type,
             "action_delta_l2": cf.action_delta_l2,
             "confirmed": cf.confirmed,
+            "metrics": cf.metrics,
+        })
+
+    if report.spatial_object_diagnosis is not None:
+        diag = report.spatial_object_diagnosis
+        evidence_data.append({
+            "phase": "disambiguation",
+            "type": "spatial_object_diagnosis",
+            "target_object": diag.target_object,
+            "verdict": diag.verdict,
+            "confidence": diag.confidence,
+            "spatial_score": diag.spatial_score,
+            "object_score": diag.object_score,
         })
 
     with open(os.path.join(diag_dir, "evidence_chain.json"), "w") as f:

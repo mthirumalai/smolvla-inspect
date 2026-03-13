@@ -226,6 +226,51 @@ def _draw_text_simple(img: np.ndarray, text: str, x: int, y: int,
 # Helpers: forward pass and mask resizing
 # ---------------------------------------------------------------------------
 
+def _resize_heatmap(heatmap: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+    """Resize a heatmap to ``target_shape``."""
+    if heatmap.shape == target_shape:
+        return heatmap
+    try:
+        from scipy.ndimage import zoom
+
+        zoom_factors = (
+            target_shape[0] / heatmap.shape[0],
+            target_shape[1] / heatmap.shape[1],
+        )
+        return zoom(heatmap, zoom_factors, order=1)
+    except ImportError:
+        row_idx = (np.arange(target_shape[0]) * heatmap.shape[0] / target_shape[0]).astype(int)
+        col_idx = (np.arange(target_shape[1]) * heatmap.shape[1] / target_shape[1]).astype(int)
+        return heatmap[np.ix_(row_idx, col_idx)]
+
+
+def _mask_share(heatmap: np.ndarray | None, mask: np.ndarray) -> float:
+    """Return the fraction of heatmap mass falling inside ``mask``."""
+    if heatmap is None:
+        return 0.0
+    hm = _resize_heatmap(np.asarray(heatmap, dtype=np.float32), mask.shape)
+    total = float(np.sum(hm))
+    if total <= 1e-12:
+        return 0.0
+    return float(np.sum(hm * mask.astype(np.float32)) / total)
+
+
+def _shift_mask(mask: np.ndarray, shift_pixels: tuple[int, int]) -> np.ndarray:
+    """Translate a binary mask by ``(dx, dy)`` with clipping."""
+    dx, dy = shift_pixels
+    h, w = mask.shape
+    shifted = np.zeros_like(mask, dtype=bool)
+
+    ys, xs = np.where(mask)
+    if len(ys) == 0:
+        return shifted
+
+    ny = ys + dy
+    nx = xs + dx
+    valid = (ny >= 0) & (ny < h) & (nx >= 0) & (nx < w)
+    shifted[ny[valid], nx[valid]] = True
+    return shifted
+
 def _get_actions(
     policy,
     sample: dict,
@@ -303,6 +348,7 @@ def _compute_result(
     hypothesis_id: str,
     test_type: str,
     affected_mask: np.ndarray | None = None,
+    metrics: dict | None = None,
 ) -> CounterfactualResult:
     """Compare baseline and modified actions, build a CounterfactualResult."""
     delta = modified_actions - baseline_actions
@@ -323,6 +369,7 @@ def _compute_result(
         gradcam_shift=0.0,
         attribution_shift_per_region={},
         confirmed=delta_l2 > 0.01,
+        metrics=metrics or {},
         visual_comparison=comparison,
     )
 
@@ -416,6 +463,7 @@ def background_substitution(
         hypothesis_id=f"background_substitution_{replacement}",
         test_type="background_substitution",
         affected_mask=foreground_mask,
+        metrics={"replacement": replacement},
     )
 
 
@@ -444,6 +492,8 @@ def object_relocation(
     image_map=None,
 ) -> CounterfactualResult:
     """Relocate *target_object* by *shift_pixels* ``(dx, dy)`` and measure action shift."""
+    from ..gradient import compute_gradcam_map
+
     # Baseline actions
     policy.reset()
     baseline_actions = _get_actions(policy, sample, dataset, image_key, device, image_map)
@@ -464,6 +514,7 @@ def object_relocation(
             gradcam_shift=0.0,
             attribution_shift_per_region={},
             confirmed=False,
+            metrics={"target_object": target_object, "shift_pixels": list(shift_pixels)},
             visual_comparison=comparison,
         )
 
@@ -507,12 +558,43 @@ def object_relocation(
     policy.reset()
     modified_actions = _get_actions(policy, new_sample, dataset, image_key, device, image_map)
 
+    # Probe whether causal focus follows the moved object or remains on the old anchor.
+    original_cam = compute_gradcam_map(
+        policy, sample, dataset, image_key, device, image_map=image_map,
+    )
+    modified_cam = compute_gradcam_map(
+        policy, new_sample, dataset, image_key, device, image_map=image_map,
+    )
+    moved_mask = _shift_mask(obj_mask, (dx, dy))
+    old_anchor_mask = obj_mask & ~moved_mask
+    moved_target_mask = moved_mask & ~obj_mask
+    if not old_anchor_mask.any():
+        old_anchor_mask = obj_mask
+    if not moved_target_mask.any():
+        moved_target_mask = moved_mask
+
+    original_target_share = _mask_share(original_cam, obj_mask)
+    old_anchor_share = _mask_share(modified_cam, old_anchor_mask)
+    moved_target_share = _mask_share(modified_cam, moved_target_mask)
+    focus_total = old_anchor_share + moved_target_share + 1e-8
+    metrics = {
+        "target_object": target_object,
+        "shift_pixels": [dx, dy],
+        "original_target_gradcam_share": original_target_share,
+        "modified_old_anchor_share": old_anchor_share,
+        "modified_new_object_share": moved_target_share,
+        "focus_follow_ratio": moved_target_share / focus_total,
+        "anchor_retention_ratio": old_anchor_share / focus_total,
+        "focus_shift_gap": moved_target_share - old_anchor_share,
+    }
+
     return _compute_result(
         baseline_actions, modified_actions,
         img_hwc, modified_hwc,
         hypothesis_id=f"object_relocation_{target_object}",
         test_type="object_relocation",
         affected_mask=obj_mask,
+        metrics=metrics,
     )
 
 
@@ -623,6 +705,7 @@ def object_recolor(
             gradcam_shift=0.0,
             attribution_shift_per_region={},
             confirmed=False,
+            metrics={"target_object": target_object, "hue_shift": hue_shift},
             visual_comparison=comparison,
         )
 
@@ -673,6 +756,7 @@ def object_recolor(
         hypothesis_id=f"object_recolor_{target_object}",
         test_type="object_recolor",
         affected_mask=obj_mask,
+        metrics={"target_object": target_object, "hue_shift": hue_shift},
     )
 
 
@@ -756,6 +840,11 @@ def distractor_insertion(
         hypothesis_id=f"distractor_insertion_{distractor_source}",
         test_type="distractor_insertion",
         affected_mask=distractor_mask,
+        metrics={
+            "position": [cx, cy],
+            "distractor_size": distractor_size,
+            "distractor_source": distractor_source,
+        },
     )
 
 
@@ -1030,6 +1119,7 @@ def occlusion_targeted(
             gradcam_shift=0.0,
             attribution_shift_per_region={},
             confirmed=False,
+            metrics={"target_object": target_object, "fill": fill},
             visual_comparison=comparison,
         )
 
@@ -1060,4 +1150,5 @@ def occlusion_targeted(
         hypothesis_id=f"occlusion_targeted_{target_object}",
         test_type="occlusion_targeted",
         affected_mask=obj_mask,
+        metrics={"target_object": target_object, "fill": fill},
     )
