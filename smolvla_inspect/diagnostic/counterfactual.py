@@ -301,7 +301,7 @@ def _semantic_region_peak(similarity_map: np.ndarray | None, region_mask: np.nda
 
 def _shift_mask(mask: np.ndarray, shift_pixels: tuple[int, int]) -> np.ndarray:
     """Translate a binary mask by ``(dx, dy)`` with clipping."""
-    dx, dy = shift_pixels
+    dx, dy = int(shift_pixels[0]), int(shift_pixels[1])
     h, w = mask.shape
     shifted = np.zeros_like(mask, dtype=bool)
 
@@ -924,8 +924,8 @@ def distractor_insertion(
     rng = np.random.RandomState(noise_seed)
 
     # Ensure distractor lands on empty background, not on an object
-    cx, cy = position
-    radius = distractor_size // 2
+    cx, cy = int(position[0]), int(position[1])
+    radius = int(distractor_size) // 2
     bg_mask = _resize_mask(segmentation.background_mask, (h, w))
     if not bg_mask[min(cy, h - 1), min(cx, w - 1)]:
         # Requested position overlaps a foreground object — find free space
