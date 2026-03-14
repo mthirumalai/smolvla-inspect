@@ -425,7 +425,7 @@ def _generate_recommendations(
 
     if low_objects:
         obj_names = ", ".join(f"{name} ({val:.1%})" for name, val in low_objects)
-        if obj_cf and obj_cf.delta > 0.05:
+        if obj_cf and obj_cf.delta is not None and obj_cf.delta > 0.05:
             recs.append(
                 f"**Object grounding improving but still weak** — "
                 f"Task objects have low attribution: {obj_names}. "
