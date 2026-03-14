@@ -698,8 +698,8 @@ def lighting_perturbation(
     dataset,
     image_key: str,
     device: str | torch.device,
-    brightness_delta: float = 0.3,
-    contrast_delta: float = 0.3,
+    brightness_delta: float = 0.6,
+    contrast_delta: float = 0.4,
     noise_seed: int = 42,
     image_map=None,
 ) -> CounterfactualResult:
@@ -708,7 +708,8 @@ def lighting_perturbation(
     Parameters
     ----------
     brightness_delta : float
-        Additive brightness shift (applied before contrast).
+        Gamma correction factor. Values < 1.0 brighten (default 0.6 gives
+        a visible but non-destructive lift); values > 1.0 darken.
     contrast_delta : float
         Contrast scaling factor applied around the per-channel mean:
         ``(pixel - mean) * (1 + contrast_delta) + mean``.
@@ -720,11 +721,11 @@ def lighting_perturbation(
     img_tensor = sample[image_key]  # (C, H, W) float [0, 1]
     img_hwc = _tensor_to_hwc(img_tensor)  # (H, W, C)
 
-    # Apply contrast around per-channel mean, then brightness shift
-    modified_hwc = img_hwc.copy()
+    # Gamma correction for brightness (preserves highlights, lifts shadows)
+    modified_hwc = np.power(img_hwc.copy(), brightness_delta)
+    # Contrast around per-channel mean
     mean = modified_hwc.mean(axis=(0, 1), keepdims=True)
     modified_hwc = (modified_hwc - mean) * (1.0 + contrast_delta) + mean
-    modified_hwc = modified_hwc + brightness_delta
     modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
 
     new_sample = _clone_sample(sample, image_key)
