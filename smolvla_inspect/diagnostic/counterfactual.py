@@ -699,7 +699,7 @@ def lighting_perturbation(
     image_key: str,
     device: str | torch.device,
     brightness_delta: float = 0.6,
-    contrast_delta: float = 0.4,
+    contrast_delta: float = 0.0,
     noise_seed: int = 42,
     image_map=None,
 ) -> CounterfactualResult:
