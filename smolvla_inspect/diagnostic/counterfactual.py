@@ -157,6 +157,11 @@ def _make_action_delta_chart(
     # Canvas
     img = np.full((height, width, 3), 255, dtype=np.uint8)
 
+    # Scale chart size for many dimensions
+    if n_dims > 15:
+        width = max(width, n_dims * 28)
+        height = max(height, 420)
+
     # Layout constants
     margin_top = 70
     margin_bottom = 55
@@ -164,6 +169,9 @@ def _make_action_delta_chart(
     margin_right = 20
     chart_w = width - margin_left - margin_right
     chart_h = height - margin_top - margin_bottom
+
+    # Recreate canvas at potentially larger size
+    img = np.full((height, width, 3), 255, dtype=np.uint8)
 
     # Bar geometry
     bar_w = max(2, chart_w // max(n_dims, 1) - 2)
@@ -192,10 +200,12 @@ def _make_action_delta_chart(
 
         img[y1:y2, x:x + bar_w] = color
 
-        # Dim label below chart
-        label = _ACTION_DIM_LABELS[i] if i < len(_ACTION_DIM_LABELS) else str(i)
-        _draw_text_simple(img, label, x + bar_w // 2 - 3 * len(label),
-                          height - margin_bottom + 5, color=(80, 80, 80), scale=1)
+        # Dim label below chart — skip some labels when bars are narrow
+        label_every = max(1, 20 // max(spacing, 1))
+        if i % label_every == 0:
+            label = _ACTION_DIM_LABELS[i] if i < len(_ACTION_DIM_LABELS) else str(i)
+            _draw_text_simple(img, label, x + bar_w // 2 - 3 * len(label),
+                              height - margin_bottom + 5, color=(80, 80, 80), scale=1)
 
     # Y-axis labels
     _draw_text_simple(img, f"+{max_abs:.3f}", margin_left - 55, margin_top, color=(80, 80, 80), scale=1)
@@ -224,10 +234,24 @@ def _draw_text_simple(img: np.ndarray, text: str, x: int, y: int,
         from PIL import Image, ImageDraw, ImageFont
         pil_img = Image.fromarray(img)
         draw = ImageDraw.Draw(pil_img)
-        try:
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 12 * scale)
-        except (OSError, IOError):
-            font = ImageFont.load_default()
+        font_size = 12 * scale
+        font = None
+        # Try common font paths across platforms
+        for font_path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNSText.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        ]:
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                break
+            except (OSError, IOError):
+                continue
+        if font is None:
+            font = ImageFont.load_default(size=font_size)
         draw.text((x, y), text, fill=color, font=font)
         img[:] = np.array(pil_img)
     except ImportError:
@@ -923,14 +947,18 @@ def distractor_insertion(
 
     rng = np.random.RandomState(noise_seed)
 
-    # Ensure distractor lands on empty background, not on an object.
-    # Use distance transform to always pick the point farthest from any
-    # foreground object, guaranteeing no overlap even with the distractor radius.
+    # Ensure distractor lands on empty background, not on an object,
+    # and the full circle fits within the image frame.
     cx, cy = int(position[0]), int(position[1])
     radius = int(distractor_size) // 2
     bg_mask = _resize_mask(segmentation.background_mask, (h, w))
     from scipy.ndimage import distance_transform_edt
     dist = distance_transform_edt(bg_mask)
+    # Zero out border region so the circle can't be placed off-frame
+    dist[:radius, :] = 0
+    dist[-radius:, :] = 0
+    dist[:, :radius] = 0
+    dist[:, -radius:] = 0
     # Only accept positions where the full distractor circle fits in background
     if dist[min(cy, h - 1), min(cx, w - 1)] < radius:
         best = np.unravel_index(np.argmax(dist), dist.shape)
