@@ -37,7 +37,7 @@ def add_diagnose_args(parser: argparse.ArgumentParser, defaults=None):
                         help="Episode index to analyze")
     parser.add_argument("--config", type=str, default=None,
                         help="Diagnostic config YAML path")
-    parser.add_argument("--max-counterfactuals", type=int, default=3,
+    parser.add_argument("--max-counterfactuals", type=int, default=7,
                         help="Maximum counterfactual tests to run")
     parser.add_argument("--skip-counterfactuals", action="store_true",
                         help="Skip counterfactual testing")
@@ -232,10 +232,10 @@ def diagnose_main(args: argparse.Namespace):
     # Config summary
     print(f"\n  Config:")
     print(f"    Max hypotheses:      {diag_config.get('max_hypotheses', 5)}")
-    print(f"    Max counterfactuals:  {diag_config.get('max_counterfactuals', 3)}")
+    print(f"    Max counterfactuals:  {diag_config.get('max_counterfactuals', 7)}")
     print(f"    Max expensive signals:{diag_config.get('max_expensive_signals', 4)}")
     print(f"    Num frames:          {diag_config.get('num_frames', 4)}")
-    if diag_config.get("max_counterfactuals", 3) == 0:
+    if diag_config.get("max_counterfactuals", 7) == 0:
         print(f"    ** Counterfactuals:  SKIPPED **")
 
     print("\n" + "-" * 60)

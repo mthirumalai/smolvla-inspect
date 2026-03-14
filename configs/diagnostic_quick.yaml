@@ -9,6 +9,6 @@ diversity_frames_per_episode: 2
 
 # Agent settings
 max_hypotheses: 5
-max_counterfactuals: 3
+max_counterfactuals: 7
 max_expensive_signals: 3
 num_frames: 2

@@ -450,7 +450,7 @@ class DiagnosticAgent:
 
         # ── Phase 6: Run Agent-Chosen Counterfactuals ───────────
         cf_results: list[CounterfactualResult] = []
-        max_cf = self.config.get("max_counterfactuals", 3)
+        max_cf = self.config.get("max_counterfactuals", 7)
         cf_skip_reason = ""  # tracks why counterfactuals weren't run
 
         if max_cf <= 0:

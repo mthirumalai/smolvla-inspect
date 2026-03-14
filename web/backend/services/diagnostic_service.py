@@ -85,7 +85,7 @@ async def run_diagnostic_async(
     run_dir: Path,
     dataset_id: str | None = None,
     model_id: str | None = None,
-    max_counterfactuals: int = 3,
+    max_counterfactuals: int = 7,
     skip_counterfactuals: bool = False,
     settings: Settings | None = None,
 ):
