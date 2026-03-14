@@ -677,7 +677,16 @@ class DiagnosticAgent:
             "occlusion_targeted",
         ])
         if self.policy is not None and max_cf > 0:
-            already_run = {r.test_type for r in cf_results}
+            # For object-specific tests, only count as "already run" if the
+            # correct target was used (not e.g. gripper instead of lego block).
+            _object_specific_tests = {"object_relocation", "occlusion_targeted"}
+            already_run: set[str] = set()
+            for r in cf_results:
+                if r.test_type in _object_specific_tests:
+                    used_target = (r.metrics or {}).get("target_object", "")
+                    if target_object and used_target != target_object:
+                        continue  # wrong target — still needs mandatory run
+                already_run.add(r.test_type)
             missing = [t for t in _mandatory_cf_tests if t not in already_run]
             if missing:
                 _progress("counterfactuals",

@@ -923,15 +923,16 @@ def distractor_insertion(
 
     rng = np.random.RandomState(noise_seed)
 
-    # Ensure distractor lands on empty background, not on an object
+    # Ensure distractor lands on empty background, not on an object.
+    # Use distance transform to always pick the point farthest from any
+    # foreground object, guaranteeing no overlap even with the distractor radius.
     cx, cy = int(position[0]), int(position[1])
     radius = int(distractor_size) // 2
     bg_mask = _resize_mask(segmentation.background_mask, (h, w))
-    if not bg_mask[min(cy, h - 1), min(cx, w - 1)]:
-        # Requested position overlaps a foreground object — find free space
-        from scipy.ndimage import distance_transform_edt
-        dist = distance_transform_edt(bg_mask)
-        # Pick the point farthest from any foreground object
+    from scipy.ndimage import distance_transform_edt
+    dist = distance_transform_edt(bg_mask)
+    # Only accept positions where the full distractor circle fits in background
+    if dist[min(cy, h - 1), min(cx, w - 1)] < radius:
         best = np.unravel_index(np.argmax(dist), dist.shape)
         cy, cx = int(best[0]), int(best[1])
         print(f"  Distractor relocated to empty region at ({cx}, {cy})")
