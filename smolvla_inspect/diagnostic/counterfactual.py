@@ -710,7 +710,8 @@ def lighting_perturbation(
     brightness_delta : float
         Additive brightness shift (applied before contrast).
     contrast_delta : float
-        Multiplicative contrast factor: ``image * (1 + contrast_delta)``.
+        Contrast scaling factor applied around the per-channel mean:
+        ``(pixel - mean) * (1 + contrast_delta) + mean``.
     """
     # Baseline actions
     policy.reset()
@@ -719,10 +720,11 @@ def lighting_perturbation(
     img_tensor = sample[image_key]  # (C, H, W) float [0, 1]
     img_hwc = _tensor_to_hwc(img_tensor)  # (H, W, C)
 
-    # Apply brightness and contrast shift
+    # Apply contrast around per-channel mean, then brightness shift
     modified_hwc = img_hwc.copy()
+    mean = modified_hwc.mean(axis=(0, 1), keepdims=True)
+    modified_hwc = (modified_hwc - mean) * (1.0 + contrast_delta) + mean
     modified_hwc = modified_hwc + brightness_delta
-    modified_hwc = modified_hwc * (1.0 + contrast_delta)
     modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
 
     new_sample = _clone_sample(sample, image_key)
@@ -798,18 +800,23 @@ def object_recolor(
     modified_hwc = img_hwc.copy()
 
     # Convert masked region to HSV, shift hue, convert back.
-    # If the object has low saturation (near-gray), also boost saturation
-    # so the color change is actually visible and tests appearance sensitivity.
+    # If the object has low saturation (near-gray/white), per-pixel hue values
+    # are essentially noise. In that case, assign a uniform target hue so the
+    # recolor looks like a clean color change rather than a rainbow artifact.
+    _LOW_SAT_THRESHOLD = 0.15
     _MIN_SATURATION = 0.5
     try:
         import matplotlib.colors as mcolors
 
         masked_rgb = modified_hwc[obj_mask]  # (N, 3) float [0, 1]
         hsv = mcolors.rgb_to_hsv(masked_rgb)
-        hsv[:, 0] = (hsv[:, 0] + hue_shift) % 1.0
-        # Ensure enough saturation for the hue change to be visible
+        median_sat = float(np.median(hsv[:, 1]))
+        if median_sat < _LOW_SAT_THRESHOLD:
+            # Low-saturation object: assign uniform hue to avoid rainbow noise
+            hsv[:, 0] = hue_shift % 1.0
+        else:
+            hsv[:, 0] = (hsv[:, 0] + hue_shift) % 1.0
         hsv[:, 1] = np.maximum(hsv[:, 1], _MIN_SATURATION)
-        # Ensure enough brightness for the color to be visible
         hsv[:, 2] = np.maximum(hsv[:, 2], 0.4)
         rgb_shifted = mcolors.hsv_to_rgb(hsv)
         modified_hwc[obj_mask] = rgb_shifted
@@ -817,10 +824,17 @@ def object_recolor(
         import colorsys
 
         ys, xs = np.where(obj_mask)
+        # Check median saturation to decide uniform vs per-pixel hue
+        sat_vals = []
+        for y, x in zip(ys, xs):
+            r, g, b = modified_hwc[y, x, 0], modified_hwc[y, x, 1], modified_hwc[y, x, 2]
+            _, s_val, _ = colorsys.rgb_to_hsv(float(r), float(g), float(b))
+            sat_vals.append(s_val)
+        low_sat = float(np.median(sat_vals)) < _LOW_SAT_THRESHOLD if sat_vals else True
         for y, x in zip(ys, xs):
             r, g, b = modified_hwc[y, x, 0], modified_hwc[y, x, 1], modified_hwc[y, x, 2]
             h_val, s_val, v_val = colorsys.rgb_to_hsv(float(r), float(g), float(b))
-            h_val = (h_val + hue_shift) % 1.0
+            h_val = (hue_shift % 1.0) if low_sat else (h_val + hue_shift) % 1.0
             s_val = max(s_val, _MIN_SATURATION)
             v_val = max(v_val, 0.4)
             r2, g2, b2 = colorsys.hsv_to_rgb(h_val, s_val, v_val)
