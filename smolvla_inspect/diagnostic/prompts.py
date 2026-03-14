@@ -41,23 +41,7 @@ HYPOTHESIS_PROMPT = """You are an expert robotics ML researcher diagnosing a vis
 {anomalies_json}
 
 **Available counterfactual tests:**
-- background_substitution: Replace background with gray/noise/blur. Tests if model relies on background features.
-  Params: {{replacement: "gray"|"noise"|"blur"}}
-- object_relocation: Digitally move an object to a different position. Tests if model tracks objects or uses spatial shortcuts.
-  Params: {{target_object: str, shift_pixels: [dx, dy]}}
-- lighting_perturbation: Shift brightness/contrast. Tests lighting robustness.
-  Params: {{brightness_delta: float, contrast_delta: float}}
-- object_recolor: Change object color via HSV shift. Tests if model uses color cues.
-  Params: {{target_object: str, hue_shift: float}}
-- distractor_insertion: Insert a novel distractor object at a given position. Tests if model is robust to out-of-distribution objects.
-  Params: {{position: [x, y], distractor_size: int, distractor_source: "synthetic"|"noise"}}
-- task_string_swap: Replace the language instruction with a different one. Tests if model actually uses language conditioning.
-  Params: {{replacement_task: str}}
-- occlusion_targeted: Completely occlude a specific object with gray or noise fill. Tests if model can act without seeing the target.
-  Params: {{target_object: str, fill: "gray"|"noise"}}
-- temporal_consistency: Apply a perturbation across multiple frames and check coherence of action sequence response.
-  Params: {{perturbation_type: "background_substitution", num_frames: int}}
-- none: No test needed — hypothesis is already well-supported by the matrix data alone.
+__COUNTERFACTUAL_TESTS__
 
 For each hypothesis, provide:
 1. A clear description of what you hypothesize and why (cite specific matrix values and anomalies)
@@ -152,7 +136,8 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
                             qk_probe_summary: str = "QK decomposition unavailable.",
                             ) -> str:
     """Build the hypothesis formation prompt with all context filled in."""
-    return HYPOTHESIS_PROMPT.format(
+    from .registry import format_counterfactual_prompt_section
+    prompt = HYPOTHESIS_PROMPT.format(
         arch_context=_ARCH_CONTEXT,
         task_string=task_string,
         detected_objects=", ".join(detected_objects),
@@ -163,6 +148,8 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
         qk_probe_summary=qk_probe_summary,
         anomalies_json=anomalies_json,
     )
+    prompt = prompt.replace("__COUNTERFACTUAL_TESTS__", format_counterfactual_prompt_section())
+    return prompt
 
 
 def build_synthesis_prompt(task_string: str, detected_objects: list[str],
@@ -299,14 +286,7 @@ TRIAGE_SELECTION_PROMPT = """You are an expert robotics ML researcher. Based on 
 {cheap_signals_summary}
 
 **Available expensive signals (each has a compute cost):**
-- gradcam_siglip: GradCAM on SigLIP last encoder layer. Causal attribution at patch level. Cost: ~30s/frame.
-- saliency: Input-pixel gradient saliency map. Causal attribution at pixel level. Cost: ~30s/frame.
-- per_action_dim_gradcam: Separate GradCAM per action dimension (x, y, z, rotation, gripper). Shows what each action dim attends to. Cost: ~2min/frame.
-- connector_analysis: Compare pre/post connector attribution to find information bottleneck losses. Cost: ~1min.
-- vision_vs_state: Gradient ratio between vision and proprioceptive state inputs. Cost: ~30s.
-- occlusion_sensitivity: Slide gray patch across image, measure action delta at each position. Ground-truth causal map. Cost: ~5min.
-- temporal_trajectory: Track attention centroid across full episode, measure smoothness and object tracking. Cost: ~2min.
-- language_diff: Compare GradCAM under original vs alternative task string. Cost: ~1min.
+__EXPENSIVE_SIGNALS__
 
 **Budget:** Select at most {max_signals} expensive signals. Prioritise signals that would best diagnose potential issues visible in the cheap signals.
 
@@ -321,10 +301,13 @@ def build_triage_selection_prompt(
     max_signals: int = 4,
 ) -> str:
     """Build the adaptive triage selection prompt."""
-    return TRIAGE_SELECTION_PROMPT.format(
+    from .registry import format_signals_prompt_section
+    prompt = TRIAGE_SELECTION_PROMPT.format(
         arch_context=_ARCH_CONTEXT,
         task_string=task_string,
         detected_objects=", ".join(detected_objects),
         cheap_signals_summary=cheap_signals_summary,
         max_signals=max_signals,
     )
+    prompt = prompt.replace("__EXPENSIVE_SIGNALS__", format_signals_prompt_section())
+    return prompt

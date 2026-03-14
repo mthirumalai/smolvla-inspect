@@ -12,7 +12,7 @@ from .models import (
     DiagnosticReport, DiagnosticMatrix, Hypothesis, CounterfactualResult,
     EvidenceEntry, Finding, SceneSegmentation, DatasetDiversityReport, Anomaly,
 )
-from .registry import REGISTRY
+from .registry import REGISTRY, register_signal
 from .scene import parse_task_objects, detect_objects, segment_scene, analyze_dataset_diversity
 from .regions import attribute_to_regions
 from .matrix import build_diagnostic_matrix, detect_anomalies
@@ -210,6 +210,133 @@ def _parse_objects_individually(blob: str) -> list[dict]:
                     pass
                 start = None
     return objects
+
+
+# ---------------------------------------------------------------------------
+# Registered expensive signal runners
+# ---------------------------------------------------------------------------
+
+@register_signal(
+    "gradcam_siglip",
+    cost_description="~30s/frame",
+    prompt_description="GradCAM on SigLIP last encoder layer. Causal attribution at patch level",
+)
+def _signal_gradcam_siglip(agent, sample, signals, scene=None):
+    from ..gradient import compute_gradcam_map
+    cam = compute_gradcam_map(
+        agent.policy, sample, agent.dataset, agent.image_key,
+        agent.device, image_map=agent.image_map)
+    if cam is not None:
+        signals["gradcam_siglip"] = [cam]
+
+
+@register_signal(
+    "saliency",
+    cost_description="~30s/frame",
+    prompt_description="Input-pixel gradient saliency map. Causal attribution at pixel level",
+)
+def _signal_saliency(agent, sample, signals, scene=None):
+    from ..gradient import compute_saliency_map
+    sal = compute_saliency_map(
+        agent.policy, sample, agent.dataset, agent.image_key,
+        agent.device, image_map=agent.image_map)
+    if sal is not None:
+        signals["saliency"] = [sal]
+
+
+@register_signal(
+    "vision_vs_state",
+    cost_description="~30s",
+    prompt_description="Gradient ratio between vision and proprioceptive state inputs",
+)
+def _signal_vision_vs_state(agent, sample, signals, scene=None):
+    from ..gradient import compute_vision_vs_state_ratio
+    vs = compute_vision_vs_state_ratio(
+        agent.policy, sample, agent.dataset, agent.image_key,
+        agent.device, image_map=agent.image_map)
+    if vs is not None:
+        signals["vision_vs_state"] = [vs]
+
+
+@register_signal(
+    "per_action_dim_gradcam",
+    cost_description="~2min/frame",
+    prompt_description="Separate GradCAM per action dimension (x, y, z, rotation, gripper). Shows what each action dim attends to",
+)
+def _signal_per_action_dim_gradcam(agent, sample, signals, scene=None):
+    from ..gradient import compute_per_action_dim_gradcam
+    result = compute_per_action_dim_gradcam(
+        agent.policy, sample, agent.dataset, agent.image_key,
+        agent.device, image_map=agent.image_map)
+    if result is not None:
+        dim_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
+        per_dim = {}
+        for i, cam in enumerate(result["maps"]):
+            name = dim_names[i] if i < len(dim_names) else f"dim_{i}"
+            per_dim[name] = [cam]
+        signals["per_action_dim"] = per_dim
+
+
+@register_signal(
+    "connector_analysis",
+    cost_description="~1min",
+    prompt_description="Compare pre/post connector attribution to find information bottleneck losses",
+)
+def _signal_connector_analysis(agent, sample, signals, scene=None):
+    agent._run_connector_analysis(sample, signals, scene=scene)
+
+
+@register_signal(
+    "occlusion_sensitivity",
+    cost_description="~5min",
+    prompt_description="Slide gray patch across image, measure action delta at each position. Ground-truth causal map",
+)
+def _signal_occlusion_sensitivity(agent, sample, signals, scene=None):
+    try:
+        from .occlusion import compute_occlusion_sensitivity
+        occ = compute_occlusion_sensitivity(
+            agent.policy, sample, agent.dataset,
+            agent.image_key, agent.device,
+            patch_size=agent.config.get("occlusion_patch_size", 64),
+            stride=agent.config.get("occlusion_stride", 32),
+            image_map=agent.image_map)
+        if occ is not None:
+            signals["occlusion_map"] = occ
+    except Exception as e:
+        print(f"  Warning: Occlusion sensitivity failed: {e}")
+
+
+@register_signal(
+    "temporal_trajectory",
+    cost_description="~2min",
+    prompt_description="Track attention centroid across full episode, measure smoothness and object tracking",
+)
+def _signal_temporal_trajectory(agent, sample, signals, scene=None):
+    try:
+        from .temporal import compute_temporal_trajectory
+        traj = compute_temporal_trajectory(
+            agent.policy, agent.dataset, agent.episode_idx,
+            agent.image_key, agent.device,
+            num_frames=agent.config.get("temporal_frames", 20),
+            image_map=agent.image_map)
+        if traj is not None:
+            signals["temporal_trajectories"] = [traj]
+    except Exception as e:
+        print(f"  Warning: Temporal trajectory failed: {e}")
+
+
+@register_signal(
+    "language_diff",
+    cost_description="~1min",
+    prompt_description="Compare GradCAM under original vs alternative task string",
+)
+def _signal_language_diff(agent, sample, signals, scene=None):
+    from ..gradient import compute_language_conditional_diff
+    diff = compute_language_conditional_diff(
+        agent.policy, sample, agent.dataset, agent.image_key,
+        agent.device, image_map=agent.image_map)
+    if diff is not None:
+        signals["language_diff"] = diff
 
 
 class DiagnosticAgent:
@@ -543,12 +670,12 @@ class DiagnosticAgent:
                         _progress("iteration", f"  Failed: {e}")
 
         # ── Phase 6c: Mandatory counterfactuals (always run for comparability) ──
-        _mandatory_cf_tests = [
+        _mandatory_cf_tests = self.config.get("mandatory_counterfactual_tests", [
             "background_substitution",
             "object_relocation",
             "task_string_swap",
             "occlusion_targeted",
-        ]
+        ])
         if self.policy is not None and max_cf > 0:
             already_run = {r.test_type for r in cf_results}
             missing = [t for t in _mandatory_cf_tests if t not in already_run]
@@ -957,84 +1084,14 @@ class DiagnosticAgent:
     def _run_expensive_signal(self, signal_name: str, sample, signals: dict,
                               scene=None):
         """Run a single expensive signal and store in signals dict."""
-        import torch
+        from .registry import SIGNAL_REGISTRY
         frame_sample = self.dataset[self._get_first_frame_idx()]
 
-        if signal_name == "gradcam_siglip":
-            from ..gradient import compute_gradcam_map
-            cam = compute_gradcam_map(
-                self.policy, frame_sample, self.dataset, self.image_key,
-                self.device, image_map=self.image_map)
-            if cam is not None:
-                signals["gradcam_siglip"] = [cam]
-
-        elif signal_name == "saliency":
-            from ..gradient import compute_saliency_map
-            sal = compute_saliency_map(
-                self.policy, frame_sample, self.dataset, self.image_key,
-                self.device, image_map=self.image_map)
-            if sal is not None:
-                signals["saliency"] = [sal]
-
-        elif signal_name == "vision_vs_state":
-            from ..gradient import compute_vision_vs_state_ratio
-            vs = compute_vision_vs_state_ratio(
-                self.policy, frame_sample, self.dataset, self.image_key,
-                self.device, image_map=self.image_map)
-            if vs is not None:
-                signals["vision_vs_state"] = [vs]
-
-        elif signal_name == "per_action_dim_gradcam":
-            from ..gradient import compute_per_action_dim_gradcam
-            result = compute_per_action_dim_gradcam(
-                self.policy, frame_sample, self.dataset, self.image_key,
-                self.device, image_map=self.image_map)
-            if result is not None:
-                # Convert to the dict format expected by build_diagnostic_matrix
-                dim_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
-                per_dim = {}
-                for i, cam in enumerate(result["maps"]):
-                    name = dim_names[i] if i < len(dim_names) else f"dim_{i}"
-                    per_dim[name] = [cam]
-                signals["per_action_dim"] = per_dim
-
-        elif signal_name == "connector_analysis":
-            self._run_connector_analysis(frame_sample, signals, scene=scene)
-
-        elif signal_name == "occlusion_sensitivity":
-            try:
-                from .occlusion import compute_occlusion_sensitivity
-                occ = compute_occlusion_sensitivity(
-                    self.policy, frame_sample, self.dataset,
-                    self.image_key, self.device,
-                    patch_size=self.config.get("occlusion_patch_size", 64),
-                    stride=self.config.get("occlusion_stride", 32),
-                    image_map=self.image_map)
-                if occ is not None:
-                    signals["occlusion_map"] = occ
-            except Exception as e:
-                print(f"  Warning: Occlusion sensitivity failed: {e}")
-
-        elif signal_name == "temporal_trajectory":
-            try:
-                from .temporal import compute_temporal_trajectory
-                traj = compute_temporal_trajectory(
-                    self.policy, self.dataset, self.episode_idx,
-                    self.image_key, self.device,
-                    num_frames=self.config.get("temporal_frames", 20),
-                    image_map=self.image_map)
-                if traj is not None:
-                    signals["temporal_trajectories"] = [traj]
-            except Exception as e:
-                print(f"  Warning: Temporal trajectory failed: {e}")
-
-        elif signal_name == "language_diff":
-            from ..gradient import compute_language_conditional_diff
-            diff = compute_language_conditional_diff(
-                self.policy, frame_sample, self.dataset, self.image_key,
-                self.device, image_map=self.image_map)
-            if diff is not None:
-                signals["language_diff"] = diff
+        spec = SIGNAL_REGISTRY.get(signal_name)
+        if spec is None or spec.fn is None:
+            print(f"  Warning: Unknown signal '{signal_name}', skipping")
+            return
+        spec.fn(self, frame_sample, signals, scene=scene)
 
     def _run_connector_analysis(self, sample, signals: dict, scene=None):
         """Compare SigLIP (pre-connector) and connector (post-connector) attribution."""
@@ -1121,6 +1178,7 @@ class DiagnosticAgent:
 
     async def _call_llm(self, prompt: str) -> str:
         """Call LLM via the configured provider."""
+        from .registry import LLM_PROVIDERS
         provider = self.llm_settings.get("provider", "anthropic")
         model = self.llm_settings.get("model", "claude-sonnet-4-20250514")
         api_key = self.llm_settings.get("api_key", "")
@@ -1137,7 +1195,10 @@ class DiagnosticAgent:
             print("  Warning: No LLM API key configured. Using fallback reasoning.")
             return self._fallback_llm_response(prompt)
 
-        if provider == "anthropic":
+        # Check registry first, then fall back to built-in methods
+        if provider in LLM_PROVIDERS:
+            return await LLM_PROVIDERS[provider](self, prompt, model, api_key, base_url)
+        elif provider == "anthropic":
             return await self._call_anthropic(prompt, model, api_key)
         else:
             return await self._call_openai(prompt, model, api_key, base_url)
@@ -1279,114 +1340,31 @@ class DiagnosticAgent:
                                 scene: SceneSegmentation,
                                 target_object: str | None = None) -> list[Hypothesis]:
         """Generate hypotheses from anomalies without LLM."""
+        from .registry import HYPOTHESIS_TEMPLATES
         hypotheses = []
         target_objects = [r for r in scene.region_names() if r != "background" and r != "robot gripper"]
         target = target_object or (target_objects[0] if target_objects else "object")
 
         for anomaly in anomalies:
-            if anomaly.type == "high_background_attribution":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Model relies on background features rather than task-relevant objects",
-                    confidence=0.7,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="background_substitution",
-                    test_params={"replacement": "gray"},
-                    expected_if_true="Action prediction changes significantly when background is replaced",
-                    expected_if_false="Action prediction remains stable",
-                ))
-            elif anomaly.type == "spatial_shortcut":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description=f"Model uses spatial shortcuts — memorized {target} position rather than recognizing it",
-                    confidence=0.8,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="object_relocation",
-                    test_params={"target_object": target, "shift_pixels": [100, -80]},
-                    expected_if_true="Action prediction MSE increases >2x when object is relocated",
-                    expected_if_false="Model correctly adjusts actions to new object position",
-                ))
-            elif anomaly.type == "low_object_attribution":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description=f"Model has weak visual grounding for {target}",
-                    confidence=0.6,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="object_recolor",
-                    test_params={"target_object": target, "hue_shift": 0.5},
-                    expected_if_true="Model is insensitive to object appearance changes",
-                    expected_if_false="Action changes, showing some object-appearance sensitivity",
-                    confirms_on_change=False,
-                ))
-            elif anomaly.type == "dead_state_pathway":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Proprioceptive state input is not contributing to action decisions",
-                    confidence=0.6,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="none",
-                    test_params={},
-                    expected_if_true="N/A — confirmed by vision vs state analysis",
-                    expected_if_false="N/A",
-                ))
-            elif anomaly.type == "low_dataset_diversity":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description=f"Model memorized fixed {target} positions due to low dataset diversity",
-                    confidence=0.7,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="object_relocation",
-                    test_params={"target_object": target, "shift_pixels": [80, -60]},
-                    expected_if_true="Action breaks when object is moved from memorized position",
-                    expected_if_false="Model generalizes to new positions despite low training diversity",
-                ))
-            elif anomaly.type == "gripper_fixation":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Model fixates on robot gripper instead of manipulation target",
-                    confidence=0.7,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="occlusion_targeted",
-                    test_params={"target_object": target, "fill": "gray"},
-                    expected_if_true="Occluding target object has minimal effect (model relies on gripper)",
-                    expected_if_false="Occluding target changes actions significantly",
-                    confirms_on_change=False,
-                ))
-            elif anomaly.type == "cross_attention_diffuse":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Action expert cross-attention is near-uniform — not selectively querying",
-                    confidence=0.5,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="distractor_insertion",
-                    test_params={"position": [100, 100], "distractor_size": 80},
-                    expected_if_true="Model is equally distracted by novel objects",
-                    expected_if_false="Model ignores distractors despite diffuse attention",
-                ))
-            elif anomaly.type == "language_insensitivity":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Model ignores language conditioning — acts the same regardless of instruction",
-                    confidence=0.7,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="task_string_swap",
-                    test_params={"replacement_task": "do nothing"},
-                    expected_if_true="Changing instruction to 'do nothing' has no effect on actions",
-                    expected_if_false="Actions change, suggesting some language sensitivity",
-                    confirms_on_change=False,
-                ))
-            elif anomaly.type == "temporal_attention_instability":
-                hypotheses.append(Hypothesis(
-                    id=f"h{len(hypotheses)+1}",
-                    description="Attention is temporally unstable — jumps between frames",
-                    confidence=0.6,
-                    supporting_anomalies=[anomaly.type],
-                    test_type="temporal_consistency",
-                    test_params={"perturbation_type": "background_substitution", "num_frames": 5},
-                    expected_if_true="Model responds inconsistently to same perturbation across frames",
-                    expected_if_false="Model responds consistently despite attention instability",
-                ))
-
+            tmpl = HYPOTHESIS_TEMPLATES.get(anomaly.type)
+            if tmpl is None:
+                continue
+            # Resolve {target} placeholders in description and params
+            desc = tmpl.description_template.format(target=target)
+            params = {}
+            for k, v in tmpl.test_params_template.items():
+                params[k] = v.format(target=target) if isinstance(v, str) else v
+            hypotheses.append(Hypothesis(
+                id=f"h{len(hypotheses)+1}",
+                description=desc,
+                confidence=tmpl.confidence,
+                supporting_anomalies=[anomaly.type],
+                test_type=tmpl.test_type,
+                test_params=params,
+                expected_if_true=tmpl.expected_if_true,
+                expected_if_false=tmpl.expected_if_false,
+                confirms_on_change=tmpl.confirms_on_change,
+            ))
         return hypotheses
 
     async def _synthesize_report(self, task_string: str, scene: SceneSegmentation,

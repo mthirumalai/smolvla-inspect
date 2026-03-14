@@ -429,6 +429,8 @@ def _compute_result(
     requires_gpu=True,
     requires_model=True,
     description="Replace background pixels and measure action change.",
+    prompt_description="Replace background with gray/noise/blur. Tests if model relies on background features.",
+    param_schema='replacement: "gray"|"noise"|"blur"',
 )
 def background_substitution(
     policy,
@@ -520,6 +522,8 @@ def background_substitution(
     requires_gpu=True,
     requires_model=True,
     description="Move an object in the image and measure action change.",
+    prompt_description="Digitally move an object to a different position. Tests if model tracks objects or uses spatial shortcuts.",
+    param_schema='target_object: str, shift_pixels: [dx, dy]',
 )
 def object_relocation(
     policy,
@@ -685,6 +689,8 @@ def object_relocation(
     requires_gpu=True,
     requires_model=True,
     description="Shift brightness and contrast of the image and measure action change.",
+    prompt_description="Shift brightness/contrast. Tests lighting robustness.",
+    param_schema='brightness_delta: float, contrast_delta: float',
 )
 def lighting_perturbation(
     policy,
@@ -744,6 +750,8 @@ def lighting_perturbation(
     requires_gpu=True,
     requires_model=True,
     description="Shift the hue of a target object and measure action change.",
+    prompt_description="Change object color via HSV shift. Tests if model uses color cues.",
+    param_schema='target_object: str, hue_shift: float',
 )
 def object_recolor(
     policy,
@@ -847,6 +855,8 @@ def object_recolor(
     requires_gpu=True,
     requires_model=True,
     description="Insert a distractor object and measure action change.",
+    prompt_description="Insert a novel distractor object at a given position. Tests if model is robust to out-of-distribution objects.",
+    param_schema='position: [x, y], distractor_size: int, distractor_source: "synthetic"|"noise"',
 )
 def distractor_insertion(
     policy,
@@ -935,6 +945,8 @@ def distractor_insertion(
     requires_gpu=True,
     requires_model=True,
     description="Replace task instruction and measure action change.",
+    prompt_description="Replace the language instruction with a different one. Tests if model actually uses language conditioning.",
+    param_schema='replacement_task: str',
 )
 def task_string_swap(
     policy,
@@ -1022,6 +1034,8 @@ def task_string_swap(
     requires_gpu=True,
     requires_model=True,
     description="Apply perturbation across multiple frames and check action sequence coherence.",
+    prompt_description="Apply a perturbation across multiple frames and check coherence of action sequence response.",
+    param_schema='perturbation_type: "background_substitution", num_frames: int',
 )
 def temporal_consistency(
     policy,
@@ -1147,6 +1161,8 @@ def temporal_consistency(
     requires_gpu=True,
     requires_model=True,
     description="Completely occlude a target object and measure action change.",
+    prompt_description="Completely occlude a specific object with gray or noise fill. Tests if model can act without seeing the target.",
+    param_schema='target_object: str, fill: "gray"|"noise"',
 )
 def occlusion_targeted(
     policy,

@@ -20,6 +20,13 @@ from .models import (
 )
 from .regions import attribute_to_regions, foreground_ratio, spatial_prior_ratio
 
+ANOMALY_DETECTORS: list[Callable] = []
+
+def register_anomaly_detector(fn: Callable) -> Callable:
+    """Decorator to register an anomaly detector function."""
+    ANOMALY_DETECTORS.append(fn)
+    return fn
+
 
 # ---------------------------------------------------------------------------
 # Matrix builder
@@ -42,6 +49,7 @@ def build_diagnostic_matrix(
     occlusion_map: OcclusionMap | None = None,
     connector_analysis: ConnectorAnalysis | None = None,
     dataset_diversity: DatasetDiversityReport | None = None,
+    extra_heatmaps: dict[str, list[np.ndarray]] | None = None,
 ) -> DiagnosticMatrix:
     """Build a :class:`DiagnosticMatrix` from available signals.
 
@@ -79,6 +87,9 @@ def build_diagnostic_matrix(
         signal_map["saliency"] = saliency_heatmaps
     if gradcam_connector_heatmaps is not None:
         signal_map["gradcam_connector"] = gradcam_connector_heatmaps
+
+    if extra_heatmaps:
+        signal_map.update(extra_heatmaps)
 
     signal_types = list(signal_map.keys())
     regions = segmentation.region_names()
@@ -197,6 +208,7 @@ def build_diagnostic_matrix(
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
+@register_anomaly_detector
 def detect_high_background_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -230,6 +242,7 @@ def detect_high_background_attribution(
     )
 
 
+@register_anomaly_detector
 def detect_attention_gradcam_divergence(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -263,6 +276,7 @@ def detect_attention_gradcam_divergence(
     )
 
 
+@register_anomaly_detector
 def detect_dead_state_pathway(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -288,6 +302,7 @@ def detect_dead_state_pathway(
     )
 
 
+@register_anomaly_detector
 def detect_low_object_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -326,6 +341,7 @@ def detect_low_object_attribution(
     )
 
 
+@register_anomaly_detector
 def detect_spatial_shortcut(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -356,6 +372,7 @@ def detect_spatial_shortcut(
     )
 
 
+@register_anomaly_detector
 def detect_language_insensitivity(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -380,6 +397,7 @@ def detect_language_insensitivity(
     )
 
 
+@register_anomaly_detector
 def detect_unstable_gradcam(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -425,6 +443,7 @@ def detect_unstable_gradcam(
 # ---------------------------------------------------------------------------
 
 
+@register_anomaly_detector
 def detect_low_dataset_diversity(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -486,6 +505,7 @@ def detect_low_dataset_diversity(
     )
 
 
+@register_anomaly_detector
 def detect_gripper_fixation(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -520,6 +540,7 @@ def detect_gripper_fixation(
     )
 
 
+@register_anomaly_detector
 def detect_cross_attention_diffuse(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -545,6 +566,7 @@ def detect_cross_attention_diffuse(
     )
 
 
+@register_anomaly_detector
 def detect_action_attention_misalignment(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -594,6 +616,7 @@ def detect_action_attention_misalignment(
     )
 
 
+@register_anomaly_detector
 def detect_temporal_attention_instability(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -653,6 +676,7 @@ def detect_temporal_attention_instability(
     )
 
 
+@register_anomaly_detector
 def detect_single_region_dependency(
     matrix: DiagnosticMatrix,
     internals: dict | None,
@@ -702,24 +726,6 @@ def detect_single_region_dependency(
 # Aggregate detector
 # ---------------------------------------------------------------------------
 
-_ALL_DETECTORS: list[Callable] = [
-    detect_high_background_attribution,
-    detect_attention_gradcam_divergence,
-    detect_dead_state_pathway,
-    detect_low_object_attribution,
-    detect_spatial_shortcut,
-    detect_language_insensitivity,
-    detect_unstable_gradcam,
-    # Extended detectors
-    detect_low_dataset_diversity,
-    detect_gripper_fixation,
-    detect_cross_attention_diffuse,
-    detect_action_attention_misalignment,
-    detect_temporal_attention_instability,
-    detect_single_region_dependency,
-]
-
-
 def detect_anomalies(
     matrix: DiagnosticMatrix,
     internals: dict | None = None,
@@ -730,7 +736,7 @@ def detect_anomalies(
     Order: critical first, then warning, then info.
     """
     anomalies: list[Anomaly] = []
-    for detector in _ALL_DETECTORS:
+    for detector in ANOMALY_DETECTORS:
         result = detector(matrix, internals, dataset_diversity)
         if result is not None:
             anomalies.append(result)

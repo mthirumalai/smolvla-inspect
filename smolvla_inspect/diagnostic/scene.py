@@ -137,6 +137,7 @@ def detect_objects(
     nms_iou_threshold: float = 0.5,
     max_per_class: int = 3,
     device: str = "cpu",
+    model_id: str = "google/owlv2-base-patch16-ensemble",
 ) -> list[DetectedObject]:
     """Run open-vocabulary object detection using OWL-ViT v2.
 
@@ -178,9 +179,9 @@ def detect_objects(
         return []
 
     try:
-        print(f"  Loading OWL-ViT v2 on {device}...")
-        processor = Owlv2Processor.from_pretrained("google/owlv2-base-patch16-ensemble")
-        model = Owlv2ForObjectDetection.from_pretrained("google/owlv2-base-patch16-ensemble")
+        print(f"  Loading OWL-ViT v2 ({model_id}) on {device}...")
+        processor = Owlv2Processor.from_pretrained(model_id)
+        model = Owlv2ForObjectDetection.from_pretrained(model_id)
         model = model.to(device)
         model.eval()
 

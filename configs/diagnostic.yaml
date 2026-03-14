@@ -16,6 +16,13 @@ max_counterfactuals: 7
 max_expensive_signals: 5
 num_frames: 4
 
+# Mandatory counterfactual tests (always run for cross-run comparability)
+mandatory_counterfactual_tests:
+  - background_substitution
+  - object_relocation
+  - task_string_swap
+  - occlusion_targeted
+
 # LLM settings (can also use env vars SMOLVLA_LLM_*)
 # llm_provider: "anthropic"
 # llm_model: "claude-sonnet-4-20250514"
