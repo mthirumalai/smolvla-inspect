@@ -898,6 +898,11 @@ def distractor_insertion(
 ) -> CounterfactualResult:
     """Insert a distractor at *position* and measure action shift.
 
+    If *position* overlaps a detected object, the distractor is
+    automatically relocated to the largest empty background region so
+    it tests robustness to novel objects rather than occluding
+    existing ones.
+
     Parameters
     ----------
     position : tuple[int, int]
@@ -918,9 +923,18 @@ def distractor_insertion(
 
     rng = np.random.RandomState(noise_seed)
 
-    # Build a binary mask for the distractor region (ellipse)
+    # Ensure distractor lands on empty background, not on an object
     cx, cy = position
     radius = distractor_size // 2
+    bg_mask = _resize_mask(segmentation.background_mask, (h, w))
+    if not bg_mask[min(cy, h - 1), min(cx, w - 1)]:
+        # Requested position overlaps a foreground object — find free space
+        from scipy.ndimage import distance_transform_edt
+        dist = distance_transform_edt(bg_mask)
+        # Pick the point farthest from any foreground object
+        best = np.unravel_index(np.argmax(dist), dist.shape)
+        cy, cx = int(best[0]), int(best[1])
+        print(f"  Distractor relocated to empty region at ({cx}, {cy})")
     yy, xx = np.ogrid[:h, :w]
     dist_sq = ((xx - cx).astype(np.float64)) ** 2 + ((yy - cy).astype(np.float64)) ** 2
     distractor_mask = dist_sq <= (radius ** 2)
