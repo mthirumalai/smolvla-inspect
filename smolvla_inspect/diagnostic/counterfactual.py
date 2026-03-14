@@ -133,7 +133,7 @@ def _to_uint8(img: np.ndarray) -> np.ndarray:
 
 _ACTION_DIM_LABELS = [
     "x", "y", "z", "roll", "pitch", "yaw",
-    "gripper",
+    "grip",
 ]
 
 
@@ -143,9 +143,12 @@ def _make_action_delta_chart(
     original_task: str,
     replacement_task: str,
     width: int = 640,
-    height: int = 400,
+    height: int = 700,
 ) -> np.ndarray:
-    """Render a per-dimension action delta bar chart as a uint8 (H, W, 3) image.
+    """Render a two-panel action chart as a uint8 (H, W, 3) image.
+
+    Top panel: grouped bars showing baseline vs modified action values.
+    Bottom panel: delta (modified - baseline) per dimension.
 
     Used for language-only perturbations where a side-by-side image comparison
     would show two identical frames.
@@ -154,71 +157,102 @@ def _make_action_delta_chart(
     n_dims = len(delta)
     delta_l2 = float(np.linalg.norm(delta))
 
-    # Canvas
-    img = np.full((height, width, 3), 255, dtype=np.uint8)
-
     # Scale chart size for many dimensions
-    if n_dims > 15:
-        width = max(width, n_dims * 28)
-        height = max(height, 420)
+    if n_dims > 10:
+        width = max(width, n_dims * 36)
 
     # Layout constants
-    margin_top = 70
-    margin_bottom = 55
+    header_h = 58
     margin_left = 60
     margin_right = 20
+    label_h = 30
+    panel_gap = 40
     chart_w = width - margin_left - margin_right
-    chart_h = height - margin_top - margin_bottom
+    panel_h = 200
+    height = header_h + panel_h + panel_gap + panel_h + label_h + 10
 
-    # Recreate canvas at potentially larger size
     img = np.full((height, width, 3), 255, dtype=np.uint8)
 
-    # Bar geometry
-    bar_w = max(2, chart_w // max(n_dims, 1) - 2)
+    # Bar geometry — grouped pairs for top panel
     spacing = chart_w // max(n_dims, 1)
+    pair_w = max(2, spacing // 2 - 1)  # each bar in the pair
+    gap = max(1, spacing // 8)
 
-    # Scale
-    max_abs = max(abs(delta.max()), abs(delta.min()), 0.01)
-    zero_y = margin_top + chart_h // 2
+    # ── Top panel: baseline vs modified ──
+    top_y0 = header_h
+    all_vals = np.concatenate([baseline, modified])
+    val_max = max(abs(all_vals.max()), abs(all_vals.min()), 0.01)
+    top_zero_y = top_y0 + panel_h // 2
 
-    # Draw zero line
-    img[zero_y, margin_left:margin_left + chart_w] = (180, 180, 180)
+    # Zero line
+    img[top_zero_y, margin_left:margin_left + chart_w] = (210, 210, 210)
 
-    # Draw bars
+    color_base = (66, 133, 244)   # blue
+    color_mod = (219, 68, 55)     # red
+
     for i in range(n_dims):
-        x = margin_left + i * spacing + (spacing - bar_w) // 2
+        x0 = margin_left + i * spacing + (spacing - 2 * pair_w - gap) // 2
+        for j, (val, color) in enumerate([(baseline[i], color_base), (modified[i], color_mod)]):
+            bx = x0 + j * (pair_w + gap)
+            bar_h = int(abs(val) / val_max * (panel_h // 2))
+            bar_h = max(bar_h, 1)
+            if val >= 0:
+                y1, y2 = top_zero_y - bar_h, top_zero_y
+            else:
+                y1, y2 = top_zero_y, top_zero_y + bar_h
+            img[y1:y2, bx:bx + pair_w] = color
+
+    # Top panel Y-axis labels
+    _draw_text_simple(img, f"+{val_max:.2f}", 2, top_y0, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, "0", margin_left - 15, top_zero_y - 4, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, f"-{val_max:.2f}", 2, top_y0 + panel_h - 12, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, "Action Values", margin_left, top_y0 - 14, color=(80, 80, 80), scale=1)
+
+    # ── Bottom panel: delta ──
+    bot_y0 = header_h + panel_h + panel_gap
+    max_abs_delta = max(abs(delta.max()), abs(delta.min()), 0.01)
+    bot_zero_y = bot_y0 + panel_h // 2
+    bar_w_delta = max(2, spacing - 4)
+
+    # Zero line
+    img[bot_zero_y, margin_left:margin_left + chart_w] = (210, 210, 210)
+
+    for i in range(n_dims):
+        x = margin_left + i * spacing + (spacing - bar_w_delta) // 2
         val = delta[i]
-        bar_h = int(abs(val) / max_abs * (chart_h // 2))
+        bar_h = int(abs(val) / max_abs_delta * (panel_h // 2))
         bar_h = max(bar_h, 1)
-
         if val >= 0:
-            y1, y2 = zero_y - bar_h, zero_y
-            color = (66, 133, 244)  # blue
+            y1, y2 = bot_zero_y - bar_h, bot_zero_y
+            color = (66, 133, 244)
         else:
-            y1, y2 = zero_y, zero_y + bar_h
-            color = (219, 68, 55)  # red
+            y1, y2 = bot_zero_y, bot_zero_y + bar_h
+            color = (219, 68, 55)
+        img[y1:y2, x:x + bar_w_delta] = color
 
-        img[y1:y2, x:x + bar_w] = color
+    # Bottom panel Y-axis labels
+    _draw_text_simple(img, f"+{max_abs_delta:.3f}", 2, bot_y0, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, "0", margin_left - 15, bot_zero_y - 4, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, f"-{max_abs_delta:.3f}", 2, bot_y0 + panel_h - 12, color=(120, 120, 120), scale=1)
+    _draw_text_simple(img, f"Delta (L2={delta_l2:.4f})", margin_left, bot_y0 - 14, color=(80, 80, 80), scale=1)
 
-        # Dim label below chart — skip some labels when bars are narrow
-        label_every = max(1, 20 // max(spacing, 1))
+    # ── Dim labels below bottom panel ──
+    label_y = bot_y0 + panel_h + 5
+    for i in range(n_dims):
+        label = _ACTION_DIM_LABELS[i] if i < len(_ACTION_DIM_LABELS) else str(i)
+        char_px = 7
+        label_px = len(label) * char_px
+        label_every = max(1, (label_px + 8) // max(spacing, 1))
         if i % label_every == 0:
-            label = _ACTION_DIM_LABELS[i] if i < len(_ACTION_DIM_LABELS) else str(i)
-            _draw_text_simple(img, label, x + bar_w // 2 - 3 * len(label),
-                              height - margin_bottom + 5, color=(80, 80, 80), scale=1)
+            x = margin_left + i * spacing + spacing // 2 - label_px // 2
+            _draw_text_simple(img, label, x, label_y, color=(80, 80, 80), scale=1)
 
-    # Y-axis labels
-    _draw_text_simple(img, f"+{max_abs:.3f}", margin_left - 55, margin_top, color=(80, 80, 80), scale=1)
-    _draw_text_simple(img, "0", margin_left - 15, zero_y - 4, color=(80, 80, 80), scale=1)
-    _draw_text_simple(img, f"-{max_abs:.3f}", margin_left - 55, margin_top + chart_h - 8, color=(80, 80, 80), scale=1)
-
-    # Title and task labels
-    _draw_text_simple(img, f"Task String Swap — Action Delta (L2={delta_l2:.4f})",
-                      margin_left, 10, color=(40, 40, 40), scale=1)
-    orig_label = f"Original: \"{_truncate(original_task, 60)}\""
-    repl_label = f"Replaced: \"{_truncate(replacement_task, 60)}\""
-    _draw_text_simple(img, orig_label, margin_left, 28, color=(80, 80, 80), scale=1)
-    _draw_text_simple(img, repl_label, margin_left, 44, color=(219, 68, 55), scale=1)
+    # ── Header: title, task labels, legend ──
+    _draw_text_simple(img, f"Task String Swap", margin_left, 4, color=(40, 40, 40), scale=1)
+    orig_label = f"Original: \"{_truncate(original_task, 55)}\""
+    repl_label = f"Replaced: \"{_truncate(replacement_task, 55)}\""
+    _draw_text_simple(img, orig_label, margin_left, 20, color=color_base, scale=1)
+    _draw_text_simple(img, repl_label, margin_left, 36, color=color_mod, scale=1)
 
     return img
 
