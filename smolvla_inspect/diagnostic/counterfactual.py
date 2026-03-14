@@ -1122,6 +1122,12 @@ def task_string_swap(
         attribution_shift_per_region={},
         confirmed=delta_l2 > 0.01,
         visual_comparison=comparison,
+        metrics={
+            "original_task": original_task,
+            "replacement_task": replacement_task,
+            "baseline_actions": baseline_actions.tolist(),
+            "modified_actions": modified_actions.tolist(),
+        },
     )
 
 
