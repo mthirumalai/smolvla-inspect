@@ -690,7 +690,7 @@ def object_relocation(
     requires_model=True,
     description="Shift brightness and contrast of the image and measure action change.",
     prompt_description="Shift brightness/contrast. Tests lighting robustness.",
-    param_schema='brightness_delta: float, contrast_delta: float',
+    param_schema='brightness_delta: float (0-1, default 0.3), contrast_delta: float (0-1, default 0.3)',
 )
 def lighting_perturbation(
     policy,
@@ -698,21 +698,25 @@ def lighting_perturbation(
     dataset,
     image_key: str,
     device: str | torch.device,
-    brightness_delta: float = 0.6,
-    contrast_delta: float = 0.0,
+    brightness_delta: float = 0.3,
+    contrast_delta: float = 0.3,
     noise_seed: int = 42,
     image_map=None,
 ) -> CounterfactualResult:
     """Apply brightness and contrast shifts and measure action change.
 
+    Uses screen-blend for brightness (lifts shadows, can never clip to
+    white) and mean-centred scaling for contrast.  Both parameters are
+    clamped to [0, 1] so any value the LLM passes is safe.
+
     Parameters
     ----------
     brightness_delta : float
-        Gamma correction factor. Values < 1.0 brighten (default 0.6 gives
-        a visible but non-destructive lift); values > 1.0 darken.
+        Screen-blend strength in [0, 1].  0 = no change, 1 = all white.
+        ``result = 1 - (1 - pixel) * (1 - strength)``
     contrast_delta : float
-        Contrast scaling factor applied around the per-channel mean:
-        ``(pixel - mean) * (1 + contrast_delta) + mean``.
+        Contrast boost in [0, 1].  Stretches pixel values around the
+        per-channel mean.
     """
     # Baseline actions
     policy.reset()
@@ -721,11 +725,17 @@ def lighting_perturbation(
     img_tensor = sample[image_key]  # (C, H, W) float [0, 1]
     img_hwc = _tensor_to_hwc(img_tensor)  # (H, W, C)
 
-    # Gamma correction for brightness (preserves highlights, lifts shadows)
-    modified_hwc = np.power(img_hwc.copy(), brightness_delta)
+    # Clamp parameters to safe range
+    brightness_delta = float(np.clip(brightness_delta, 0.0, 0.8))
+    contrast_delta = float(np.clip(contrast_delta, 0.0, 0.8))
+
+    modified_hwc = np.clip(img_hwc.copy(), 0.0, 1.0)
+    # Screen blend for brightness: lifts darks, naturally preserves highlights
+    modified_hwc = 1.0 - (1.0 - modified_hwc) * (1.0 - brightness_delta)
     # Contrast around per-channel mean
-    mean = modified_hwc.mean(axis=(0, 1), keepdims=True)
-    modified_hwc = (modified_hwc - mean) * (1.0 + contrast_delta) + mean
+    if contrast_delta > 0:
+        mean = modified_hwc.mean(axis=(0, 1), keepdims=True)
+        modified_hwc = (modified_hwc - mean) * (1.0 + contrast_delta) + mean
     modified_hwc = np.clip(modified_hwc, 0.0, 1.0)
 
     new_sample = _clone_sample(sample, image_key)
