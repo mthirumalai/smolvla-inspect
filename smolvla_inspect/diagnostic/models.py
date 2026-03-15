@@ -520,6 +520,156 @@ class DiagnosticReport:
         }
         return json.dumps(payload, indent=2, default=_numpy_serialiser)
 
+    # -- deserialisation ---------------------------------------------------
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DiagnosticReport":
+        """Reconstruct a *DiagnosticReport* from a JSON-loaded dict.
+
+        This is the inverse of :meth:`to_json` — it recreates all nested
+        dataclass objects so that :meth:`to_markdown` can be called again
+        (e.g. after changing the report template).
+
+        Masks are **not** restored (they are stored as shapes only in JSON).
+        """
+        # Scene
+        scene_data = data.get("scene", {})
+        objects = []
+        for o in scene_data.get("objects", []):
+            objects.append(DetectedObject(
+                label=o["label"],
+                box=tuple(o["box"]),
+                score=o["score"],
+                mask=None,
+            ))
+        image_shape = tuple(scene_data.get("image_shape", (0, 0)))
+        bg_shape = tuple(scene_data.get("background_mask_shape", image_shape))
+        scene = SceneSegmentation(
+            objects=objects,
+            background_mask=np.zeros(bg_shape, dtype=bool),
+            image_shape=image_shape,
+        )
+
+        # Dataset diversity
+        dd_data = data.get("dataset_diversity")
+        dataset_diversity = None
+        if dd_data:
+            dataset_diversity = DatasetDiversityReport(**dd_data)
+
+        # Matrix
+        m = data.get("matrix", {})
+        matrix = DiagnosticMatrix(
+            signal_types=m.get("signal_types", []),
+            regions=m.get("regions", []),
+            attribution_mass=m.get("attribution_mass", {}),
+            per_frame=m.get("per_frame", {}),
+            scalars=m.get("scalars"),
+            temporal_trajectories=[
+                TemporalTrajectory(**t) for t in m.get("temporal_trajectories", [])
+            ] if m.get("temporal_trajectories") else None,
+            occlusion=OcclusionSensitivity(**m["occlusion"]) if m.get("occlusion") else None,
+            connector_analysis=(
+                ConnectorAnalysis(**m["connector_analysis"])
+                if m.get("connector_analysis") else None
+            ),
+            per_action_dim=m.get("per_action_dim"),
+        )
+
+        # Semantic probe
+        sp_data = data.get("semantic_probe")
+        semantic_probe = None
+        if sp_data:
+            primary = sp_data.get("primary_frame")
+            primary_frame = SemanticFrameSummary(**primary) if primary else None
+            frames = [SemanticFrameSummary(**f) for f in sp_data.get("frames", [])]
+            cfs = {}
+            for name, cf_data in sp_data.get("counterfactuals", {}).items():
+                cfs[name] = SemanticCounterfactualSummary(**cf_data)
+            semantic_probe = SemanticProbeReport(
+                target_object=sp_data.get("target_object"),
+                summary=sp_data.get("summary", ""),
+                primary_frame=primary_frame,
+                frames=frames,
+                counterfactuals=cfs,
+            )
+
+        # QK probe
+        qk_data = data.get("qk_probe")
+        qk_probe = None
+        if qk_data:
+            top_heads = [QKHeadSummary(**h) for h in qk_data.get("top_heads", [])]
+            qk_probe = QKProbeReport(
+                layer=qk_data.get("layer", ""),
+                summary=qk_data.get("summary", ""),
+                dominant_head_type=qk_data.get("dominant_head_type", ""),
+                semantic_head_fraction=qk_data.get("semantic_head_fraction", 0),
+                positional_head_fraction=qk_data.get("positional_head_fraction", 0),
+                mixed_head_fraction=qk_data.get("mixed_head_fraction", 0),
+                top_heads=top_heads,
+            )
+
+        # Spatial object diagnosis
+        sod_data = data.get("spatial_object_diagnosis")
+        spatial_object_diagnosis = None
+        if sod_data:
+            spatial_ev = [
+                DiagnosticEvidence(**e) for e in sod_data.get("spatial_evidence", [])
+            ]
+            object_ev = [
+                DiagnosticEvidence(**e) for e in sod_data.get("object_evidence", [])
+            ]
+            spatial_object_diagnosis = SpatialObjectDiagnosis(
+                target_object=sod_data.get("target_object"),
+                verdict=sod_data.get("verdict", "inconclusive"),
+                confidence=sod_data.get("confidence", 0),
+                spatial_score=sod_data.get("spatial_score", 0),
+                object_score=sod_data.get("object_score", 0),
+                summary=sod_data.get("summary", ""),
+                key_metrics=sod_data.get("key_metrics", {}),
+                spatial_evidence=spatial_ev,
+                object_evidence=object_ev,
+            )
+
+        # Anomalies
+        anomalies = [Anomaly(**a) for a in data.get("anomalies", [])]
+
+        # Hypotheses
+        hypotheses = [Hypothesis(**h) for h in data.get("hypotheses", [])]
+
+        # Counterfactual results
+        cf_results = []
+        for cr in data.get("counterfactual_results", []):
+            cf_results.append(CounterfactualResult(
+                hypothesis_id=cr["hypothesis_id"],
+                test_type=cr["test_type"],
+                action_delta_l2=cr.get("action_delta_l2", 0),
+                action_delta_per_dim=cr.get("action_delta_per_dim", []),
+                gradcam_shift=cr.get("gradcam_shift", 0),
+                attribution_shift_per_region=cr.get("attribution_shift_per_region", {}),
+                confirmed=cr.get("confirmed", False),
+                metrics=cr.get("metrics", {}),
+                visual_comparison=None,
+            ))
+
+        # Findings
+        findings = [Finding(**f) for f in data.get("findings", [])]
+
+        return cls(
+            metadata=data.get("metadata", {}),
+            scene=scene,
+            dataset_diversity=dataset_diversity,
+            matrix=matrix,
+            semantic_probe=semantic_probe,
+            qk_probe=qk_probe,
+            spatial_object_diagnosis=spatial_object_diagnosis,
+            anomalies=anomalies,
+            hypotheses=hypotheses,
+            counterfactual_results=cf_results,
+            findings=findings,
+            llm_synthesis=data.get("llm_synthesis", ""),
+            cf_skip_reason=data.get("cf_skip_reason", ""),
+        )
+
     # -- markdown ----------------------------------------------------------
 
     def to_markdown(self) -> str:
@@ -730,84 +880,156 @@ class DiagnosticReport:
             sections.append(
                 "*This section answers a key question: does the model recognise "
                 "objects by their appearance, or does it simply memorise where "
-                "objects usually appear? Terms marked with ^n are defined in the "
-                "Glossary at the end of this report.*"
+                "objects usually appear? Terms marked with superscript numbers "
+                "(e.g. \u00b9) are defined in the Glossary at the end of this report.*"
             )
             sections.append("")
-            sections.append("| Metric | Value | Scale | Interpretation |")
-            sections.append("|---|---|---|---|")
-            sections.append(f"| Target object | {diag.target_object or 'N/A'} | — | The object being analysed |")
+
+            # Verdict + top-level scores as bullet list (avoids wide table)
             sections.append(
-                f"| Verdict | {verdict_labels.get(diag.verdict, diag.verdict)} "
-                f"| — | {verdict_explanations.get(diag.verdict, '')} |"
+                f"- **Target object:** {diag.target_object or 'N/A'}"
             )
             sections.append(
-                f"| Confidence | {diag.confidence:.0%} "
-                f"| 0–100% | How confident the system is in the verdict above |"
+                f"- **Verdict:** {verdict_labels.get(diag.verdict, diag.verdict)} "
+                f"— {verdict_explanations.get(diag.verdict, '')}"
             )
             sections.append(
-                f"| Spatial-prior score ^1 | {diag.spatial_score:.4f} "
-                f"| 0.0–1.0 | Weighted sum of all spatial-prior evidence. "
-                f"Higher = stronger evidence that the model memorises positions |"
+                f"- **Confidence:** {diag.confidence:.0%}"
             )
             sections.append(
-                f"| Object-grounding score ^2 | {diag.object_score:.4f} "
-                f"| 0.0–1.0 | Weighted sum of all object-feature evidence. "
-                f"Higher = stronger evidence that the model recognises objects |"
+                f"- **Spatial-prior score\u00b9:** {diag.spatial_score:.4f} "
+                f"(0–1, higher = model memorises positions)"
             )
+            sections.append(
+                f"- **Object-grounding score\u00b2:** {diag.object_score:.4f} "
+                f"(0–1, higher = model recognises objects)"
+            )
+            sections.append("")
 
             # Render key_metrics with explanations
+            # Format: (scale, short_description)
             _KEY_METRIC_INFO: dict[str, tuple[str, str]] = {
                 "positional_baseline_ratio": (
-                    "0.0–1.0",
-                    "Cosine similarity between the model's attention and a "
-                    "content-free baseline (blank image). >0.6 suggests the "
-                    "model attends to fixed spatial positions regardless of "
-                    "image content ^3",
+                    "0–1",
+                    "Similarity to blank-image baseline\u00b3. >0.6 = spatial shortcut",
                 ),
                 "foreground_ratio": (
-                    "0.0–1.0",
-                    "Fraction of the model's causal attention that lands on "
-                    "foreground objects (vs background). <0.3 means the model "
-                    "mostly ignores task objects ^4",
+                    "0–1",
+                    "Causal attention on foreground vs background\u2074. <0.3 = weak",
                 ),
                 "vision_share": (
-                    "0.0–1.0",
-                    "Fraction of gradient flow from the vision pathway vs "
-                    "proprioceptive state. >0.99 means the state input is "
-                    "effectively dead ^5",
+                    "0–1",
+                    "Vision vs state gradient fraction\u2075. >0.99 = state ignored",
                 ),
                 "focus_follow_ratio": (
-                    "0.0–1.0",
-                    "After moving the target object, what fraction of the "
-                    "model's causal attention followed it to the new location. "
-                    "Higher = object-grounded ^6",
+                    "0–1",
+                    "Causal attention that followed moved object\u2076. Higher = object-grounded",
                 ),
                 "anchor_retention_ratio": (
-                    "0.0–1.0",
-                    "After moving the target object, what fraction of the "
-                    "model's causal attention stayed at the OLD (empty) "
-                    "location. Higher = spatial-prior ^6",
+                    "0–1",
+                    "Causal attention that stayed at old position\u2076. Higher = spatial-prior",
                 ),
                 "semantic_follow_ratio": (
-                    "0.0–1.0",
-                    "After moving the target object, how much semantic "
-                    "(patch-to-text) evidence is at the new location ^6",
+                    "0–1",
+                    "Semantic evidence at new object location\u2076",
                 ),
                 "semantic_anchor_ratio": (
-                    "0.0–1.0",
-                    "After moving the target object, how much semantic "
-                    "(patch-to-text) evidence remains at the old location ^6",
+                    "0–1",
+                    "Semantic evidence remaining at old location\u2076",
+                ),
+                "relocation_follow_ratio": (
+                    "0–1",
+                    "Causal attention that followed moved object\u2076. Higher = object-grounded",
+                ),
+                "relocation_anchor_ratio": (
+                    "0–1",
+                    "Causal attention that stayed at old position\u2076. Higher = spatial-prior",
+                ),
+                "relocation_semantic_follow_ratio": (
+                    "0–1",
+                    "Semantic evidence at new object location\u2076",
+                ),
+                "relocation_semantic_anchor_ratio": (
+                    "0–1",
+                    "Semantic evidence remaining at old location\u2076",
+                ),
+                "target_gradcam_share": (
+                    "0–1",
+                    "Fraction of GradCAM attribution on the target object",
+                ),
+                "target_attention_share": (
+                    "0–1",
+                    "Fraction of self-attention on the target object",
+                ),
+                "target_semantic_peak": (
+                    "0–1",
+                    "Peak cosine similarity between any patch and target label\u2077",
+                ),
+                "target_semantic_mean_on_causal_patches": (
+                    "0–1",
+                    "Mean target similarity on causal patches\u2077\u00b7\u2078",
+                ),
+                "target_margin_over_best_non_target": (
+                    "\u22121 to 1",
+                    "Target similarity minus best non-target\u2079. <0.08 = weak",
+                ),
+                "causal_semantic_alignment": (
+                    "0–1",
+                    "Alignment between target similarity map and GradCAM\u2078",
+                ),
+                "background_semantic_gap": (
+                    "\u22121 to 1",
+                    "Target similarity on causal patches minus on background\u2078",
+                ),
+                "target_position_std_px": (
+                    "pixels",
+                    "Std dev of target object position across episodes. <15 = near-fixed",
+                ),
+                "occlusion_action_delta": (
+                    "\u22650",
+                    "Action L2 change when target is occluded\u00b9\u00b9. Higher = model needs the object",
+                ),
+                "occlusion_target_semantic_drop": (
+                    "\u22121 to 1",
+                    "Change in target similarity after occlusion. Negative = degraded",
+                ),
+                "background_action_delta": (
+                    "\u22650",
+                    "Action L2 change when background is replaced\u00b9\u00b9",
+                ),
+                "recolor_action_delta": (
+                    "\u22650",
+                    "Action L2 change when target is recoloured\u00b9\u00b9",
+                ),
+                "qk_semantic_head_fraction": (
+                    "0–1",
+                    "Fraction of attention heads classified as semantic\u00b9\u2070",
+                ),
+                "qk_positional_head_fraction": (
+                    "0–1",
+                    "Fraction of attention heads classified as positional\u00b9\u2070",
                 ),
             }
+
+            sections.append("| Metric | Value | Scale | Meaning |")
+            sections.append("|---|---|---|---|")
             for key, val in diag.key_metrics.items():
                 if isinstance(val, float):
                     rendered = f"{val:.4f}"
                 else:
                     rendered = str(val)
-                scale, interp = _KEY_METRIC_INFO.get(
-                    key, ("—", "See Glossary for definition")
-                )
+                info = _KEY_METRIC_INFO.get(key)
+                if info:
+                    scale, interp = info
+                else:
+                    # Auto-infer: floats between 0–1 are likely ratios
+                    if isinstance(val, float) and 0 <= val <= 1:
+                        scale = "0–1"
+                    elif isinstance(val, float):
+                        scale = "\u22650"
+                    else:
+                        scale = "—"
+                    interp = key.replace("_", " ")
                 display_key = key.replace("_", " ").title()
                 sections.append(
                     f"| {display_key} | {rendered} | {scale} | {interp} |"
@@ -870,47 +1092,32 @@ class DiagnosticReport:
 
                 _SEMANTIC_METRIC_INFO: dict[str, tuple[str, str]] = {
                     "target_semantic_peak": (
-                        "0.0–1.0",
-                        "Highest cosine similarity between any image patch "
-                        "and the target object's text label. Higher means the "
-                        "encoder has at least one patch that strongly "
-                        "represents the target ^7",
+                        "0–1",
+                        "Peak patch-to-text similarity for target\u2077",
                     ),
                     "target_semantic_mean_on_causal_patches": (
-                        "0.0–1.0",
-                        "Average target-object similarity on \"causal "
-                        "patches\" — the patches that both receive high "
-                        "attention AND have high GradCAM attribution (top-5% "
-                        "intersection). This tells us whether the patches the "
-                        "model actually *uses* represent the target ^7 ^8",
+                        "0–1",
+                        "Mean target similarity on causal patches\u2077\u00b7\u2078",
                     ),
                     "target_margin_over_best_non_target": (
-                        "−1.0 to 1.0",
-                        "Target similarity minus the best non-target object's "
-                        "similarity. Positive = the encoder distinguishes the "
-                        "target from other objects. <0.08 = weak "
-                        "discrimination ^9",
+                        "\u22121 to 1",
+                        "Target minus best non-target similarity\u2079. <0.08 = weak",
                     ),
                     "causal_semantic_alignment": (
-                        "0.0–1.0",
-                        "How well the target-object similarity map aligns "
-                        "with the GradCAM causal map. High = the model uses "
-                        "patches that represent the target ^8",
+                        "0–1",
+                        "Alignment of target similarity with GradCAM map\u2078",
                     ),
                     "background_semantic_gap": (
-                        "−1.0 to 1.0",
-                        "Target similarity on causal patches minus target "
-                        "similarity on background patches. Positive = causal "
-                        "patches encode the target better than the background "
-                        "does ^8",
+                        "\u22121 to 1",
+                        "Causal vs background target similarity\u2078. Positive = good",
                     ),
                 }
 
-                sections.append("| Metric | Value | Scale | What It Means |")
+                sections.append("| Metric | Value | Scale | Meaning |")
                 sections.append("|---|---|---|---|")
-                sections.append(f"| Target object | {frame.target_object or 'N/A'} | — | The object being probed |")
-                sections.append(f"| Candidate labels | {', '.join(frame.candidate_labels)} | — | All object labels tested for similarity |")
-                sections.append(f"| Best non-target label | {frame.best_non_target_label or 'N/A'} | — | The non-target object with highest similarity (used to compute margin) |")
+                sections.append(f"| Target object | {frame.target_object or 'N/A'} | — | Object being probed |")
+                sections.append(f"| Candidate labels | {', '.join(frame.candidate_labels)} | — | All labels tested |")
+                sections.append(f"| Best non-target label | {frame.best_non_target_label or 'N/A'} | — | Strongest non-target match (used for margin) |")
                 for key in (
                     "target_semantic_peak",
                     "target_semantic_mean_on_causal_patches",
@@ -958,27 +1165,27 @@ class DiagnosticReport:
                 "vision encoder's last layer as \"semantic\" (attends to "
                 "object features), \"positional\" (attends to fixed spatial "
                 "locations), or \"mixed\". A model dominated by positional "
-                "heads may be using spatial shortcuts ^10.*"
+                "heads may be using spatial shortcuts\u00b9\u2070.*"
             )
             sections.append("")
-            sections.append("| Metric | Value | Scale | Interpretation |")
+            sections.append("| Metric | Value | Scale | Meaning |")
             sections.append("|---|---|---|---|")
-            sections.append(f"| Layer | {probe.layer} | — | Which encoder layer was analysed |")
+            sections.append(f"| Layer | {probe.layer} | — | Encoder layer analysed |")
             sections.append(
                 f"| Dominant head type | {probe.dominant_head_type} "
-                f"| — | The most common head type in this layer |"
+                f"| — | Most common head type |"
             )
             sections.append(
                 f"| Semantic head fraction | {probe.semantic_head_fraction:.4f} "
-                f"| 0.0–1.0 | Fraction of heads that attend based on visual content ^10 |"
+                f"| 0–1 | Heads attending to visual content\u00b9\u2070 |"
             )
             sections.append(
                 f"| Positional head fraction | {probe.positional_head_fraction:.4f} "
-                f"| 0.0–1.0 | Fraction of heads that attend based on spatial position ^10 |"
+                f"| 0–1 | Heads attending to spatial position\u00b9\u2070 |"
             )
             sections.append(
                 f"| Mixed head fraction | {probe.mixed_head_fraction:.4f} "
-                f"| 0.0–1.0 | Fraction of heads using both strategies |"
+                f"| 0–1 | Heads using both strategies |"
             )
             sections.append("")
             if probe.top_heads:
@@ -1070,46 +1277,35 @@ class DiagnosticReport:
             # Build a lookup from hypothesis_id to counterfactual result
             cf_map = {cr.hypothesis_id: cr for cr in self.counterfactual_results}
 
-            # Metric display names for readability
-            _METRIC_DISPLAY: dict[str, str] = {
-                "target_object": "Target object",
-                "fill": "Occlusion fill type",
-                "replacement": "Background replacement",
-                "shift_pixels": "Shift distance (pixels)",
-                "focus_follow_ratio": (
-                    "Focus follow ratio (0–1): fraction of causal "
-                    "attention that followed the moved object"
-                ),
-                "anchor_retention_ratio": (
-                    "Anchor retention ratio (0–1): fraction of causal "
-                    "attention that stayed at the original position"
-                ),
-                "semantic_follow_ratio": (
-                    "Semantic follow ratio (0–1): target-object "
-                    "similarity at the new location"
-                ),
-                "semantic_anchor_ratio": (
-                    "Semantic anchor ratio (0–1): target-object "
-                    "similarity at the original location"
-                ),
-                "original_target_semantic_peak": (
-                    "Original semantic peak (0–1): target similarity "
-                    "before perturbation"
-                ),
-                "occluded_target_semantic_peak": (
-                    "Occluded semantic peak (0–1): target similarity "
-                    "after occlusion"
-                ),
-                "occlusion_target_semantic_drop": (
-                    "Semantic drop: change in target similarity after "
-                    "occlusion (negative = representation degraded)"
-                ),
-                "hue_shift": "Hue shift applied",
-                "brightness_delta": "Brightness change",
-                "contrast_delta": "Contrast change",
-                "position": "Distractor position (x, y)",
-                "size": "Distractor size (pixels)",
-                "replacement_task": "Replacement task string",
+            # Metric display names: (label, scale_hint)
+            # scale_hint is appended in parentheses after the value
+            _METRIC_DISPLAY: dict[str, tuple[str, str]] = {
+                "target_object": ("Target object", ""),
+                "fill": ("Occlusion fill type", ""),
+                "replacement": ("Background replacement", ""),
+                "shift_pixels": ("Shift distance", "pixels"),
+                "focus_follow_ratio": ("Focus follow ratio", "0–1, higher = object-grounded"),
+                "anchor_retention_ratio": ("Anchor retention ratio", "0–1, higher = spatial-prior"),
+                "semantic_follow_ratio": ("Semantic follow ratio", "0–1"),
+                "semantic_anchor_ratio": ("Semantic anchor ratio", "0–1"),
+                "focus_shift_gap": ("Focus shift gap", "follow − anchor"),
+                "semantic_shift_gap": ("Semantic shift gap", "follow − anchor"),
+                "original_target_semantic_peak": ("Semantic peak (before)", "0–1"),
+                "occluded_target_semantic_peak": ("Semantic peak (after occlusion)", "0–1"),
+                "occlusion_target_semantic_drop": ("Semantic drop from occlusion", "negative = degraded"),
+                "original_target_gradcam_share": ("GradCAM share (before)", "0–1"),
+                "modified_old_anchor_share": ("GradCAM at old position (after)", "0–1"),
+                "modified_new_object_share": ("GradCAM at new position (after)", "0–1"),
+                "modified_old_anchor_target_semantic": ("Semantic at old position (after)", "0–1"),
+                "modified_new_object_target_semantic": ("Semantic at new position (after)", "0–1"),
+                "hue_shift": ("Hue shift applied", "0–1"),
+                "brightness_delta": ("Brightness change", ""),
+                "contrast_delta": ("Contrast change", ""),
+                "position": ("Distractor position", "x, y pixels"),
+                "size": ("Distractor size", "pixels"),
+                "distractor_size": ("Distractor size", "pixels"),
+                "distractor_source": ("Distractor source", ""),
+                "replacement_task": ("Replacement task string", ""),
             }
 
             for h in self.hypotheses:
@@ -1118,9 +1314,9 @@ class DiagnosticReport:
                 sections.append(f"### {h.id}: {h.description}")
                 sections.append("")
 
-                # Summary table
-                sections.append(f"| | |")
-                sections.append(f"|---|---|")
+                # Summary table — use a proper header row
+                sections.append("| Property | Details |")
+                sections.append("|---|---|")
                 sections.append(f"| **Confidence** | {h.confidence:.0%} |")
                 sections.append(f"| **Supporting anomalies** | {', '.join(h.supporting_anomalies)} |")
                 sections.append(f"| **Test type** | {h.test_type} |")
@@ -1162,24 +1358,35 @@ class DiagnosticReport:
                             f"(how much the attention pattern changed) |"
                         )
                     if cr.metrics:
-                        sections.append(f"| | |")
-                        sections.append(f"| **Probe metrics** | |")
+                        sections.append(f"| **Probe metrics** | — |")
                         for key, value in cr.metrics.items():
-                            display_name = _METRIC_DISPLAY.get(key, key)
+                            info = _METRIC_DISPLAY.get(key)
+                            if info:
+                                label, scale_hint = info
+                            else:
+                                label = key.replace("_", " ").title()
+                                # Auto-infer scale for floats 0–1
+                                if isinstance(value, float) and 0 <= value <= 1:
+                                    scale_hint = "0–1"
+                                elif isinstance(value, float):
+                                    scale_hint = ""
+                                else:
+                                    scale_hint = ""
                             if isinstance(value, float):
+                                val_str = f"{value:.4f}"
+                            else:
+                                val_str = str(value)
+                            if scale_hint:
                                 sections.append(
-                                    f"| {display_name} | {value:.4f} |"
+                                    f"| {label} | {val_str} ({scale_hint}) |"
                                 )
                             else:
                                 sections.append(
-                                    f"| {display_name} | {value} |"
+                                    f"| {label} | {val_str} |"
                                 )
                     if cr.attribution_shift_per_region:
-                        sections.append(f"| | |")
                         sections.append(
-                            f"| **Attribution shifts** | How much each "
-                            f"region's share of causal attention changed "
-                            f"(+ = gained, − = lost) |"
+                            f"| **Attribution shifts** | + = gained, \u2212 = lost |"
                         )
                         for k, v in cr.attribution_shift_per_region.items():
                             sections.append(f"| {k} | {v:+.4f} |")
@@ -1243,8 +1450,8 @@ class DiagnosticReport:
         sections.append("")
         sections.append(
             "*Definitions for technical terms used throughout this report. "
-            "Superscript numbers (^n) in the sections above link to "
-            "entries here.*"
+            "Superscript numbers (\u00b9\u00b2\u00b3...) in the sections above "
+            "correspond to entries here.*"
         )
         sections.append("")
         glossary_entries = [
@@ -1395,8 +1602,15 @@ class DiagnosticReport:
                 "total attention).",
             ),
         ]
+        _SUPER = {
+            "1": "\u00b9", "2": "\u00b2", "3": "\u00b3", "4": "\u2074",
+            "5": "\u2075", "6": "\u2076", "7": "\u2077", "8": "\u2078",
+            "9": "\u2079", "10": "\u00b9\u2070", "11": "\u00b9\u00b9",
+            "12": "\u00b9\u00b2", "13": "\u00b9\u00b3",
+        }
         for ref_num, term, definition in glossary_entries:
-            sections.append(f"**^{ref_num} {term}**")
+            sup = _SUPER.get(ref_num, ref_num)
+            sections.append(f"**{sup} {term}**")
             sections.append("")
             sections.append(definition)
             sections.append("")

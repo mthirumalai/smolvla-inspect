@@ -140,6 +140,28 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
     return diag_dir
 
 
+def regenerate_report_markdown(run_dir: str) -> str:
+    """Re-render ``report.md`` from the saved ``report.json``.
+
+    Use this after changing the markdown template in
+    :pyclass:`DiagnosticReport.to_markdown` to refresh an existing report
+    without re-running the diagnostic pipeline.
+
+    Returns the path to the regenerated ``report.md``.
+    """
+    data = load_diagnostic_report(run_dir)
+    if data is None:
+        raise FileNotFoundError(
+            f"No diagnostic report found in {run_dir}/diagnostic/report.json"
+        )
+    report = DiagnosticReport.from_dict(data)
+    md_path = os.path.join(run_dir, "diagnostic", "report.md")
+    with open(md_path, "w") as f:
+        f.write(report.to_markdown())
+    print(f"  Regenerated {md_path}")
+    return md_path
+
+
 def load_diagnostic_report(run_dir: str) -> dict | None:
     """Load a saved diagnostic report from a run directory.
 
