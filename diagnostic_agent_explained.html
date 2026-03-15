@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmolVLA Diagnostic Agent — How It Works</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #f8f7f4;
+    --white: #fffffe;
+    --surface: #f2f0ec;
+    --card: #fffffe;
+    --navy: #2c3042;
+    --navy-light: #3d4155;
+    --slate: #5c6070;
+    --muted: #787c8e;
+    --dim: #a3a7b5;
+    --border: #e6e4df;
+    --accent: #7b7ff0;
+    --accent-light: #9b9ef5;
+    --accent-bg: rgba(123, 127, 240, 0.07);
+    --teal: #3da69d;
+    --teal-light: #5abfb6;
+    --teal-bg: rgba(61, 166, 157, 0.07);
+    --coral: #e06b7a;
+    --coral-light: #eba0aa;
+    --coral-bg: rgba(224, 107, 122, 0.06);
+    --amber: #c99340;
+    --amber-light: #deb06a;
+    --amber-bg: rgba(201, 147, 64, 0.07);
+    --purple: #907ad4;
+    --purple-light: #b5a4e3;
+    --purple-bg: rgba(144, 122, 212, 0.06);
+    --green: #4aa88a;
+    --green-bg: rgba(74, 168, 138, 0.07);
+    --shadow-sm: 0 1px 4px rgba(0,0,0,0.04);
+    --shadow-md: 0 3px 12px rgba(0,0,0,0.04);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.05);
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--navy);
+    overflow: hidden;
+    height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    font-weight: 400;
+  }
+
+  /* ── Slide container ── */
+  .deck { position: relative; width: 100vw; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    justify-content: flex-start; padding: 2.8rem 4.5rem 2rem; opacity: 0;
+    transition: opacity 0.5s ease;
+    background: var(--white);
+    overflow: hidden;
+  }
+  .slide.active { display: flex; opacity: 1; }
+  .title-slide, .recap-slide { justify-content: center; }
+
+  /* ── Background decorations ── */
+  .slide::before, .slide::after {
+    content: ''; position: absolute; border-radius: 50%; z-index: 0; pointer-events: none;
+  }
+  .slide::before {
+    width: 600px; height: 600px; top: -250px; right: -200px;
+    background: radial-gradient(circle, rgba(123,127,240,0.04) 0%, transparent 70%);
+  }
+  .slide::after {
+    width: 500px; height: 500px; bottom: -200px; left: -150px;
+    background: radial-gradient(circle, rgba(61,166,157,0.03) 0%, transparent 70%);
+  }
+  .slide > * { position: relative; z-index: 1; }
+
+  /* ── Typography ── */
+  .slide h1 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;
+    line-height: 1.2; color: var(--navy);
+    letter-spacing: -0.015em;
+  }
+  .slide h2 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-size: 1.8rem; font-weight: 600; margin-bottom: 0.6rem;
+    color: var(--navy); letter-spacing: -0.01em;
+  }
+  .slide h3 {
+    font-size: 1.02rem; font-weight: 600; margin-bottom: 0.5rem;
+    color: var(--navy); letter-spacing: -0.005em;
+  }
+  .slide p, .slide li { font-size: 0.92rem; line-height: 1.65; color: var(--slate); }
+  .slide ul { list-style: none; padding-left: 0; }
+  .slide ul li { padding: 0.25rem 0; padding-left: 1.5rem; position: relative; }
+  .slide ul li::before {
+    content: ''; position: absolute; left: 0; top: 0.7rem;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--dim);
+  }
+  .slide .subtitle {
+    font-size: 1.15rem; color: var(--muted); margin-bottom: 1.2rem;
+    font-weight: 400; line-height: 1.5;
+  }
+
+  /* ── Emphasis ── */
+  .highlight { color: var(--accent); font-weight: 500; }
+  .hl-green { color: var(--green); font-weight: 500; }
+  .hl-teal { color: var(--teal); font-weight: 500; }
+  .hl-amber { color: var(--amber); font-weight: 500; }
+  .hl-coral { color: var(--coral); font-weight: 500; }
+  .hl-purple { color: var(--purple); font-weight: 500; }
+  code {
+    background: var(--surface); padding: 0.15em 0.5em; border-radius: 6px;
+    font-size: 0.86em; color: var(--slate); font-weight: 500;
+    border: 1px solid var(--border);
+  }
+  strong { color: var(--navy); font-weight: 600; }
+  small { color: var(--muted); font-size: 0.85em; }
+
+  /* ── Grid layouts ── */
+  .cols { display: grid; gap: 1.2rem; align-items: start; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .cols-23 { grid-template-columns: 2fr 3fr; }
+  .cols-32 { grid-template-columns: 3fr 2fr; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--white); border-radius: var(--radius); padding: 1.2rem 1.4rem;
+    border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+  }
+  .card:hover { box-shadow: var(--shadow-md); transform: translateY(-0.5px); }
+  .card h3 { margin-bottom: 0.4rem; }
+  .card p, .card li { font-size: 0.88rem; }
+
+  /* Card color accents */
+  .card-accent { border-left: 3px solid var(--accent); }
+  .card-teal { border-left: 3px solid var(--teal); }
+  .card-coral { border-left: 3px solid var(--coral); }
+  .card-amber { border-left: 3px solid var(--amber); }
+  .card-purple { border-left: 3px solid var(--purple); }
+  .card-green { border-left: 3px solid var(--green); }
+
+  /* ── Colored section headers ── */
+  .section-label {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; padding: 0.3rem 0.75rem; border-radius: 20px;
+    margin-bottom: 0.6rem;
+  }
+  .section-label.accent { background: var(--accent-bg); color: var(--accent); }
+  .section-label.teal { background: var(--teal-bg); color: var(--teal); }
+  .section-label.coral { background: var(--coral-bg); color: var(--coral); }
+  .section-label.amber { background: var(--amber-bg); color: var(--amber); }
+  .section-label.purple { background: var(--purple-bg); color: var(--purple); }
+
+  /* ── Pipeline diagram ── */
+  .pipeline {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    justify-content: center; margin: 1.2rem 0;
+  }
+  .pipe-step {
+    background: var(--white); border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    padding: 0.6rem 1rem; text-align: center; font-size: 0.82rem; font-weight: 500;
+    min-width: 115px; color: var(--navy); box-shadow: var(--shadow-sm);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  .pipe-step:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .pipe-step .num {
+    display: block; font-size: 0.62rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 2px;
+  }
+  .pipe-arrow { font-size: 1.2rem; color: var(--dim); margin: 0 0.25rem; }
+
+  .pipe-step.accent { border-color: var(--accent); }
+  .pipe-step.accent .num { color: var(--accent); }
+  .pipe-step.teal { border-color: var(--teal); }
+  .pipe-step.teal .num { color: var(--teal); }
+  .pipe-step.coral { border-color: var(--coral); }
+  .pipe-step.coral .num { color: var(--coral); }
+  .pipe-step.amber { border-color: var(--amber); }
+  .pipe-step.amber .num { color: var(--amber); }
+  .pipe-step.purple { border-color: var(--purple); }
+  .pipe-step.purple .num { color: var(--purple); }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; margin: 0.4rem 0; font-size: 0.85rem; }
+  th {
+    text-align: left; padding: 0.4rem 0.7rem; color: var(--slate);
+    font-weight: 600; font-size: 0.76rem; text-transform: uppercase;
+    letter-spacing: 0.04em; border-bottom: 1.5px solid var(--border);
+    background: var(--surface);
+  }
+  th:first-child { border-radius: 8px 0 0 0; }
+  th:last-child { border-radius: 0 8px 0 0; }
+  td { padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); color: var(--slate); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(242, 240, 236, 0.5); }
+
+  /* ── Flow diagram ── */
+  .flow-box {
+    display: inline-block; background: var(--white); border: 1.5px solid var(--accent);
+    border-radius: 8px; padding: 0.4rem 0.9rem; font-weight: 500; font-size: 0.85rem;
+    margin: 0.15rem; box-shadow: var(--shadow-sm);
+  }
+  .flow-arrow { display: inline-block; color: var(--dim); font-size: 1.1rem; margin: 0 0.3rem; vertical-align: middle; }
+
+  /* ── Nav ── */
+  .nav {
+    position: fixed; bottom: 1.5rem; right: 2rem; display: flex; gap: 0.5rem;
+    align-items: center; z-index: 100;
+  }
+  .nav button {
+    background: var(--white); border: 1px solid var(--border); color: var(--navy);
+    width: 42px; height: 42px; border-radius: 12px; cursor: pointer; font-size: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease; box-shadow: var(--shadow-sm);
+  }
+  .nav button:hover { background: var(--surface); color: var(--navy); border-color: var(--dim); box-shadow: var(--shadow-md); }
+  .nav .counter {
+    font-size: 0.8rem; color: var(--muted); min-width: 60px; text-align: center;
+    font-weight: 500;
+  }
+
+  /* ── Progress bar ── */
+  .progress-bar {
+    position: fixed; top: 0; left: 0; height: 2px; z-index: 200;
+    background: linear-gradient(90deg, var(--accent), var(--teal));
+    opacity: 0.6;
+    transition: width 0.5s ease; border-radius: 0 2px 2px 0;
+  }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block; padding: 0.2rem 0.6rem; border-radius: 6px;
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .badge-critical { background: var(--coral-bg); color: var(--coral); font-weight: 600; }
+  .badge-warning { background: var(--amber-bg); color: var(--amber); font-weight: 600; }
+  .badge-info { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+
+  /* ── Tags ── */
+  .tag {
+    display: inline-block; background: var(--surface); padding: 0.2rem 0.65rem;
+    border-radius: 6px; font-size: 0.8rem; margin: 0.12rem; color: var(--slate);
+    border: 1px solid var(--border); font-weight: 500;
+  }
+
+  /* ── Misc ── */
+  .spacer { height: 0.5rem; }
+  .spacer-sm { height: 0.5rem; }
+  .note { font-size: 0.82rem; color: var(--dim); margin-top: 0.8rem; }
+  .scroll-content { overflow-y: auto; max-height: 72vh; padding-right: 0.5rem; }
+  .scroll-content::-webkit-scrollbar { width: 4px; }
+  .scroll-content::-webkit-scrollbar-track { background: transparent; }
+  .scroll-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Title slide special ── */
+  .title-slide {
+    background: linear-gradient(135deg, #2c3042 0%, #3a3060 50%, #2c3042 100%);
+    color: white;
+  }
+  .title-slide::before {
+    width: 700px; height: 700px; top: -250px; right: -200px;
+    background: radial-gradient(circle, rgba(123,127,240,0.12) 0%, transparent 60%);
+  }
+  .title-slide::after {
+    width: 600px; height: 600px; bottom: -200px; left: -150px;
+    background: radial-gradient(circle, rgba(61,166,157,0.08) 0%, transparent 60%);
+  }
+  .title-slide h1 { color: white; font-size: 2.9rem; }
+  .title-slide .subtitle { color: rgba(255,255,255,0.75); }
+  .title-slide .card {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+  }
+  .title-slide .card:hover { background: rgba(255,255,255,0.12); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+  .title-slide .card h3 { color: rgba(255,255,255,0.95); }
+  .title-slide .card p { color: rgba(255,255,255,0.8); }
+  .title-slide .highlight { color: var(--accent-light); }
+  .title-slide .note { color: rgba(255,255,255,0.5); }
+
+  /* ── Recap slide special ── */
+  .recap-slide {
+    background: linear-gradient(135deg, #2c3042 0%, #2e3f58 50%, #2c3042 100%);
+    color: white;
+  }
+  .recap-slide::before {
+    width: 600px; height: 600px; top: -200px; right: -100px;
+    background: radial-gradient(circle, rgba(90,191,182,0.08) 0%, transparent 60%);
+  }
+  .recap-slide::after {
+    width: 500px; height: 500px; bottom: -180px; left: -120px;
+    background: radial-gradient(circle, rgba(123,127,240,0.06) 0%, transparent 60%);
+  }
+  .recap-slide h1 { color: white; }
+  .recap-slide li { color: rgba(255,255,255,0.65); }
+  .recap-slide strong { color: white; }
+
+  /* ── Divider line under h2 ── */
+  .slide h2::after {
+    content: ''; display: block; width: 40px; height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--teal));
+    opacity: 0.5; border-radius: 2px; margin-top: 0.5rem;
+  }
+  .title-slide h2::after, .recap-slide h1::after { display: none; }
+
+  /* ── Icon circles ── */
+  .icon-circle {
+    width: 36px; height: 36px; border-radius: 10px; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .icon-circle.accent { background: var(--accent-bg); color: var(--accent); }
+  .icon-circle.teal { background: var(--teal-bg); color: var(--teal); }
+  .icon-circle.coral { background: var(--coral-bg); color: var(--coral); }
+  .icon-circle.amber { background: var(--amber-bg); color: var(--amber); }
+  .icon-circle.purple { background: var(--purple-bg); color: var(--purple); }
+
+  /* ── AI badge ── */
+  .badge-ai {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: linear-gradient(135deg, #8b8ff0, #a390e0);
+    color: white; padding: 0.15rem 0.55rem; border-radius: 5px;
+    font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; vertical-align: middle; margin-left: 0.4rem;
+    box-shadow: 0 1px 3px rgba(123,127,240,0.2);
+  }
+  .badge-ai::before { content: '\2726'; font-size: 0.7rem; }
+  .pipe-step .ai-dot {
+    display: block; margin-top: 3px; font-size: 0.55rem; font-weight: 600;
+    color: white; background: linear-gradient(135deg, #8b8ff0, #a390e0);
+    padding: 0.1rem 0.35rem; border-radius: 3px; letter-spacing: 0.5px;
+  }
+  .title-slide .badge-ai {
+    background: linear-gradient(135deg, rgba(99,102,241,0.6), rgba(124,58,237,0.6));
+  }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progress" style="width: 5.26%;"></div>
+<div class="deck" id="deck">
+
+<!-- ════════════════════ SLIDE 1: TITLE ════════════════════ -->
+<div class="slide title-slide active">
+  <div class="section-label accent" style="background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); margin-bottom: 5rem;">SmolVLA Inspect</div>
+  <h1>The Diagnostic Agent</h1>
+  <p class="subtitle">How it figures out why your robot policy fails &mdash; and what to fix first</p>
+  <div class="spacer"></div>
+  <div class="cols cols-3">
+    <div class="card">
+      <div class="icon-circle coral">&#9888;</div>
+      <h3>The Problem</h3>
+      <p>Your VLA model makes wrong actions. Attention maps and GradCAM show <em>where</em> it looks, but not <em>why</em> it fails or <em>what</em> to change.</p>
+    </div>
+    <div class="card">
+      <div class="icon-circle accent">&#9881;</div>
+      <h3>The Approach</h3>
+      <p>Automatically analyze the scene, build a multi-signal attribution matrix, form hypotheses, and <span class="highlight">test them with counterfactual interventions</span>.</p>
+    </div>
+    <div class="card">
+      <div class="icon-circle teal">&#10004;</div>
+      <h3>The Output</h3>
+      <p>Ranked findings with <span class="highlight">evidence chains</span>, severity levels, and <strong>concrete, actionable fixes</strong> &mdash; not just pretty heatmaps.</p>
+    </div>
+  </div>
+  <p class="note">Use arrow keys or the buttons below to navigate</p>
+</div>
+
+<!-- ════════════════════ SLIDE 2: BIG PICTURE ════════════════════ -->
+<div class="slide">
+  <div class="section-label accent">Overview</div>
+  <h2>The Pipeline at a Glance</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">Nine phases, from raw image to actionable diagnosis. Each phase feeds into the next.</p>
+  <p style="margin-bottom:0.5rem; font-size:0.85rem; color: var(--dim);"><span class="badge-ai">AI</span> = LLM decides what to do next</p>
+  <div class="pipeline">
+    <div class="pipe-step teal"><span class="num">Phase 1</span>Scene<br>Understanding</div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step teal"><span class="num">Phase 2</span>Dataset<br>Diversity</div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step accent"><span class="num">Phase 3</span>Signal<br>Extraction<span class="ai-dot">AI</span></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step accent"><span class="num">Phase 4</span>Diagnostic<br>Matrix</div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step purple"><span class="num">Phase 5</span>Representation<br>Probes</div>
+  </div>
+  <div class="pipeline" style="margin-top:0.5rem;">
+    <div class="pipe-step amber"><span class="num">Phase 6</span>LLM Hypothesis<br>Formation<span class="ai-dot">AI</span></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step coral"><span class="num">Phase 7</span>Counterfactual<br>Verification<span class="ai-dot">AI</span></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step purple"><span class="num">Phase 8</span>Spatial vs Object<br>Diagnosis</div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step amber"><span class="num">Phase 9</span>Report<br>Synthesis<span class="ai-dot">AI</span></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="cols cols-3">
+    <div class="card card-accent">
+      <h3>Key Idea: Evidence Chain</h3>
+      <p>Every final recommendation is backed by: <span class="hl-teal">signal data</span> &rarr; <span class="hl-amber">anomaly detection</span> &rarr; <span class="hl-purple">hypothesis</span> &rarr; <span class="hl-coral">counterfactual test result</span>. No guessing.</p>
+    </div>
+    <div class="card card-teal">
+      <h3>Two Run Modes</h3>
+      <p><strong>Integrated:</strong> load model + dataset, run everything.<br>
+         <strong>Post-hoc:</strong> analyze saved heatmaps from a previous run (faster, no GPU needed for matrix/anomalies).</p>
+    </div>
+    <div class="card card-purple">
+      <h3>What Makes It AI-Driven?</h3>
+      <p>The LLM <em>decides</em> which signals to compute, which hypotheses to test, whether to run follow-up experiments, and how to synthesize the narrative. Different evidence leads to different diagnostic paths.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 3: AGENTIC DECISION TREE ════════════════════ -->
+<div class="slide">
+  <div class="section-label accent">Decision Logic</div>
+  <h2>The AI Decision Tree</h2>
+  <p style="margin-bottom:0.4rem; color: var(--muted);">Each phase's output determines which branch executes next.</p>
+  <div>
+  <div style="display:flex; gap:1rem; align-items:flex-start;">
+
+    <!-- LEFT: The tree diagram -->
+    <div style="flex:3; font-size:0.78rem; line-height:1.7; font-family:'Space Grotesk','Inter',monospace; color:var(--slate);">
+      <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:1rem 1.3rem;">
+        <span style="color:var(--teal); font-weight:700;">START</span> &nbsp;Sample frame + task string from dataset<br>
+        <span style="color:var(--dim);">├─</span> <strong>Parse task string</strong> &rarr; noun chunks &rarr; object queries<br>
+        <span style="color:var(--dim);">├─</span> <strong>OWL-ViT v2 detection</strong> on each query<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> detections &ge; threshold (0.10)? &rarr; <span class="hl-green">use them</span><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> zero detections? &rarr; <span class="hl-amber">retry at 0.03</span> (fallback)<br>
+        <span style="color:var(--dim);">├─</span> <strong>SAM segmentation</strong> on each bbox<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> SAM available? &rarr; <span class="hl-green">pixel-precise masks</span><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> SAM unavailable? &rarr; <span class="hl-amber">rectangular bbox masks</span><br>
+        <span style="color:var(--dim);">├─</span> <strong>Always-run cheap signals:</strong> attention, saliency, positional baseline, vision-vs-state<br>
+        <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">DECISION</span> <strong>LLM Signal Triage</strong><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> Reviews cheap signal summary + anomaly hints<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> Selects up to <strong>4 expensive signals</strong> from registry <em style="color:var(--muted);">(different evidence &rarr; different signal choices every run)</em><br>
+        <span style="color:var(--dim);">├─</span> <strong>Build diagnostic matrix</strong> + run <strong>13 anomaly detectors</strong> (fixed thresholds)<br>
+        <span style="color:var(--dim);">├─</span> <strong>Model loaded?</strong><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> YES &rarr; run semantic probe <em style="color:var(--muted);">(checks if patches encode target object via cosine similarity)</em> + QK probe <em style="color:var(--muted);">(classifies attention heads as semantic vs positional)</em><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> NO (post-hoc) &rarr; <span class="hl-amber">skip probes, skip counterfactuals</span><br>
+        <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">DECISION</span> <strong>LLM Hypothesis Formation</strong><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> API key present? &rarr; <span class="hl-green">LLM generates hypotheses + test params</span><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> No API key? &rarr; <span class="hl-amber">rule-based: anomaly &rarr; template hypothesis</span><br>
+        <span style="color:var(--dim);">├─</span> <strong>Execute counterfactuals</strong> (mandatory 4 + hypothesis-driven)<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">LOOP</span> Surprising result? &rarr; <strong>form follow-up hypothesis</strong> &rarr; re-test<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> Budget exhausted (max 7 total)? &rarr; <span class="hl-coral">stop iteration</span><br>
+        <span style="color:var(--dim);">├─</span> <strong>Spatial vs. Object diagnosis</strong><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> Inconclusive? &rarr; <span class="hl-amber">run QK decomposition as tiebreaker</span> <em style="color:var(--muted);">(decomposes each attention head's Q*K matrix to measure content vs position encoding ratio)</em><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> Clear verdict? &rarr; <span class="hl-green">proceed to report</span><br>
+        <span style="color:var(--dim);">└─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">DECISION</span> <strong>LLM Report Synthesis</strong> &rarr; ranked findings + narrative<br>
+      </div>
+    </div>
+
+    <!-- RIGHT: Legend -->
+    <div style="flex:1.2; display:flex; flex-direction:column; gap:0.6rem;">
+      <div class="card card-accent">
+        <h3 style="font-size:0.9rem;">4 Decision Points</h3>
+        <p>Signal triage, hypothesis formation, iterative follow-up, and report synthesis.</p>
+      </div>
+      <div class="card card-teal">
+        <h3 style="font-size:0.9rem;">3 Fallback Branches</h3>
+        <p>Detection confidence, SAM &rarr; bbox, LLM &rarr; rule-based. Never blocks.</p>
+      </div>
+      <div class="card card-coral">
+        <h3 style="font-size:0.9rem;">1 Iteration Loop</h3>
+        <p>Unconfirmed hypothesis &rarr; new hypotheses &rarr; re-test. Budget: 7 total tests.</p>
+      </div>
+      <div class="card card-amber">
+        <h3 style="font-size:0.9rem;">Key Insight</h3>
+        <p>Two runs on the <em>same model</em> can follow different diagnostic paths.</p>
+      </div>
+    </div>
+
+  </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 4: AI BUILDING BLOCKS ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">AI / ML Components</div>
+  <h2>AI Under the Hood</h2>
+  <p style="margin-bottom:0.6rem; color: var(--muted);">The diagnostic system orchestrates <strong>six distinct AI/ML techniques</strong>.</p>
+  <div class="cols cols-3" style="margin-bottom:0.8rem;">
+    <div class="card card-teal">
+      <h3>Task String Parsing (NLP)</h3>
+      <p>Regex-based noun chunking: tokenizes instruction, removes stop words, returns noun phrases + implicit <code>"robot gripper"</code> query.</p>
+      <p style="margin-top:0.3rem;"><code>"pick up the white lego block"</code> &rarr; <span class="tag">white lego block</span> <span class="tag">robot gripper</span></p>
+    </div>
+    <div class="card card-accent">
+      <h3>Object Detection &mdash; OWL-ViT v2</h3>
+      <p>Open-vocabulary ViT. <span class="highlight">Cross-modal dot products</span> between image patches and text queries &rarr; confidence per (query, bbox). Per-class NMS keeps top-3.</p>
+      <p style="margin-top:0.3rem;">No fixed label set &mdash; detects <em>any</em> object described in natural language.</p>
+    </div>
+    <div class="card card-purple">
+      <h3>Segmentation &mdash; SAM</h3>
+      <p>Prompted with each OWL-ViT bbox. Produces pixel-level binary masks (H&times;W). Background = complement of all object masks.</p>
+    </div>
+  </div>
+  <div class="cols cols-3">
+    <div class="card card-coral">
+      <h3>GradCAM &mdash; Gradient Attribution</h3>
+      <p>Which patches <em>causally</em> drive actions? Per-patch importance = <span class="highlight">attention &times; gradient magnitude</span>. 1024 patches &rarr; 32&times;32 &rarr; upsample to 512&times;512 heatmap.</p>
+      <p class="note">Attention alone is representational. GradCAM adds gradient weighting for causality.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>Saliency Maps &mdash; Input Gradients</h3>
+      <p>Which raw <em>pixels</em> matter? Enable gradients on input, backward pass, extract <code>image.grad</code> &rarr; L2 norm across channels &rarr; per-pixel map.</p>
+      <p style="margin-top:0.3rem;">Full 512&times;512 resolution (finer than GradCAM's 32&times;32 but noisier).</p>
+    </div>
+    <div class="card card-green">
+      <h3>SigLIP Semantic Probe</h3>
+      <p>Do internal features encode the target? <span class="highlight">Cosine similarity</span> between patch embeddings and text embeddings.</p>
+      <p style="margin-top:0.3rem;"><strong>Key:</strong> <code>margin = target_sim - best_non_target_sim</code>. Low margin (&lt;0.08) = object confusion.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 5: WHAT IS SMOLVLA ════════════════════ -->
+<div class="slide">
+  <div class="section-label purple">Background</div>
+  <h2>The SmolVLA Architecture</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">Before we diagnose, we need to know what we're diagnosing.</p>
+  <div class="pipeline">
+    <div class="pipe-step teal" style="min-width:155px"><span class="num">Vision Encoder</span>SigLIP<br><small>12 layers, 12 heads<br>1024 patches</small></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step accent" style="min-width:155px"><span class="num">Connector</span>Pixel-Shuffle<br><small>1024 &rarr; 64 tokens<br>93.75% compression</small></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step purple" style="min-width:155px"><span class="num">Language Model</span>VLM<br><small>16 layers, 15 heads<br>fuses vision + language</small></div>
+    <span class="pipe-arrow">&rarr;</span>
+    <div class="pipe-step coral" style="min-width:155px"><span class="num">Action Expert</span>Decoder<br><small>16 layers, 8 heads<br>predicts robot actions</small></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="cols cols-3">
+    <div class="card card-amber">
+      <h3>Self-Attention</h3>
+      <p><span class="hl-amber">Representational</span> &mdash; shows what the encoder focuses on, but not necessarily what <em>drives</em> the action output. Think of it as "what the model looks at."</p>
+    </div>
+    <div class="card card-purple">
+      <h3>Cross-Attention</h3>
+      <p><span class="hl-purple">Closer to causal</span> &mdash; the action expert reads from VLM outputs via cross-attention. High cross-attention on a region means the decoder is actively using it.</p>
+    </div>
+    <div class="card card-green">
+      <h3>GradCAM / Saliency</h3>
+      <p><span class="hl-green">Causal</span> &mdash; gradient-based signals that answer: "if I change these pixels, how much does the action change?" This is the strongest evidence.</p>
+    </div>
+  </div>
+  <p class="note">The diagnostic agent compares these three signal types against each other. When they disagree, that's informative.</p>
+</div>
+
+<!-- ════════════════════ SLIDE 4: SCENE UNDERSTANDING ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">Phase 1</div>
+  <h2>Scene Understanding</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">The agent needs to know <em>what's in the scene</em> before it can measure <em>where the model looks</em>.</p>
+  <div class="cols cols-23">
+    <div>
+      <div class="card card-teal" style="margin-bottom:0.5rem;">
+        <h3>Step 1: Parse the Task</h3>
+        <p>Extract object names from the language instruction using rule-based noun chunking.</p>
+        <p style="margin-top:0.5rem;"><code>"pick up the white lego block and place it in the stainless steel cup"</code></p>
+        <p style="margin-top:0.3rem; text-align:center; color: var(--dim);">&darr;</p>
+        <p><span class="tag">white lego block</span> <span class="tag">stainless steel cup</span> <span class="tag">robot gripper</span></p>
+      </div>
+      <div class="card card-accent" style="margin-bottom:0.5rem;">
+        <h3>Step 2: Detect Objects</h3>
+        <p><span class="highlight">OWL-ViT v2</span> &mdash; open-vocabulary detector. Searches the image for each parsed object query. Confidence threshold: 0.10.</p>
+        <p style="margin-top:0.5rem;"><span class="hl-amber">Fallback:</span> if any query gets zero detections, re-scans at 0.03 confidence to recover task-critical objects.</p>
+      </div>
+      <div class="card card-purple">
+        <h3>Step 3: Segment Objects</h3>
+        <p><span class="highlight">SAM (Segment Anything)</span> &mdash; takes each bounding box and produces a pixel-level mask.</p>
+        <p style="margin-top:0.5rem;"><span class="hl-amber">Fallback:</span> if SAM is unavailable, creates rectangular masks from bounding boxes. Background = everything not covered by any object.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="height:100%; display:flex; flex-direction:column; justify-content:center; background: linear-gradient(135deg, var(--teal-bg) 0%, var(--accent-bg) 100%); border: 1px solid var(--border);">
+        <h3>Why This Matters</h3>
+        <p style="margin-bottom:0.5rem;">Without scene segmentation, we can only say "the model looks at the top-left." With it, we can say "the model puts 78% of its causal attention on the <em>background</em> and only 3% on the <em>target cup</em>."</p>
+        <h3>Output: SceneSegmentation</h3>
+        <ul>
+          <li>Per-object binary masks (H &times; W)</li>
+          <li>Background mask (complement of all objects)</li>
+          <li>Object labels, bounding boxes, confidence scores</li>
+        </ul>
+        <p style="margin-top:1rem;">This is used everywhere downstream &mdash; the matrix, the counterfactuals, and the probes all need to know which pixels belong to which semantic region.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 5: SIGNALS ════════════════════ -->
+<div class="slide">
+  <div class="section-label accent">Phase 3</div>
+  <h2>Signal Extraction</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">The agent collects multiple <em>views</em> of model behavior. No single signal tells the whole story.</p>
+  <div>
+  <table>
+    <tr><th>Signal</th><th>What It Measures</th><th>Type</th><th>Cost</th></tr>
+    <tr><td><strong>Self-Attention</strong></td><td>Where the SigLIP encoder focuses (last layer or rollout across layers)</td><td><span class="hl-amber">Representational</span></td><td><span class="tag">Cheap</span></td></tr>
+    <tr><td><strong>GradCAM (SigLIP)</strong></td><td>Which patches causally affect the action prediction, via gradients at the encoder output</td><td><span class="hl-green">Causal</span></td><td><span class="tag">Expensive</span></td></tr>
+    <tr><td><strong>Cross-Attention</strong></td><td>Which vision tokens the action decoder reads from during denoising</td><td><span class="hl-purple">Near-causal</span></td><td><span class="tag">Cheap</span></td></tr>
+    <tr><td><strong>Saliency</strong></td><td>Which <em>input pixels</em> (not patches) most affect the action, via input gradients</td><td><span class="hl-green">Causal</span></td><td><span class="tag">Expensive</span></td></tr>
+    <tr><td><strong>GradCAM (Connector)</strong></td><td>Information flow through the pixel-shuffle bottleneck (1024 &rarr; 64 tokens)</td><td><span class="hl-green">Causal</span></td><td><span class="tag">Expensive</span></td></tr>
+    <tr><td><strong>Vision vs. State</strong></td><td>Fraction of gradient norm from vision pathway vs. proprioceptive state</td><td><span class="hl-amber">Scalar</span></td><td><span class="tag">Moderate</span></td></tr>
+    <tr><td><strong>Per-Action-Dim</strong></td><td>Separate GradCAM per action dimension (x, y, z, roll, pitch, yaw, gripper)</td><td><span class="hl-green">Causal</span></td><td><span class="tag">Expensive</span></td></tr>
+    <tr><td><strong>Language Diff</strong></td><td>GradCAM shift when you change the task instruction to something else</td><td><span class="hl-green">Causal</span></td><td><span class="tag">Expensive</span></td></tr>
+  </table>
+  <div class="spacer-sm"></div>
+  <div class="cols cols-2">
+    <div class="card card-accent">
+      <h3>Adaptive Budget <span class="badge-ai">AI</span></h3>
+      <p>Cheap signals run first. LLM reads their summary and selects up to <strong>4 expensive signals</strong> from the registry based on what anomalies it sees.</p>
+    </div>
+    <div class="card card-teal">
+      <h3>Post-Hoc Mode</h3>
+      <p>Loads pre-computed heatmaps from NPZ files. No model needed for matrix &mdash; only counterfactuals require loading the model.</p>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 6: ATTRIBUTION MASS ════════════════════ -->
+<div class="slide">
+  <div class="section-label accent">Phase 4</div>
+  <h2>The Diagnostic Matrix</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">The core data structure. It answers: <em>"for each signal, what fraction of its total energy lands on each scene region?"</em></p>
+  <div class="cols cols-32">
+    <div>
+      <div class="card card-accent" style="margin-bottom:0.5rem;">
+        <h3>Attribution Mass</h3>
+        <p>For each (signal, region) pair:</p>
+        <p style="margin:0.8rem 0; text-align:center; font-size:1.1rem;">
+          <code>mass(signal, region) = &Sigma; heatmap[region] / &Sigma; heatmap[all]</code>
+        </p>
+        <p>Each signal's masses sum to ~1.0 across all regions. This normalizes for the fact that different signals have different magnitudes.</p>
+        <p style="margin-top:0.8rem;"><strong>Example matrix row (GradCAM):</strong></p>
+        <table style="margin-top:0.4rem;">
+          <tr><th>Region</th><th>Mass</th></tr>
+          <tr><td>background</td><td><span class="hl-coral">0.78</span></td></tr>
+          <tr><td>robot gripper</td><td>0.14</td></tr>
+          <tr><td>lego block</td><td><span class="hl-coral">0.03</span></td></tr>
+          <tr><td>steel cup</td><td>0.05</td></tr>
+        </table>
+        <p class="note">78% of causal signal on background &mdash; that's a problem.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card card-purple" style="margin-bottom:0.5rem;">
+        <h3>Scalar Metrics</h3>
+        <p>Alongside the matrix, the agent computes:</p>
+        <ul>
+          <li><strong>Vision share:</strong> % of gradient from vision vs. state pathway</li>
+          <li><strong>Positional baseline ratio:</strong> cosine similarity to a content-free spatial prior (&gt;0.6 = spatial shortcut)</li>
+          <li><strong>Foreground ratio:</strong> total non-background attribution</li>
+          <li><strong>Cross-attention entropy:</strong> how diffuse the decoder's attention is (&gt;5.0 = near-uniform)</li>
+        </ul>
+      </div>
+      <div class="card card-teal">
+        <h3>Multi-Frame Averaging</h3>
+        <p>The matrix is computed per-frame, then averaged. This smooths out frame-specific noise and reveals consistent patterns. Frame-to-frame variance is also tracked (used by the "unstable GradCAM" anomaly detector).</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 7: ANOMALY DETECTION ════════════════════ -->
+<div class="slide">
+  <div class="section-label coral">Detection</div>
+  <h2>Anomaly Detection</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">13 domain-specific detectors run against the matrix. Each checks a known failure pattern.</p>
+  <table>
+    <tr><th>Anomaly</th><th>Severity</th><th>Trigger</th><th>What It Means</th></tr>
+    <tr><td><strong>High background attribution</strong></td><td><span class="badge badge-critical">Critical</span></td><td>GradCAM background &gt;75%</td><td>Actions driven by background, not task objects</td></tr>
+    <tr><td><strong>Spatial shortcut</strong></td><td><span class="badge badge-critical">Critical</span></td><td>Positional baseline &gt;0.6 + low object attr</td><td>Memorized positions, not recognizing objects</td></tr>
+    <tr><td><strong>Low object attribution</strong></td><td><span class="badge badge-critical">Critical</span></td><td>Target object GradCAM &lt;5%</td><td>Not using the target object</td></tr>
+    <tr><td><strong>Attention-GradCAM divergence</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Region differs &gt;0.3 attn vs GradCAM</td><td>Looks at regions it doesn't use</td></tr>
+    <tr><td><strong>Dead state pathway</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Vision share &gt;99.5%</td><td>Proprioceptive state ignored</td></tr>
+    <tr><td><strong>Language insensitivity</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Lang diff max shift &lt;0.05</td><td>Instruction change has no effect</td></tr>
+    <tr><td><strong>Low dataset diversity</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Position std &lt;15px, bg div &lt;0.02</td><td>Training data too uniform</td></tr>
+    <tr><td><strong>Gripper fixation</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Gripper &gt;40% causal signal</td><td>Over-reliance on gripper</td></tr>
+    <tr><td><strong>Cross-attention diffuse</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Cross-attn entropy &gt;5.0</td><td>Decoder reads all tokens equally</td></tr>
+    <tr><td><strong>Temporal instability</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Centroid smooth &gt;0.15, tracking &lt;0.3</td><td>Attention jumps erratically</td></tr>
+    <tr><td><strong>Action-attention misalign</strong></td><td><span class="badge badge-warning">Warning</span></td><td>Translation dims &rarr; background</td><td>Spatial dims use shortcuts</td></tr>
+    <tr><td><strong>Single region dependency</strong></td><td><span class="badge badge-info">Info</span></td><td>All dims attribute to same region</td><td>No per-dimension specialization</td></tr>
+    <tr><td><strong>Unstable GradCAM</strong></td><td><span class="badge badge-info">Info</span></td><td>GradCAM std/mean &gt;1.0</td><td>Noisy gradient attribution</td></tr>
+  </table>
+</div>
+
+<!-- ════════════════════ SLIDE 8: REPRESENTATION PROBES ════════════════════ -->
+<div class="slide">
+  <div class="section-label purple">Phase 5</div>
+  <h2>Representation Probes</h2>
+  <p style="margin-bottom:0.6rem; color: var(--muted);">Deeper analysis of <em>what the model represents</em> at the patch level, beyond just heatmap attribution.</p>
+  <div class="cols cols-2">
+    <div class="card card-accent">
+      <h3>Semantic Probe (Patch &harr; Text)</h3>
+      <p>Measures whether patch representations encode the target object's semantics. Cosine similarity between SigLIP patch embeddings and text embeddings.</p>
+      <p style="margin-top:0.4rem;"><strong>Key metrics:</strong></p>
+      <ul>
+        <li><span class="highlight">Semantic peak</span> &mdash; max similarity to target across all patches</li>
+        <li><span class="highlight">Causal alignment</span> &mdash; similarity on GradCAM-selected patches</li>
+        <li><span class="highlight">Margin</span> &mdash; target sim minus best non-target (low = object confusion)</li>
+        <li><span class="highlight">Background gap</span> &mdash; target semantics on causal vs background patches</li>
+      </ul>
+    </div>
+    <div class="card card-purple">
+      <h3>QK Probe (Head Classification)</h3>
+      <p>Classifies each attention head as <span class="hl-green">semantic</span>, <span class="hl-amber">positional</span>, or <span class="hl-purple">mixed</span>. Computes QK attention map per head, then measures:</p>
+      <ul>
+        <li><strong>Semantic correlation:</strong> Pearson r with text-similarity map</li>
+        <li><strong>Positional correlation:</strong> Pearson r with content-free positional baseline</li>
+        <li><strong>Relocation test:</strong> Does attention follow a moved object?</li>
+      </ul>
+      <p style="margin-top:0.4rem;"><strong>Classification:</strong> <code>advantage = semantic_corr - positional_corr + relocation_bonus</code></p>
+      <p>&gt;0.08 &rarr; <span class="hl-green">semantic</span> &nbsp; &lt;-0.08 &rarr; <span class="hl-amber">positional</span> &nbsp; else &rarr; <span class="hl-purple">mixed</span></p>
+      <p class="note">Positional-dominated model likely uses spatial shortcuts.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 9: HYPOTHESIS FORMATION ════════════════════ -->
+<div class="slide">
+  <div class="section-label amber">Phase 6</div>
+  <h2>LLM Hypothesis Formation <span class="badge-ai">AI</span></h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">The LLM doesn't just list problems &mdash; it <strong>designs experiments</strong> to verify them.</p>
+  <div class="cols cols-23">
+    <div>
+      <div class="card card-amber" style="margin-bottom:0.8rem;">
+        <h3>Step 1: Build the Prompt</h3>
+        <p>System assembles: architecture context, task + scene, diagnostic matrix (markdown), anomaly list with values, probe results, and available tests (auto-generated from counterfactual registry).</p>
+      </div>
+      <div class="card card-teal" style="margin-bottom:0.8rem;">
+        <h3>Step 2: LLM Generates JSON</h3>
+        <p>Returns a <strong>JSON array</strong> of hypotheses. Robust parser handles markdown fences, trailing commas, partial failures.</p>
+      </div>
+      <div class="card card-purple">
+        <h3>Fallback: Rule-Based</h3>
+        <p>No API key? Each anomaly maps to a <code>HypothesisTemplate</code> via registry lookup. Same pipeline, no LLM reasoning.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card card-accent" style="margin-bottom:0.8rem;">
+        <h3>Hypothesis Structure</h3>
+        <p>Each of up to <strong>7 hypotheses</strong> includes:</p>
+        <table style="margin-top:0.3rem;">
+          <tr><td><code>description</code></td><td>What might be wrong</td></tr>
+          <tr><td><code>confidence</code></td><td>0&ndash;1, how sure the LLM is</td></tr>
+          <tr><td><code>test_type</code></td><td>Which counterfactual to run</td></tr>
+          <tr><td><code>test_params</code></td><td>Specific parameters (LLM-chosen)</td></tr>
+          <tr><td><code>confirms_on_change</code></td><td>Direction of confirmation</td></tr>
+        </table>
+      </div>
+      <div class="card card-coral" style="margin-bottom:0.8rem;">
+        <h3>Step 3: Iterative Follow-Up</h3>
+        <p style="margin-bottom:0.4rem; text-align:center;">
+          <span class="flow-box" style="border-color:var(--amber);">Hypothesis</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--coral);">Test Result</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--accent);">Surprising?</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--purple);">New Hypothesis</span>
+        </p>
+        <p>Budget-capped at 7 total tests. Unconfirmed hypotheses get confidence reduced by 60%.</p>
+      </div>
+      <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--amber-bg) 100%);">
+        <h3>confirms_on_change</h3>
+        <p><span class="hl-green">true</span>: Confirmed when action <strong>changes</strong>. &nbsp; <span class="hl-coral">false</span>: Confirmed when action <strong>doesn't change</strong>.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 10: COUNTERFACTUALS ════════════════════ -->
+<div class="slide">
+  <div class="section-label coral">Phase 7</div>
+  <h2>Counterfactual Primitives</h2>
+  <p style="margin-bottom:0.6rem; color: var(--muted);">Eight deterministic primitives the agent digitally applies to the scene. The primitives themselves always do the same thing &mdash; but <em>which</em> ones run and with what parameters is decided by the LLM.</p>
+  <div class="cols" style="grid-template-columns:1fr 1fr 1fr 1fr; margin-bottom:0.8rem;">
+    <div class="card card-teal">
+      <h3>1. Background Substitution</h3>
+      <p>Replace background with gray/noise/blur. High delta = model uses background.</p>
+    </div>
+    <div class="card card-accent">
+      <h3>2. Object Relocation</h3>
+      <p>Move target by (dx,dy). Tests object tracking vs position memorization.</p>
+    </div>
+    <div class="card card-purple">
+      <h3>3. Object Recolor</h3>
+      <p>Shift hue in HSV. Low delta = shape-based, not colour-based recognition.</p>
+    </div>
+    <div class="card card-coral">
+      <h3>4. Occlusion (Targeted)</h3>
+      <p>Cover target with gray/noise. Low delta = spatial shortcut (doesn't need to see object).</p>
+    </div>
+  </div>
+  <div class="cols" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+    <div class="card card-amber">
+      <h3>5. Task String Swap</h3>
+      <p>Replace instruction with "do nothing". Confirmed when actions <em>don't</em> change (language-blind).</p>
+    </div>
+    <div class="card card-green">
+      <h3>6. Distractor Insertion</h3>
+      <p>Insert synthetic ellipse/noise. High delta = model distracted by novel objects.</p>
+    </div>
+    <div class="card">
+      <h3>7. Lighting Perturbation</h3>
+      <p>Adjust brightness/contrast. Tests robustness to lighting changes.</p>
+    </div>
+    <div class="card">
+      <h3>8. Temporal Consistency</h3>
+      <p>Same perturbation across frames. Tests response consistency over time.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 11: MANDATORY TESTS ════════════════════ -->
+<div class="slide">
+  <div class="section-label coral">Testing Strategy</div>
+  <h2>Mandatory vs. Hypothesis-Driven Tests</h2>
+  <p style="margin-bottom:0.6rem; color: var(--muted);">Not all counterfactuals are LLM-chosen. Some always run for comparability across diagnostic runs.</p>
+  <div class="cols cols-2">
+    <div class="card card-accent">
+      <h3>Mandatory (Always Run)</h3>
+      <p>These four tests run on every diagnostic, regardless of what the LLM hypothesizes. This ensures you can compare results across models and runs.</p>
+      <div class="spacer-sm"></div>
+      <table>
+        <tr><td><span class="tag">background_substitution</span></td><td>gray fill</td></tr>
+        <tr><td><span class="tag">object_relocation</span></td><td>shift target object</td></tr>
+        <tr><td><span class="tag">task_string_swap</span></td><td>"do nothing"</td></tr>
+        <tr><td><span class="tag">occlusion_targeted</span></td><td>gray fill on target</td></tr>
+      </table>
+    </div>
+    <div class="card card-amber">
+      <h3>Hypothesis-Driven <span class="badge-ai">AI</span></h3>
+      <p>The LLM <strong>chooses</strong> which additional tests to run based on anomalies. The agent also runs <span class="highlight">iterative follow-ups</span> if initial results are surprising:</p>
+      <ul>
+        <li>A high-confidence hypothesis wasn't confirmed &rarr; investigate further</li>
+        <li>An unexpectedly large delta appears &rarr; probe with a different primitive</li>
+      </ul>
+      <div class="spacer-sm"></div>
+      <p>Total counterfactual budget is configurable (default: 3 hypothesis-driven + all mandatory).</p>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%);">
+    <h3>How Confirmation Works</h3>
+    <p>A counterfactual result is evaluated against the hypothesis:</p>
+    <p style="margin:0.5rem 0; font-size:1rem;">
+      <code>significant_change = action_delta_L2 > 0.02</code>
+    </p>
+    <p>If <code>confirms_on_change = true</code>: &nbsp;confirmed when change IS significant (model depends on the feature).</p>
+    <p>If <code>confirms_on_change = false</code>: &nbsp;confirmed when change is NOT significant (model ignores the feature).</p>
+    <p style="margin-top:0.5rem;">Unconfirmed hypotheses have their confidence <strong>reduced by 60%</strong> in the final report.</p>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 12: SPATIAL VS OBJECT ════════════════════ -->
+<div class="slide">
+  <div class="section-label purple">Phase 8</div>
+  <h2>Spatial vs. Object Diagnosis</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">The critical question: <em>is the model recognizing objects, or just memorizing where they usually are?</em></p>
+  <div class="cols cols-2">
+    <div>
+      <div class="card card-accent" style="margin-bottom:0.5rem;">
+        <h3>Four Evidence Sources</h3>
+        <ul>
+          <li><span class="highlight">Positional baseline ratio</span> &mdash; high similarity to a content-free spatial pattern suggests spatial bias</li>
+          <li><span class="highlight">Semantic margin</span> &mdash; can the model distinguish the target from background and other objects in representation space?</li>
+          <li><span class="highlight">Relocation follow-through</span> &mdash; when the object is moved, does the causal signal follow it (object grounding) or stay at the old spot (spatial shortcut)?</li>
+          <li><span class="highlight">QK head classification</span> &mdash; what fraction of attention heads encode content vs. position? <em>(decomposes each head's Q*K matrix to measure semantic vs positional encoding ratio)</em></li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="card card-purple" style="margin-bottom:0.5rem;">
+        <h3>Verdict</h3>
+        <table>
+          <tr><td><span class="hl-green">object</span></td><td>Model genuinely recognizes and tracks objects</td></tr>
+          <tr><td><span class="hl-coral">spatial</span></td><td>Model relies on memorized positions</td></tr>
+          <tr><td><span class="hl-purple">mixed</span></td><td>Some evidence of both strategies</td></tr>
+          <tr><td><span class="hl-amber">inconclusive</span></td><td>Not enough evidence to tell</td></tr>
+        </table>
+      </div>
+      <div class="card card-coral">
+        <h3>Why This Matters</h3>
+        <p>A <span class="hl-coral">spatial</span> model works in training but <strong>fails when anything moves</strong> &mdash; new object positions, different camera angles, or real-world deployment.</p>
+        <p style="margin-top:0.5rem;">The fix is different depending on the verdict: spatial bias needs data diversity; weak object grounding needs representation improvements.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 13: REPORT SYNTHESIS ════════════════════ -->
+<div class="slide">
+  <div class="section-label amber">Phase 9</div>
+  <h2>Report Synthesis <span class="badge-ai">AI</span></h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">The LLM synthesizes all evidence into ranked, actionable findings. It decides severity, writes the narrative, and proposes specific fixes.</p>
+  <div class="cols cols-23">
+    <div>
+      <div class="card card-amber">
+        <h3>Finding Structure</h3>
+        <table>
+          <tr><td><code>severity</code></td><td><span class="badge badge-critical">critical</span> <span class="badge badge-warning">warning</span> <span class="badge badge-info">info</span></td></tr>
+          <tr><td><code>title</code></td><td>Short name</td></tr>
+          <tr><td><code>observation</code></td><td>Cites specific numbers</td></tr>
+          <tr><td><code>test_description</code></td><td>What counterfactual was run</td></tr>
+          <tr><td><code>test_result</code></td><td>What happened</td></tr>
+          <tr><td><code>interpretation</code></td><td>What it means for the model</td></tr>
+          <tr><td><code>fix</code></td><td>Concrete, actionable steps</td></tr>
+          <tr><td><code>expected_impact</code></td><td>Quantified improvement</td></tr>
+          <tr><td><code>evidence_refs</code></td><td>Links to anomalies &amp; hypotheses</td></tr>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="card card-accent" style="margin-bottom:0.5rem;">
+        <h3>Evidence Chain</h3>
+        <p>Every finding traces back through the full chain:</p>
+        <div style="text-align:center; margin:1rem 0; font-size:0.95rem;">
+          <span class="flow-box" style="border-color:var(--teal);">Signal Data</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--amber);">Anomaly</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--purple);">Hypothesis</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--coral);">Counterfactual</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-box" style="border-color:var(--accent);">Finding</span>
+        </div>
+        <p>This means you can always ask "why does the report say this?" and trace it back to specific numbers in the diagnostic matrix.</p>
+      </div>
+      <div class="card card-teal">
+        <h3>Narrative Summary</h3>
+        <p>The LLM also writes a 2&ndash;4 paragraph narrative targeted at robotics engineers (not ML specialists). It answers:</p>
+        <ul>
+          <li><strong>What's wrong?</strong> &mdash; plain language description</li>
+          <li><strong>Why?</strong> &mdash; root cause analysis</li>
+          <li><strong>What to do?</strong> &mdash; prioritized action plan</li>
+          <li><strong>What impact to expect?</strong> &mdash; predicted improvement</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 14: COMPARISON IMAGES ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">Output</div>
+  <h2>Visual Comparison Output</h2>
+  <p style="margin-bottom:0.5rem; color: var(--muted);">Each counterfactual generates a side-by-side comparison image showing exactly what was changed.</p>
+  <div class="cols cols-2">
+    <div class="card card-accent">
+      <h3>How Comparisons Work</h3>
+      <ul>
+        <li><strong>Left panel:</strong> original image</li>
+        <li><strong>Right panel:</strong> modified image</li>
+        <li><strong>Dimming:</strong> unaffected pixels are darkened to 40% brightness so the changed region pops out</li>
+        <li><strong>Rectangles:</strong> green (original) and red (modified) bounding boxes around the affected region</li>
+        <li><strong>Zoom inset:</strong> magnified crop of the affected region (only when the region is small enough to benefit &mdash; skipped for whole-image changes like background substitution)</li>
+      </ul>
+    </div>
+    <div class="card card-teal">
+      <h3>Affected Masks</h3>
+      <p>Each primitive specifies which pixels it modified:</p>
+      <table>
+        <tr><td>Background sub.</td><td>background mask (everything except objects)</td></tr>
+        <tr><td>Object relocation</td><td>old position OR new position</td></tr>
+        <tr><td>Object recolor</td><td>object mask</td></tr>
+        <tr><td>Occlusion</td><td>object mask</td></tr>
+        <tr><td>Distractor</td><td>ellipse mask at insertion point</td></tr>
+        <tr><td>Lighting</td><td>no mask (whole image changes)</td></tr>
+        <tr><td>Task string swap</td><td>per-dimension bar chart (no image change)</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 15: PUTTING IT TOGETHER ════════════════════ -->
+<div class="slide">
+  <div class="section-label accent">Example</div>
+  <h2>Putting It All Together</h2>
+  <p style="margin-bottom:0.4rem; color: var(--muted);">A pick-and-place model trained on 100 episodes with a plain background and a static cup.</p>
+  <div>
+  <div class="cols cols-3" style="margin-bottom:0.5rem;">
+    <div class="card card-teal">
+      <h3>1. Scene Understanding</h3>
+      <p>Detects: <span class="tag">robot gripper</span> <span class="tag">lego block</span> <span class="tag">steel cup</span></p>
+      <p>Segments each with SAM (or bbox fallback).</p>
+    </div>
+    <div class="card card-coral">
+      <h3>2. Diversity Analysis</h3>
+      <p>Cup position std: <span class="hl-coral">4px</span> (static!)<br>Background diversity: <span class="hl-coral">0.01</span> (single environment)</p>
+      <p>&rarr; <span class="badge badge-critical">low_dataset_diversity</span></p>
+    </div>
+    <div class="card card-accent">
+      <h3>3. Signal Extraction</h3>
+      <p>Attention: diffuse, mostly on surface<br>GradCAM: 78% background, 3% lego block</p>
+    </div>
+  </div>
+  <div class="cols cols-3" style="margin-bottom:0.5rem;">
+    <div class="card card-coral">
+      <h3>4. Anomalies Fired</h3>
+      <p><span class="badge badge-critical">high_background</span><br>
+         <span class="badge badge-critical">low_object</span><br>
+         <span class="badge badge-critical">spatial_shortcut</span><br>
+         <span class="badge badge-warning">low_diversity</span></p>
+    </div>
+    <div class="card card-purple">
+      <h3>5. QK Probe</h3>
+      <p>33% semantic, 25% positional, 42% mixed.</p>
+      <p>Top heads are "semantic" but spread attention across background, not the target object.</p>
+    </div>
+    <div class="card card-amber">
+      <h3>6. LLM Hypotheses</h3>
+      <p>H1: "Relies on background" &rarr; test: background_substitution<br>
+         H2: "Spatial shortcut for cup" &rarr; test: object_relocation</p>
+    </div>
+  </div>
+  <div class="cols cols-3">
+    <div class="card card-coral">
+      <h3>7. Counterfactual Results</h3>
+      <p>Background sub: <span class="hl-coral">delta = 0.30</span> (confirmed!)<br>
+         Object relocation: <span class="hl-green">delta = 0.02</span> (confirmed &mdash; model doesn't care where object is)</p>
+    </div>
+    <div class="card card-purple">
+      <h3>8. Spatial Verdict</h3>
+      <p>Verdict: <span class="hl-coral">spatial</span></p>
+      <p>The model memorized a trajectory. It doesn't visually track objects.</p>
+    </div>
+    <div class="card card-green">
+      <h3>9. Final Finding</h3>
+      <p><span class="badge badge-critical">Critical</span>: Background shortcut.<br>
+         <strong>Fix:</strong> Add background augmentation during training. Expected: reduce background attribution from 78% to &lt;30%.</p>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 16: PLUGGABILITY ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">Architecture</div>
+  <h2>Pluggable Extension Points</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">Every major component uses a registry pattern. Add a function in one file, and the rest of the pipeline discovers it automatically.</p>
+
+  <div style="display: flex; justify-content: center; margin-bottom: 1rem;">
+    <div style="position: relative; display: flex; flex-direction: column; gap: 0.6rem; width: 100%; max-width: 1000px;">
+
+      <!-- Row 1: Scene + Signals -->
+      <div style="display: flex; gap: 1rem; justify-content: center;">
+        <div class="card" style="flex:1; border-top: 3px solid var(--dim); opacity: 0.7;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Scene Models</h3>
+            <span style="font-size:0.65rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Config</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);">Set <code>scene_model</code> in YAML. Passed as <code>model_id</code> to <code>detect_objects()</code>.</p>
+        </div>
+        <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Signal Types</h3>
+            <span class="badge-ai" style="margin:0;">1 file</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_signal("my_signal", cost_description="~1min", prompt_description="...")</code><br>LLM triage prompt auto-generates from registry.</p>
+        </div>
+      </div>
+
+      <!-- Row 2: Anomalies + CF Primitives -->
+      <div style="display: flex; gap: 1rem; justify-content: center;">
+        <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Anomaly Detectors</h3>
+            <span class="badge-ai" style="margin:0;">1 file</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_anomaly_detector</code> on any function in <code>matrix.py</code>. Matrix, LLM, and report consume anomalies generically.</p>
+        </div>
+        <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Counterfactual Primitives</h3>
+            <span class="badge-ai" style="margin:0;">1 file</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_primitive("counterfactual.my_test", prompt_description="...", param_schema="...")</code><br>LLM hypothesis prompt auto-generates from registry.</p>
+        </div>
+      </div>
+
+      <!-- Row 3: Hypotheses + LLM Providers -->
+      <div style="display: flex; gap: 1rem; justify-content: center;">
+        <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Rule-Based Hypotheses</h3>
+            <span class="badge-ai" style="margin:0;">1 file</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>register_hypothesis_template("my_anomaly", test_type="...", confidence=0.7, ...)</code><br>Maps anomaly type &rarr; counterfactual test automatically.</p>
+        </div>
+        <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">LLM Providers</h3>
+            <span class="badge-ai" style="margin:0;">1 file</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_llm_provider("vertex")</code><br>on any async function. Agent checks registry before built-in providers.</p>
+        </div>
+      </div>
+
+      <!-- Row 4: Config-only -->
+      <div style="display: flex; gap: 1rem; justify-content: center;">
+        <div class="card" style="flex:1; border-top: 3px solid var(--dim); opacity: 0.7;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Mandatory CF Tests</h3>
+            <span style="font-size:0.65rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Config</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>mandatory_counterfactual_tests:</code> list in <code>diagnostic.yaml</code>. No code changes needed.</p>
+        </div>
+        <div class="card" style="flex:1; border-top: 3px solid var(--dim); opacity: 0.7;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <h3 style="margin:0;">Report Generation</h3>
+            <span style="font-size:0.65rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Already Generic</span>
+          </div>
+          <p style="margin-top:0.3rem; color:var(--muted);">Findings are data-driven dataclasses. Any severity, any structure. Nothing to register.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%); text-align: center;">
+    <p style="font-size: 0.95rem;"><strong>Add a new anomaly detector + its hypothesis template + its counterfactual primitive</strong> &mdash; the LLM prompt, matrix, report, and comparison images all update automatically. Three decorator calls, zero plumbing.</p>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 17: RECAP ════════════════════ -->
+<div class="slide recap-slide">
+  <div class="section-label" style="background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5);">Summary</div>
+  <h1>Key Takeaways</h1>
+  <div class="spacer"></div>
+  <div class="cols cols-2">
+    <div>
+      <ul style="font-size: 1.02rem;">
+        <li><strong>Signals alone don't explain failures.</strong> The agent combines representational (attention), near-causal (cross-attention), and causal (GradCAM/saliency) signals into one coherent matrix.</li>
+        <li style="margin-top:0.9rem;"><strong>Anomaly detection is domain-specific.</strong> 13 detectors encode robotics failure patterns: background shortcuts, spatial memorization, language blindness, state pathway death.</li>
+        <li style="margin-top:0.9rem;"><strong>Counterfactuals provide causal evidence.</strong> Instead of correlational heatmaps, the agent actually modifies the input and measures action change.</li>
+      </ul>
+    </div>
+    <div>
+      <ul style="font-size: 1.02rem;">
+        <li><strong>Four phases are AI-driven.</strong> The LLM decides which signals to extract (Phase 3), which hypotheses and tests to run (Phases 6&ndash;7), and how to write the report (Phase 9). Other phases are deterministic for reproducibility.</li>
+        <li style="margin-top:0.9rem;"><strong>Spatial vs. object is the key diagnostic axis.</strong> Most VLA failures come down to: does the model recognize objects, or just memorize positions? QK probe, semantic probe, and relocation counterfactual attack this from different angles.</li>
+        <li style="margin-top:0.9rem;"><strong>Fixes are concrete.</strong> Not "collect more data" but "add background color jitter with brightness=0.3 and re-train for 50 more epochs."</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<!-- ── Navigation ── -->
+<div class="nav">
+  <button id="prev" aria-label="Previous slide">&#8592;</button>
+  <span class="counter" id="counter">1 / 19</span>
+  <button id="next" aria-label="Next slide">&#8594;</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let cur = 0;
+  const total = slides.length;
+  const progress = document.getElementById('progress');
+
+  function go(idx) {
+    if (idx < 0 || idx >= total) return;
+    slides[cur].classList.remove('active');
+    cur = idx;
+    slides[cur].classList.add('active');
+    document.getElementById('counter').textContent = `${cur + 1} / ${total}`;
+    progress.style.width = `${((cur + 1) / total) * 100}%`;
+  }
+
+  document.getElementById('prev').addEventListener('click', () => go(cur - 1));
+  document.getElementById('next').addEventListener('click', () => go(cur + 1));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); go(cur + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(cur - 1); }
+    if (e.key === 'Home') { e.preventDefault(); go(0); }
+    if (e.key === 'End') { e.preventDefault(); go(total - 1); }
+  });
+</script>
+
+</body>
+</html>
