@@ -630,11 +630,26 @@ class DiagnosticReport:
                 object_evidence=object_ev,
             )
 
-        # Symptoms
-        symptoms = [Symptom(**a) for a in data.get("symptoms", [])]
+        # Symptoms (legacy JSON may use "anomalies")
+        raw_symptoms = data.get("symptoms") or data.get("anomalies") or []
+        symptoms = []
+        for a in raw_symptoms:
+            symptoms.append(Symptom(
+                type=a.get("type", ""),
+                severity=a.get("severity", "info"),
+                description=a.get("description", ""),
+                evidence=a.get("evidence", {}),
+            ))
 
-        # Hypotheses
-        hypotheses = [Hypothesis(**h) for h in data.get("hypotheses", [])]
+        # Hypotheses (legacy JSON may use "supporting_anomalies")
+        hypotheses = []
+        for h in data.get("hypotheses", []):
+            h = dict(h)  # shallow copy
+            if "supporting_anomalies" in h and "supporting_symptoms" not in h:
+                h["supporting_symptoms"] = h.pop("supporting_anomalies")
+            elif "supporting_anomalies" in h:
+                h.pop("supporting_anomalies")
+            hypotheses.append(Hypothesis(**h))
 
         # Counterfactual results
         cf_results = []
