@@ -363,20 +363,20 @@ def compare_main(args: argparse.Namespace):
             else:
                 print(f"    {cd.test_type}: {v0} → {v1} [N/A — not run in both]")
 
-    if report.anomaly_summary:
+    if report.symptom_summary:
         first_label = report.labels[0]
         last_label = report.labels[-1]
-        first_set = set(report.anomaly_summary.get(first_label, []))
-        last_set = set(report.anomaly_summary.get(last_label, []))
+        first_set = set(report.symptom_summary.get(first_label, []))
+        last_set = set(report.symptom_summary.get(last_label, []))
         resolved = first_set - last_set
-        new_anom = last_set - first_set
+        new_symp = last_set - first_set
         persistent = first_set & last_set
         if resolved:
-            print(f"\n  Resolved anomalies: {', '.join(resolved)}")
-        if new_anom:
-            print(f"\n  New anomalies: {', '.join(new_anom)}")
+            print(f"\n  Resolved symptoms: {', '.join(resolved)}")
+        if new_symp:
+            print(f"\n  New symptoms: {', '.join(new_symp)}")
         if persistent:
-            print(f"\n  Persistent anomalies: {', '.join(persistent)}")
+            print(f"\n  Persistent symptoms: {', '.join(persistent)}")
 
     if report.verdict:
         print(f"\n  Verdict:")

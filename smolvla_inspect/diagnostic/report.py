@@ -76,13 +76,13 @@ def save_diagnostic_report(report: DiagnosticReport, run_dir: str) -> str:
     evidence_data = []
     # Evidence entries aren't stored on the report directly, but we can
     # reconstruct from the report's components
-    for anomaly in report.anomalies:
+    for symptom in report.symptoms:
         evidence_data.append({
             "phase": "matrix",
-            "type": "anomaly",
-            "anomaly_type": anomaly.type,
-            "severity": anomaly.severity,
-            "description": anomaly.description,
+            "type": "symptom",
+            "symptom_type": symptom.type,
+            "severity": symptom.severity,
+            "description": symptom.description,
         })
     for h in report.hypotheses:
         evidence_data.append({

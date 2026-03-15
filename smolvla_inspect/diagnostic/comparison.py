@@ -203,14 +203,14 @@ def _compute_counterfactual_deltas(
     return deltas
 
 
-def _compute_anomaly_summary(
+def _compute_symptom_summary(
     snapshots: list[RunSnapshot],
 ) -> dict[str, list[str]]:
-    """Map label → list of anomaly types present in that run."""
+    """Map label → list of symptom types present in that run."""
     summary: dict[str, list[str]] = {}
     for snap in snapshots:
-        anomalies = snap.diagnostic.get("anomalies", [])
-        summary[snap.label] = [a["type"] for a in anomalies]
+        symptoms = snap.diagnostic.get("symptoms", [])
+        summary[snap.label] = [a["type"] for a in symptoms]
     return summary
 
 
@@ -301,19 +301,19 @@ def _generate_verdict(report: ComparisonReport) -> str:
                 f"{cd.pct_change:+.1f}%)."
             )
 
-    # Check anomaly resolution
+    # Check symptom resolution
     first_label = report.labels[0]
     last_label = report.labels[-1]
-    first_anomalies = set(report.anomaly_summary.get(first_label, []))
-    last_anomalies = set(report.anomaly_summary.get(last_label, []))
-    resolved = first_anomalies - last_anomalies
-    new = last_anomalies - first_anomalies
+    first_symptoms = set(report.symptom_summary.get(first_label, []))
+    last_symptoms = set(report.symptom_summary.get(last_label, []))
+    resolved = first_symptoms - last_symptoms
+    new = last_symptoms - first_symptoms
     if resolved:
-        lines.append(f"Resolved anomalies: {', '.join(resolved)}.")
+        lines.append(f"Resolved symptoms: {', '.join(resolved)}.")
     if new:
-        lines.append(f"New anomalies: {', '.join(new)}.")
-    if first_anomalies == last_anomalies and first_anomalies:
-        lines.append(f"Same anomalies persist across all runs: {', '.join(first_anomalies)}.")
+        lines.append(f"New symptoms: {', '.join(new)}.")
+    if first_symptoms == last_symptoms and first_symptoms:
+        lines.append(f"Same symptoms persist across all runs: {', '.join(first_symptoms)}.")
 
     # Attribution changes for task objects (non-background, non-gripper)
     object_improvements = []
@@ -478,14 +478,14 @@ def _generate_recommendations(
                     f"Collect demos with the {obj_name} in different locations."
                 )
 
-    # --- Anomaly resolution --------------------------------------------------
-    first_anomalies = set(report.anomaly_summary.get(report.labels[0], []))
-    last_anomalies = set(report.anomaly_summary.get(report.labels[-1], []))
-    new_anomalies = last_anomalies - first_anomalies
-    if new_anomalies:
+    # --- Symptom resolution --------------------------------------------------
+    first_symptoms = set(report.symptom_summary.get(report.labels[0], []))
+    last_symptoms = set(report.symptom_summary.get(report.labels[-1], []))
+    new_symptoms = last_symptoms - first_symptoms
+    if new_symptoms:
         recs.append(
-            f"**Investigate new anomalies** — The following anomalies appeared after "
-            f"fine-tuning: {', '.join(new_anomalies)}. Check for overfitting or "
+            f"**Investigate new symptoms** — The following symptoms appeared after "
+            f"fine-tuning: {', '.join(new_symptoms)}. Check for overfitting or "
             f"training instability."
         )
 
@@ -529,7 +529,7 @@ def compare_runs(
     # Compute deltas
     attr_deltas, scalar_deltas = _compute_attribution_deltas(snapshots)
     cf_deltas = _compute_counterfactual_deltas(snapshots)
-    anomaly_summary = _compute_anomaly_summary(snapshots)
+    symptom_summary = _compute_symptom_summary(snapshots)
     weight_deltas = _compute_weight_alpha_deltas(snapshots)
 
     report = ComparisonReport(
@@ -538,7 +538,7 @@ def compare_runs(
         attribution_deltas=attr_deltas,
         scalar_deltas=scalar_deltas,
         counterfactual_deltas=cf_deltas,
-        anomaly_summary=anomaly_summary,
+        symptom_summary=symptom_summary,
         weight_alpha_deltas=weight_deltas,
     )
 

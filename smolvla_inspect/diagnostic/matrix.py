@@ -1,7 +1,7 @@
-"""Diagnostic matrix builder and anomaly detection.
+"""Diagnostic matrix builder and symptom detection.
 
 Aggregates per-signal, per-region attribution across frames and runs a
-battery of anomaly detectors to surface potential model failure modes.
+battery of symptom detectors to surface potential model failure modes.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Callable
 import numpy as np
 
 from .models import (
-    Anomaly,
+    Symptom,
     ConnectorAnalysis,
     DatasetDiversityReport,
     DiagnosticMatrix,
@@ -20,11 +20,11 @@ from .models import (
 )
 from .regions import attribute_to_regions, foreground_ratio, spatial_prior_ratio
 
-ANOMALY_DETECTORS: list[Callable] = []
+SYMPTOM_DETECTORS: list[Callable] = []
 
-def register_anomaly_detector(fn: Callable) -> Callable:
-    """Decorator to register an anomaly detector function."""
-    ANOMALY_DETECTORS.append(fn)
+def register_symptom_detector(fn: Callable) -> Callable:
+    """Decorator to register an symptom detector function."""
+    SYMPTOM_DETECTORS.append(fn)
     return fn
 
 
@@ -202,18 +202,18 @@ def build_diagnostic_matrix(
 
 
 # ---------------------------------------------------------------------------
-# Anomaly detectors
+# Symptom detectors
 # ---------------------------------------------------------------------------
 
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_high_background_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Background attribution > 60% for any causal signal (gradcam_siglip, saliency)."""
     causal_signals = {"gradcam_siglip", "saliency"}
     worst_signal = None
@@ -231,7 +231,7 @@ def detect_high_background_attribution(
         return None
 
     severity = "critical" if worst_bg > 0.75 else "warning"
-    return Anomaly(
+    return Symptom(
         type="high_background_attribution",
         severity=severity,
         description=(
@@ -242,12 +242,12 @@ def detect_high_background_attribution(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_attention_gradcam_divergence(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Any region differs by > 0.3 between attention and gradcam_siglip."""
     if "attention" not in matrix.attribution_mass or "gradcam_siglip" not in matrix.attribution_mass:
         return None
@@ -264,7 +264,7 @@ def detect_attention_gradcam_divergence(
     if not divergent_regions:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="attention_gradcam_divergence",
         severity="warning",
         description=(
@@ -276,12 +276,12 @@ def detect_attention_gradcam_divergence(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_dead_state_pathway(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Vision share > 99.5%, indicating the state pathway may be dead."""
     vision_share = matrix.scalars.get("vision_share")
     if vision_share is None:
@@ -291,7 +291,7 @@ def detect_dead_state_pathway(
         return None
 
     pct = vision_share * 100
-    return Anomaly(
+    return Symptom(
         type="dead_state_pathway",
         severity="warning",
         description=(
@@ -302,12 +302,12 @@ def detect_dead_state_pathway(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_low_object_attribution(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Non-background, non-gripper task objects with < 10% gradcam attribution."""
     if "gradcam_siglip" not in matrix.attribution_mass:
         return None
@@ -329,7 +329,7 @@ def detect_low_object_attribution(
         return None
 
     severity = "critical" if worst_share < 0.05 else "warning"
-    return Anomaly(
+    return Symptom(
         type="low_object_attribution",
         severity=severity,
         description=(
@@ -341,12 +341,12 @@ def detect_low_object_attribution(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_spatial_shortcut(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Positional baseline ratio > 0.6 AND low object attribution exists."""
     pos_ratio = matrix.scalars.get("positional_baseline_ratio")
     if pos_ratio is None or pos_ratio <= 0.6:
@@ -357,7 +357,7 @@ def detect_spatial_shortcut(
     if low_obj is None:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="spatial_shortcut",
         severity="critical",
         description=(
@@ -372,12 +372,12 @@ def detect_spatial_shortcut(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_language_insensitivity(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Language diff max shift < 0.05, indicating instruction-insensitivity."""
     max_shift = matrix.scalars.get("language_diff_max_shift")
     if max_shift is None:
@@ -385,7 +385,7 @@ def detect_language_insensitivity(
     if max_shift >= 0.05:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="language_insensitivity",
         severity="warning",
         description=(
@@ -397,12 +397,12 @@ def detect_language_insensitivity(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_unstable_gradcam(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """GradCAM region attribution varies widely across frames (std/mean > 1.0)."""
     if "gradcam_siglip" not in matrix.attribution_mass:
         return None
@@ -427,7 +427,7 @@ def detect_unstable_gradcam(
     if not unstable_regions:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="unstable_gradcam",
         severity="info",
         description=(
@@ -443,12 +443,12 @@ def detect_unstable_gradcam(
 # ---------------------------------------------------------------------------
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_low_dataset_diversity(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag memorisation risks from low dataset diversity."""
     if dataset_diversity is None:
         return None
@@ -497,7 +497,7 @@ def detect_low_dataset_diversity(
     if not issues:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="low_dataset_diversity",
         severity=severity,
         description=" ".join(issues),
@@ -505,12 +505,12 @@ def detect_low_dataset_diversity(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_gripper_fixation(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag when causal signals attribute > 40% to gripper region."""
     causal_signals = {"gradcam_siglip", "saliency"}
     worst_signal = None
@@ -528,7 +528,7 @@ def detect_gripper_fixation(
     if worst_signal is None or worst_share <= 0.40:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="gripper_fixation",
         severity="warning",
         description=(
@@ -540,12 +540,12 @@ def detect_gripper_fixation(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_cross_attention_diffuse(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag near-uniform cross-attention entropy (> 5.0 bits)."""
     entropy = matrix.scalars.get("cross_attention_entropy")
     if entropy is None:
@@ -554,7 +554,7 @@ def detect_cross_attention_diffuse(
     if entropy <= 5.0:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="cross_attention_diffuse",
         severity="warning",
         description=(
@@ -566,12 +566,12 @@ def detect_cross_attention_diffuse(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_action_attention_misalignment(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag when translation action dims attribute primarily to background."""
     if matrix.per_action_dim is None:
         return None
@@ -604,7 +604,7 @@ def detect_action_attention_misalignment(
     if len(bg_dims) < len(translation_dims) or not bg_dims:
         return None
 
-    return Anomaly(
+    return Symptom(
         type="action_attention_misalignment",
         severity="warning",
         description=(
@@ -616,12 +616,12 @@ def detect_action_attention_misalignment(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_temporal_attention_instability(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag unstable or poorly-tracking attention trajectories."""
     if matrix.temporal_trajectories is None:
         return None
@@ -668,7 +668,7 @@ def detect_temporal_attention_instability(
             f"suggesting the model does not track manipulation targets."
         )
 
-    return Anomaly(
+    return Symptom(
         type="temporal_attention_instability",
         severity=severity,
         description=description,
@@ -676,12 +676,12 @@ def detect_temporal_attention_instability(
     )
 
 
-@register_anomaly_detector
+@register_symptom_detector
 def detect_single_region_dependency(
     matrix: DiagnosticMatrix,
     internals: dict | None,
     dataset_diversity=None,
-) -> Anomaly | None:
+) -> Symptom | None:
     """Flag when all action dims attribute to the same non-background region."""
     if matrix.per_action_dim is None:
         return None
@@ -707,7 +707,7 @@ def detect_single_region_dependency(
     if common_region == "background":
         return None
 
-    return Anomaly(
+    return Symptom(
         type="single_region_dependency",
         severity="info",
         description=(
@@ -726,20 +726,20 @@ def detect_single_region_dependency(
 # Aggregate detector
 # ---------------------------------------------------------------------------
 
-def detect_anomalies(
+def detect_symptoms(
     matrix: DiagnosticMatrix,
     internals: dict | None = None,
     dataset_diversity=None,
-) -> list[Anomaly]:
-    """Run all anomaly detectors and return results sorted by severity.
+) -> list[Symptom]:
+    """Run all symptom detectors and return results sorted by severity.
 
     Order: critical first, then warning, then info.
     """
-    anomalies: list[Anomaly] = []
-    for detector in ANOMALY_DETECTORS:
+    symptoms: list[Symptom] = []
+    for detector in SYMPTOM_DETECTORS:
         result = detector(matrix, internals, dataset_diversity)
         if result is not None:
-            anomalies.append(result)
+            symptoms.append(result)
 
-    anomalies.sort(key=lambda a: _SEVERITY_ORDER.get(a.severity, 99))
-    return anomalies
+    symptoms.sort(key=lambda a: _SEVERITY_ORDER.get(a.severity, 99))
+    return symptoms

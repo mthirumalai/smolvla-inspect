@@ -251,6 +251,24 @@
     border: 1px solid var(--border); font-weight: 500;
   }
 
+  /* ── Zoom controls ── */
+  .zoom-controls {
+    position: fixed; bottom: 1.5rem; left: 2rem; display: flex; gap: 0.3rem;
+    align-items: center; z-index: 100;
+  }
+  .zoom-controls button {
+    background: var(--white); border: 1px solid var(--border); color: var(--navy);
+    width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease; box-shadow: var(--shadow-sm);
+    font-weight: 600; line-height: 1;
+  }
+  .zoom-controls button:hover { background: var(--surface); border-color: var(--dim); box-shadow: var(--shadow-md); }
+  .zoom-controls .zoom-level {
+    font-size: 0.7rem; color: var(--muted); min-width: 36px; text-align: center;
+    font-weight: 500;
+  }
+
   /* ── Misc ── */
   .spacer { height: 0.5rem; }
   .spacer-sm { height: 0.5rem; }
@@ -367,7 +385,7 @@
     <div class="card">
       <div class="icon-circle teal">&#10004;</div>
       <h3>The Output</h3>
-      <p>Ranked findings with <span class="highlight">evidence chains</span>, severity levels, and <strong>concrete, actionable fixes</strong> &mdash; not just pretty heatmaps.</p>
+      <p>Ranked findings with <span class="highlight">evidence chains</span>, severity levels, and <span class="hl-teal">concrete, actionable fixes</span> &mdash; not just pretty heatmaps.</p>
     </div>
   </div>
   <p class="note">Use arrow keys or the buttons below to navigate</p>
@@ -403,12 +421,12 @@
   <div class="cols cols-3">
     <div class="card card-accent">
       <h3>Key Idea: Evidence Chain</h3>
-      <p>Every final recommendation is backed by: <span class="hl-teal">signal data</span> &rarr; <span class="hl-amber">anomaly detection</span> &rarr; <span class="hl-purple">hypothesis</span> &rarr; <span class="hl-coral">counterfactual test result</span>. No guessing.</p>
+      <p>Every final recommendation is backed by: <span class="hl-teal">signal data</span> &rarr; <span class="hl-amber">symptom detection</span> &rarr; <span class="hl-purple">hypothesis</span> &rarr; <span class="hl-coral">counterfactual test result</span>. No guessing.</p>
     </div>
     <div class="card card-teal">
       <h3>Two Run Modes</h3>
       <p><strong>Integrated:</strong> load model + dataset, run everything.<br>
-         <strong>Post-hoc:</strong> analyze saved heatmaps from a previous run (faster, no GPU needed for matrix/anomalies).</p>
+         <strong>Post-hoc:</strong> analyze saved heatmaps from a previous run (faster, no GPU needed for matrix/symptoms).</p>
     </div>
     <div class="card card-purple">
       <h3>What Makes It AI-Driven?</h3>
@@ -438,15 +456,15 @@
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> SAM unavailable? &rarr; <span class="hl-amber">rectangular bbox masks</span><br>
         <span style="color:var(--dim);">├─</span> <strong>Always-run cheap signals:</strong> attention, saliency, positional baseline, vision-vs-state<br>
         <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">DECISION</span> <strong>LLM Signal Triage</strong><br>
-        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> Reviews cheap signal summary + anomaly hints<br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> Reviews cheap signal summary + symptom hints<br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> Selects up to <strong>4 expensive signals</strong> from registry <em style="color:var(--muted);">(different evidence &rarr; different signal choices every run)</em><br>
-        <span style="color:var(--dim);">├─</span> <strong>Build diagnostic matrix</strong> + run <strong>13 anomaly detectors</strong> (fixed thresholds)<br>
+        <span style="color:var(--dim);">├─</span> <strong>Build diagnostic matrix</strong> + run <strong>13 symptom detectors</strong> (fixed thresholds)<br>
         <span style="color:var(--dim);">├─</span> <strong>Model loaded?</strong><br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> YES &rarr; run semantic probe <em style="color:var(--muted);">(checks if patches encode target object via cosine similarity)</em> + QK probe <em style="color:var(--muted);">(classifies attention heads as semantic vs positional)</em><br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> NO (post-hoc) &rarr; <span class="hl-amber">skip probes, skip counterfactuals</span><br>
         <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">DECISION</span> <strong>LLM Hypothesis Formation</strong><br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> API key present? &rarr; <span class="hl-green">LLM generates hypotheses + test params</span><br>
-        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> No API key? &rarr; <span class="hl-amber">rule-based: anomaly &rarr; template hypothesis</span><br>
+        <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> No API key? &rarr; <span class="hl-amber">rule-based: symptom &rarr; template hypothesis</span><br>
         <span style="color:var(--dim);">├─</span> <strong>Execute counterfactuals</strong> (mandatory 4 + hypothesis-driven)<br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">├─</span> <span style="background:linear-gradient(135deg,#8b8ff0,#a390e0); color:white; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.62rem; font-weight:600;">LOOP</span> Surprising result? &rarr; <strong>form follow-up hypothesis</strong> &rarr; re-test<br>
         <span style="color:var(--dim);">│&nbsp;&nbsp;</span> <span style="color:var(--dim);">└─</span> Budget exhausted (max 7 total)? &rarr; <span class="hl-coral">stop iteration</span><br>
@@ -615,7 +633,7 @@
   <div class="cols cols-2">
     <div class="card card-accent">
       <h3>Adaptive Budget <span class="badge-ai">AI</span></h3>
-      <p>Cheap signals run first. LLM reads their summary and selects up to <strong>4 expensive signals</strong> from the registry based on what anomalies it sees.</p>
+      <p>Cheap signals run first. LLM reads their summary and selects up to <strong>4 expensive signals</strong> from the registry based on what symptoms it sees.</p>
     </div>
     <div class="card card-teal">
       <h3>Post-Hoc Mode</h3>
@@ -663,19 +681,19 @@
       </div>
       <div class="card card-teal">
         <h3>Multi-Frame Averaging</h3>
-        <p>The matrix is computed per-frame, then averaged. This smooths out frame-specific noise and reveals consistent patterns. Frame-to-frame variance is also tracked (used by the "unstable GradCAM" anomaly detector).</p>
+        <p>The matrix is computed per-frame, then averaged. This smooths out frame-specific noise and reveals consistent patterns. Frame-to-frame variance is also tracked (used by the "unstable GradCAM" symptom detector).</p>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ════════════════════ SLIDE 7: ANOMALY DETECTION ════════════════════ -->
+<!-- ════════════════════ SLIDE 7: SYMPTOM DETECTION ════════════════════ -->
 <div class="slide">
   <div class="section-label coral">Detection</div>
-  <h2>Anomaly Detection</h2>
+  <h2>Symptom Detection</h2>
   <p style="margin-bottom:0.5rem; color: var(--muted);">13 domain-specific detectors run against the matrix. Each checks a known failure pattern.</p>
   <table>
-    <tr><th>Anomaly</th><th>Severity</th><th>Trigger</th><th>What It Means</th></tr>
+    <tr><th>Symptom</th><th>Severity</th><th>Trigger</th><th>What It Means</th></tr>
     <tr><td><strong>High background attribution</strong></td><td><span class="badge badge-critical">Critical</span></td><td>GradCAM background &gt;75%</td><td>Actions driven by background, not task objects</td></tr>
     <tr><td><strong>Spatial shortcut</strong></td><td><span class="badge badge-critical">Critical</span></td><td>Positional baseline &gt;0.6 + low object attr</td><td>Memorized positions, not recognizing objects</td></tr>
     <tr><td><strong>Low object attribution</strong></td><td><span class="badge badge-critical">Critical</span></td><td>Target object GradCAM &lt;5%</td><td>Not using the target object</td></tr>
@@ -733,7 +751,7 @@
     <div>
       <div class="card card-amber" style="margin-bottom:0.8rem;">
         <h3>Step 1: Build the Prompt</h3>
-        <p>System assembles: architecture context, task + scene, diagnostic matrix (markdown), anomaly list with values, probe results, and available tests (auto-generated from counterfactual registry).</p>
+        <p>System assembles: architecture context, task + scene, diagnostic matrix (markdown), symptom list with values, probe results, and available tests (auto-generated from counterfactual registry).</p>
       </div>
       <div class="card card-teal" style="margin-bottom:0.8rem;">
         <h3>Step 2: LLM Generates JSON</h3>
@@ -741,7 +759,7 @@
       </div>
       <div class="card card-purple">
         <h3>Fallback: Rule-Based</h3>
-        <p>No API key? Each anomaly maps to a <code>HypothesisTemplate</code> via registry lookup. Same pipeline, no LLM reasoning.</p>
+        <p>No API key? Each symptom maps to a <code>HypothesisTemplate</code> via registry lookup. Same pipeline, no LLM reasoning.</p>
       </div>
     </div>
     <div>
@@ -839,7 +857,7 @@
     </div>
     <div class="card card-amber">
       <h3>Hypothesis-Driven <span class="badge-ai">AI</span></h3>
-      <p>The LLM <strong>chooses</strong> which additional tests to run based on anomalies. The agent also runs <span class="highlight">iterative follow-ups</span> if initial results are surprising:</p>
+      <p>The LLM <strong>chooses</strong> which additional tests to run based on symptoms. The agent also runs <span class="highlight">iterative follow-ups</span> if initial results are surprising:</p>
       <ul>
         <li>A high-confidence hypothesis wasn't confirmed &rarr; investigate further</li>
         <li>An unexpectedly large delta appears &rarr; probe with a different primitive</li>
@@ -915,7 +933,7 @@
           <tr><td><code>interpretation</code></td><td>What it means for the model</td></tr>
           <tr><td><code>fix</code></td><td>Concrete, actionable steps</td></tr>
           <tr><td><code>expected_impact</code></td><td>Quantified improvement</td></tr>
-          <tr><td><code>evidence_refs</code></td><td>Links to anomalies &amp; hypotheses</td></tr>
+          <tr><td><code>evidence_refs</code></td><td>Links to symptoms &amp; hypotheses</td></tr>
         </table>
       </div>
     </div>
@@ -926,7 +944,7 @@
         <div style="text-align:center; margin:1rem 0; font-size:0.95rem;">
           <span class="flow-box" style="border-color:var(--teal);">Signal Data</span>
           <span class="flow-arrow">&rarr;</span>
-          <span class="flow-box" style="border-color:var(--amber);">Anomaly</span>
+          <span class="flow-box" style="border-color:var(--amber);">Symptom</span>
           <span class="flow-arrow">&rarr;</span>
           <span class="flow-box" style="border-color:var(--purple);">Hypothesis</span>
           <span class="flow-arrow">&rarr;</span>
@@ -1006,7 +1024,7 @@
   </div>
   <div class="cols cols-3" style="margin-bottom:0.5rem;">
     <div class="card card-coral">
-      <h3>4. Anomalies Fired</h3>
+      <h3>4. Symptoms Fired</h3>
       <p><span class="badge badge-critical">high_background</span><br>
          <span class="badge badge-critical">low_object</span><br>
          <span class="badge badge-critical">spatial_shortcut</span><br>
@@ -1064,25 +1082,25 @@
         <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
           <div style="display:flex; align-items:center; justify-content:space-between;">
             <h3 style="margin:0;">Signal Types</h3>
-            <span class="badge-ai" style="margin:0;">1 file</span>
+            <code style="font-size:0.65rem;">agent.py</code>
           </div>
           <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_signal("my_signal", cost_description="~1min", prompt_description="...")</code><br>LLM triage prompt auto-generates from registry.</p>
         </div>
       </div>
 
-      <!-- Row 2: Anomalies + CF Primitives -->
+      <!-- Row 2: Symptoms + CF Primitives -->
       <div style="display: flex; gap: 1rem; justify-content: center;">
         <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
           <div style="display:flex; align-items:center; justify-content:space-between;">
-            <h3 style="margin:0;">Anomaly Detectors</h3>
-            <span class="badge-ai" style="margin:0;">1 file</span>
+            <h3 style="margin:0;">Symptom Detectors</h3>
+            <code style="font-size:0.65rem;">matrix.py</code>
           </div>
-          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_anomaly_detector</code> on any function in <code>matrix.py</code>. Matrix, LLM, and report consume anomalies generically.</p>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_symptom_detector</code> on any function in <code>matrix.py</code>. Matrix, LLM, and report consume symptoms generically.</p>
         </div>
         <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
           <div style="display:flex; align-items:center; justify-content:space-between;">
             <h3 style="margin:0;">Counterfactual Primitives</h3>
-            <span class="badge-ai" style="margin:0;">1 file</span>
+            <code style="font-size:0.65rem;">counterfactual.py</code>
           </div>
           <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_primitive("counterfactual.my_test", prompt_description="...", param_schema="...")</code><br>LLM hypothesis prompt auto-generates from registry.</p>
         </div>
@@ -1093,14 +1111,14 @@
         <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
           <div style="display:flex; align-items:center; justify-content:space-between;">
             <h3 style="margin:0;">Rule-Based Hypotheses</h3>
-            <span class="badge-ai" style="margin:0;">1 file</span>
+            <code style="font-size:0.65rem;">registry.py</code>
           </div>
-          <p style="margin-top:0.3rem; color:var(--muted);"><code>register_hypothesis_template("my_anomaly", test_type="...", confidence=0.7, ...)</code><br>Maps anomaly type &rarr; counterfactual test automatically.</p>
+          <p style="margin-top:0.3rem; color:var(--muted);"><code>register_hypothesis_template("my_symptom", test_type="...", confidence=0.7, ...)</code><br>Maps symptom type &rarr; counterfactual test automatically.</p>
         </div>
         <div class="card card-accent" style="flex:1; border-top: 3px solid var(--accent);">
           <div style="display:flex; align-items:center; justify-content:space-between;">
             <h3 style="margin:0;">LLM Providers</h3>
-            <span class="badge-ai" style="margin:0;">1 file</span>
+            <code style="font-size:0.65rem;">registry.py</code>
           </div>
           <p style="margin-top:0.3rem; color:var(--muted);"><code>@register_llm_provider("vertex")</code><br>on any async function. Agent checks registry before built-in providers.</p>
         </div>
@@ -1128,7 +1146,7 @@
   </div>
 
   <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%); text-align: center;">
-    <p style="font-size: 0.95rem;"><strong>Add a new anomaly detector + its hypothesis template + its counterfactual primitive</strong> &mdash; the LLM prompt, matrix, report, and comparison images all update automatically. Three decorator calls, zero plumbing.</p>
+    <p style="font-size: 0.95rem;"><strong>Add a new symptom detector + its hypothesis template + its counterfactual primitive</strong> &mdash; the LLM prompt, matrix, report, and comparison images all update automatically. Three decorator calls, zero plumbing.</p>
   </div>
 </div>
 
@@ -1141,7 +1159,7 @@
     <div>
       <ul style="font-size: 1.02rem;">
         <li><strong>Signals alone don't explain failures.</strong> The agent combines representational (attention), near-causal (cross-attention), and causal (GradCAM/saliency) signals into one coherent matrix.</li>
-        <li style="margin-top:0.9rem;"><strong>Anomaly detection is domain-specific.</strong> 13 detectors encode robotics failure patterns: background shortcuts, spatial memorization, language blindness, state pathway death.</li>
+        <li style="margin-top:0.9rem;"><strong>Symptom detection is domain-specific.</strong> 13 detectors encode robotics failure patterns: background shortcuts, spatial memorization, language blindness, state pathway death.</li>
         <li style="margin-top:0.9rem;"><strong>Counterfactuals provide causal evidence.</strong> Instead of correlational heatmaps, the agent actually modifies the input and measures action change.</li>
       </ul>
     </div>
@@ -1155,7 +1173,343 @@
   </div>
 </div>
 
+<!-- ════════════════════ SLIDE A1: ERD — NETWORK DIAGRAM ════════════════════ -->
+<div class="slide">
+  <div class="section-label" style="background: var(--surface); color: var(--muted);">Appendix A</div>
+  <h2>Entity Relationship Diagram</h2>
+  <p style="margin-bottom:0.3rem; color: var(--muted);">The <code>DiagnosticReport</code> is the single serializable root. Arrows show ownership; dashed lines show cross-references.</p>
+
+  <svg viewBox="0 0 1140 710" style="width:100%; max-height:72vh;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#a3a7b5" stroke-width="1.2"/></marker>
+      <marker id="arrow-teal" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#3da69d" stroke-width="1.2"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#7b7ff0" stroke-width="1.2"/></marker>
+      <marker id="arrow-coral" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#e06b7a" stroke-width="1.2"/></marker>
+      <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#c99340" stroke-width="1.2"/></marker>
+      <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#907ad4" stroke-width="1.2"/></marker>
+      <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#4aa88a" stroke-width="1.2"/></marker>
+      <filter id="shadow"><feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.06"/></filter>
+      <style>
+        .erd-node { filter: url(#shadow); }
+        .erd-label { font-family: 'Space Grotesk','Inter',sans-serif; font-weight: 600; }
+        .erd-fields { font-family: 'Inter',sans-serif; font-size: 9.5px; fill: #5c6070; }
+        .erd-rel { font-family: 'Inter',sans-serif; font-size: 9px; fill: #787c8e; font-weight: 600; }
+        .erd-link { fill: none; stroke-width: 1.5; }
+        .erd-link-dash { fill: none; stroke-width: 1.2; stroke-dasharray: 5,4; }
+      </style>
+    </defs>
+
+    <!-- ── CONNECTIONS (drawn first, behind nodes) ── -->
+    <!-- DiagnosticReport → Scene cluster -->
+    <path class="erd-link" stroke="#3da69d" marker-end="url(#arrow-teal)" d="M340,130 L440,62"/>
+    <text class="erd-rel" x="378" y="86" fill="#3da69d">1:1</text>
+
+    <!-- DiagnosticReport → DatasetDiversity -->
+    <path class="erd-link" stroke="#3da69d" marker-end="url(#arrow-teal)" d="M340,160 L440,155"/>
+    <text class="erd-rel" x="380" y="150" fill="#3da69d">1:1</text>
+
+    <!-- DiagnosticReport → DiagnosticMatrix -->
+    <path class="erd-link" stroke="#7b7ff0" marker-end="url(#arrow-accent)" d="M340,200 L440,240"/>
+    <text class="erd-rel" x="375" y="228" fill="#7b7ff0">1:1</text>
+
+    <!-- DiagnosticReport → Symptom -->
+    <path class="erd-link" stroke="#e06b7a" marker-end="url(#arrow-coral)" d="M340,265 L440,345"/>
+    <text class="erd-rel" x="372" y="312" fill="#e06b7a">1:N</text>
+
+    <!-- DiagnosticReport → Hypothesis -->
+    <path class="erd-link" stroke="#c99340" marker-end="url(#arrow-amber)" d="M340,300 L440,440"/>
+    <text class="erd-rel" x="368" y="385" fill="#c99340">1:N</text>
+
+    <!-- DiagnosticReport → CF Result -->
+    <path class="erd-link" stroke="#e06b7a" marker-end="url(#arrow-coral)" d="M275,345 L275,540 L440,540"/>
+    <text class="erd-rel" x="290" y="530" fill="#e06b7a">1:N</text>
+
+    <!-- DiagnosticReport → Finding (route right to avoid cutting through Probes box) -->
+    <path class="erd-link" stroke="#4aa88a" marker-end="url(#arrow-green)" d="M340,320 L415,320 L415,646 L440,646"/>
+    <text class="erd-rel" x="420" y="636" fill="#4aa88a">1:N</text>
+
+    <!-- DiagnosticReport → Probes (left side, straight down) -->
+    <path class="erd-link" stroke="#907ad4" marker-end="url(#arrow-purple)" d="M140,250 Q140,290 140,345 L140,395"/>
+    <text class="erd-rel" x="148" y="370" fill="#907ad4">1:1</text>
+
+    <!-- SceneSegmentation → DetectedObject -->
+    <path class="erd-link" stroke="#3da69d" marker-end="url(#arrow-teal)" d="M640,50 L720,50"/>
+    <text class="erd-rel" x="668" y="43" fill="#3da69d">1:N</text>
+
+    <!-- DiagnosticMatrix → TemporalTrajectory -->
+    <path class="erd-link" stroke="#7b7ff0" marker-end="url(#arrow-accent)" d="M640,240 L720,195"/>
+    <text class="erd-rel" x="668" y="210" fill="#7b7ff0">1:N</text>
+
+    <!-- DiagnosticMatrix → OcclusionMap -->
+    <path class="erd-link" stroke="#7b7ff0" marker-end="url(#arrow-accent)" d="M640,260 L720,270"/>
+    <text class="erd-rel" x="668" y="258" fill="#7b7ff0">1:1</text>
+
+    <!-- Hypothesis → CF Result (cross-ref) -->
+    <path class="erd-link-dash" stroke="#c99340" d="M640,490 Q680,515 640,540"/>
+    <text class="erd-rel" x="650" y="518" fill="#c99340">id ref</text>
+
+    <!-- Symptom → Hypothesis (supporting_symptoms) -->
+    <path class="erd-link-dash" stroke="#e06b7a" d="M580,400 L580,430"/>
+    <text class="erd-rel" x="588" y="418" fill="#e06b7a">ref[]</text>
+
+    <!-- CF Result → Finding (evidence_refs) -->
+    <path class="erd-link-dash" stroke="#4aa88a" d="M580,595 L580,620"/>
+    <text class="erd-rel" x="588" y="610" fill="#4aa88a">ref[]</text>
+
+    <!-- Hypothesis → PrimitiveSpec (test_type) -->
+    <path class="erd-link-dash" stroke="#c99340" d="M640,470 Q770,470 880,445"/>
+    <text class="erd-rel" x="755" y="460" fill="#c99340">test_type</text>
+
+    <!-- HypothesisTemplate → Hypothesis (generates) -->
+    <path class="erd-link-dash" stroke="#787c8e" d="M880,530 Q770,530 640,480"/>
+    <text class="erd-rel" x="745" y="520" fill="#787c8e">generates</text>
+
+    <!-- SemanticProbe → SemanticFrameSummary -->
+    <path class="erd-link" stroke="#907ad4" marker-end="url(#arrow-purple)" d="M165,460 L165,490"/>
+    <text class="erd-rel" x="173" y="478" fill="#907ad4">1:N</text>
+
+    <!-- QKProbe → QKHeadSummary -->
+    <path class="erd-link" stroke="#907ad4" marker-end="url(#arrow-purple)" d="M90,610 L90,648"/>
+    <text class="erd-rel" x="98" y="634" fill="#907ad4">1:N</text>
+
+    <!-- SpatialObjectDx → DiagnosticEvidence -->
+    <path class="erd-link" stroke="#907ad4" marker-end="url(#arrow-purple)" d="M300,610 L300,648"/>
+    <text class="erd-rel" x="308" y="634" fill="#907ad4">1:N</text>
+
+    <!-- ── NODES ── -->
+
+    <!-- DiagnosticReport (center-left, large) -->
+    <g class="erd-node" transform="translate(140,120)">
+      <rect width="200" height="225" rx="12" fill="#fffffe" stroke="#7b7ff0" stroke-width="2.5"/>
+      <rect width="200" height="30" rx="12" fill="rgba(123,127,240,0.1)" stroke="none"/>
+      <rect x="0" y="18" width="200" height="12" fill="rgba(123,127,240,0.1)" stroke="none"/>
+      <text class="erd-label" x="100" y="21" text-anchor="middle" font-size="12" fill="#2c3042">DiagnosticReport</text>
+      <text class="erd-fields" x="12" y="48">metadata: dict</text>
+      <text class="erd-fields" x="12" y="63" fill="#3da69d">scene: SceneSegmentation</text>
+      <text class="erd-fields" x="12" y="78" fill="#3da69d">dataset_diversity?</text>
+      <text class="erd-fields" x="12" y="93" fill="#7b7ff0">matrix: DiagnosticMatrix</text>
+      <text class="erd-fields" x="12" y="108" fill="#907ad4">semantic_probe?</text>
+      <text class="erd-fields" x="12" y="123" fill="#907ad4">qk_probe?</text>
+      <text class="erd-fields" x="12" y="138" fill="#907ad4">spatial_object_diagnosis?</text>
+      <text class="erd-fields" x="12" y="153" fill="#e06b7a">symptoms: Symptom[]</text>
+      <text class="erd-fields" x="12" y="168" fill="#c99340">hypotheses: Hypothesis[]</text>
+      <text class="erd-fields" x="12" y="183" fill="#e06b7a">counterfactual_results[]</text>
+      <text class="erd-fields" x="12" y="198" fill="#4aa88a">findings: Finding[]</text>
+      <text class="erd-fields" x="12" y="218">llm_synthesis: str</text>
+    </g>
+
+    <!-- SceneSegmentation -->
+    <g class="erd-node" transform="translate(440,20)">
+      <rect width="200" height="60" rx="10" fill="#fffffe" stroke="#3da69d" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(61,166,157,0.08)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(61,166,157,0.08)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">SceneSegmentation</text>
+      <text class="erd-fields" x="10" y="40">objects[], background_mask</text>
+      <text class="erd-fields" x="10" y="53">image_shape</text>
+    </g>
+
+    <!-- DetectedObject -->
+    <g class="erd-node" transform="translate(720,20)">
+      <rect width="175" height="60" rx="10" fill="#fffffe" stroke="#3da69d" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text class="erd-label" x="88" y="20" text-anchor="middle" font-size="10.5" fill="#3da69d">DetectedObject</text>
+      <text class="erd-fields" x="10" y="37">label, box, score</text>
+      <text class="erd-fields" x="10" y="50">mask: ndarray?</text>
+    </g>
+
+    <!-- DatasetDiversityReport -->
+    <g class="erd-node" transform="translate(440,110)">
+      <rect width="200" height="55" rx="10" fill="#fffffe" stroke="#3da69d" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(61,166,157,0.08)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(61,166,157,0.08)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">DatasetDiversityReport</text>
+      <text class="erd-fields" x="10" y="38">position_stats, bg_diversity</text>
+      <text class="erd-fields" x="10" y="50">lighting_stats, task_diversity</text>
+    </g>
+
+    <!-- DiagnosticMatrix -->
+    <g class="erd-node" transform="translate(440,200)">
+      <rect width="200" height="80" rx="10" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(123,127,240,0.08)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(123,127,240,0.08)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">DiagnosticMatrix</text>
+      <text class="erd-fields" x="10" y="38">attribution_mass: sig&#xD7;reg</text>
+      <text class="erd-fields" x="10" y="51">scalars, per_action_dim</text>
+      <text class="erd-fields" x="10" y="64">temporal_trajectories[]</text>
+      <text class="erd-fields" x="10" y="77">occlusion, connector_analysis</text>
+    </g>
+
+    <!-- TemporalTrajectory -->
+    <g class="erd-node" transform="translate(720,170)">
+      <rect width="165" height="48" rx="10" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text class="erd-label" x="83" y="18" text-anchor="middle" font-size="10.5" fill="#7b7ff0">TemporalTrajectory</text>
+      <text class="erd-fields" x="10" y="35">centroids[], smoothness</text>
+      <text class="erd-fields" x="10" y="46">tracking_corr, signal_type</text>
+    </g>
+
+    <!-- OcclusionMap -->
+    <g class="erd-node" transform="translate(720,248)">
+      <rect width="165" height="42" rx="10" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text class="erd-label" x="83" y="17" text-anchor="middle" font-size="10.5" fill="#7b7ff0">OcclusionMap</text>
+      <text class="erd-fields" x="10" y="34">sensitivity_map, patch_size</text>
+    </g>
+
+    <!-- Symptom -->
+    <g class="erd-node" transform="translate(440,335)">
+      <rect width="200" height="60" rx="10" fill="#fffffe" stroke="#e06b7a" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(224,107,122,0.07)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(224,107,122,0.07)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">Symptom</text>
+      <text class="erd-fields" x="10" y="38">type, severity</text>
+      <text class="erd-fields" x="10" y="51">description, evidence</text>
+    </g>
+
+    <!-- Hypothesis -->
+    <g class="erd-node" transform="translate(440,430)">
+      <rect width="200" height="72" rx="10" fill="#fffffe" stroke="#c99340" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(201,147,64,0.08)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(201,147,64,0.08)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">Hypothesis</text>
+      <text class="erd-fields" x="10" y="38">id, description, confidence</text>
+      <text class="erd-fields" x="10" y="51">test_type, test_params</text>
+      <text class="erd-fields" x="10" y="64">supporting_symptoms[]</text>
+    </g>
+
+    <!-- CounterfactualResult -->
+    <g class="erd-node" transform="translate(440,530)">
+      <rect width="200" height="60" rx="10" fill="#fffffe" stroke="#e06b7a" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(224,107,122,0.07)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(224,107,122,0.07)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">CounterfactualResult</text>
+      <text class="erd-fields" x="10" y="38">hypothesis_id, action_delta_l2</text>
+      <text class="erd-fields" x="10" y="51">confirmed, gradcam_shift</text>
+    </g>
+
+    <!-- Finding -->
+    <g class="erd-node" transform="translate(440,620)">
+      <rect width="200" height="52" rx="10" fill="#fffffe" stroke="#4aa88a" stroke-width="1.8"/>
+      <rect width="200" height="24" rx="10" fill="rgba(74,168,138,0.08)" stroke="none"/>
+      <rect x="0" y="14" width="200" height="10" fill="rgba(74,168,138,0.08)" stroke="none"/>
+      <text class="erd-label" x="100" y="18" text-anchor="middle" font-size="11" fill="#2c3042">Finding</text>
+      <text class="erd-fields" x="10" y="38">severity, title, fix</text>
+      <text class="erd-fields" x="10" y="48" fill="#787c8e" font-style="italic">evidence_refs → Symptom, Hypothesis</text>
+    </g>
+
+    <!-- ── REGISTRY CLUSTER (right side) ── -->
+    <g transform="translate(880,330)">
+      <rect x="-5" y="-20" width="260" height="250" rx="14" fill="rgba(242,240,236,0.6)" stroke="#e6e4df" stroke-width="1"/>
+      <text class="erd-label" x="125" y="-4" text-anchor="middle" font-size="10" fill="#787c8e" letter-spacing="1.5">REGISTRIES</text>
+    </g>
+
+    <!-- PrimitiveSpec -->
+    <g class="erd-node" transform="translate(880,340)">
+      <rect width="250" height="60" rx="10" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.5"/>
+      <rect width="250" height="22" rx="10" fill="rgba(123,127,240,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="250" height="8" fill="rgba(123,127,240,0.06)" stroke="none"/>
+      <text class="erd-label" x="125" y="17" text-anchor="middle" font-size="10.5" fill="#7b7ff0">PrimitiveSpec</text>
+      <text class="erd-fields" x="10" y="36">name, fn, category, cost</text>
+      <text class="erd-fields" x="10" y="49">param_schema, prompt_description</text>
+    </g>
+
+    <!-- SignalSpec -->
+    <g class="erd-node" transform="translate(880,420)">
+      <rect width="250" height="45" rx="10" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.5"/>
+      <rect width="250" height="22" rx="10" fill="rgba(123,127,240,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="250" height="8" fill="rgba(123,127,240,0.06)" stroke="none"/>
+      <text class="erd-label" x="125" y="17" text-anchor="middle" font-size="10.5" fill="#7b7ff0">SignalSpec</text>
+      <text class="erd-fields" x="10" y="36">name, cost_description, fn</text>
+    </g>
+
+    <!-- HypothesisTemplate -->
+    <g class="erd-node" transform="translate(880,490)">
+      <rect width="250" height="60" rx="10" fill="#fffffe" stroke="#c99340" stroke-width="1.5"/>
+      <rect width="250" height="22" rx="10" fill="rgba(201,147,64,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="250" height="8" fill="rgba(201,147,64,0.06)" stroke="none"/>
+      <text class="erd-label" x="125" y="17" text-anchor="middle" font-size="10.5" fill="#c99340">HypothesisTemplate</text>
+      <text class="erd-fields" x="10" y="36">symptom_type, test_type</text>
+      <text class="erd-fields" x="10" y="49">test_params_template, confidence</text>
+    </g>
+
+    <!-- ── PROBE CLUSTER (bottom-left) ── -->
+    <g transform="translate(10,390)">
+      <rect x="-5" y="-15" width="400" height="310" rx="14" fill="rgba(144,122,212,0.04)" stroke="#907ad4" stroke-width="0.8" stroke-dasharray="4,4"/>
+      <text class="erd-label" x="195" y="3" text-anchor="middle" font-size="10" fill="#907ad4" letter-spacing="1.5">PROBES</text>
+    </g>
+
+    <!-- SemanticProbeReport -->
+    <g class="erd-node" transform="translate(20,405)">
+      <rect width="190" height="55" rx="10" fill="#fffffe" stroke="#907ad4" stroke-width="1.5"/>
+      <rect width="190" height="22" rx="10" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="190" height="8" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <text class="erd-label" x="95" y="17" text-anchor="middle" font-size="10.5" fill="#907ad4">SemanticProbeReport</text>
+      <text class="erd-fields" x="10" y="36">target_object, summary</text>
+      <text class="erd-fields" x="10" y="49">frames[], counterfactuals{}</text>
+    </g>
+
+    <!-- SemanticFrameSummary -->
+    <g class="erd-node" transform="translate(60,495)">
+      <rect width="210" height="48" rx="10" fill="#fffffe" stroke="#907ad4" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text class="erd-label" x="105" y="17" text-anchor="middle" font-size="10" fill="#907ad4">SemanticFrameSummary</text>
+      <text class="erd-fields" x="10" y="34">semantic_peak, margin</text>
+      <text class="erd-fields" x="10" y="45">causal_alignment, bg_gap</text>
+    </g>
+
+    <!-- QKProbeReport -->
+    <g class="erd-node" transform="translate(20,555)">
+      <rect width="180" height="55" rx="10" fill="#fffffe" stroke="#907ad4" stroke-width="1.5"/>
+      <rect width="180" height="22" rx="10" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="180" height="8" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <text class="erd-label" x="90" y="17" text-anchor="middle" font-size="10.5" fill="#907ad4">QKProbeReport</text>
+      <text class="erd-fields" x="10" y="36">dominant_head_type</text>
+      <text class="erd-fields" x="10" y="49">semantic/positional fractions</text>
+    </g>
+
+    <!-- QKHeadSummary -->
+    <g class="erd-node" transform="translate(20,655)">
+      <rect width="170" height="28" rx="8" fill="#fffffe" stroke="#907ad4" stroke-width="1" stroke-dasharray="4,3"/>
+      <text class="erd-fields" x="10" y="18" font-size="9">head_index, type, correlations</text>
+    </g>
+
+    <!-- SpatialObjectDiagnosis -->
+    <g class="erd-node" transform="translate(220,555)">
+      <rect width="180" height="55" rx="10" fill="#fffffe" stroke="#907ad4" stroke-width="1.5"/>
+      <rect width="180" height="22" rx="10" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <rect x="0" y="14" width="180" height="8" fill="rgba(144,122,212,0.06)" stroke="none"/>
+      <text class="erd-label" x="90" y="17" text-anchor="middle" font-size="10.5" fill="#907ad4">SpatialObjectDiagnosis</text>
+      <text class="erd-fields" x="10" y="36">verdict, confidence</text>
+      <text class="erd-fields" x="10" y="49">spatial/object evidence[]</text>
+    </g>
+
+    <!-- DiagnosticEvidence -->
+    <g class="erd-node" transform="translate(225,655)">
+      <rect width="165" height="28" rx="8" fill="#fffffe" stroke="#907ad4" stroke-width="1" stroke-dasharray="4,3"/>
+      <text class="erd-fields" x="10" y="18" font-size="9">source, score, summary</text>
+    </g>
+
+    <!-- ── LEGEND ── -->
+    <g transform="translate(720,330)">
+      <rect x="0" y="0" width="145" height="90" rx="8" fill="rgba(248,247,244,0.9)" stroke="#e6e4df" stroke-width="1"/>
+      <text class="erd-label" x="72" y="16" text-anchor="middle" font-size="9" fill="#787c8e">LEGEND</text>
+      <line x1="12" y1="30" x2="50" y2="30" stroke="#5c6070" stroke-width="1.5"/>
+      <path d="M46,27 L52,30 L46,33" fill="none" stroke="#5c6070" stroke-width="1.2"/>
+      <text class="erd-fields" x="58" y="34">owns (1:1 / 1:N)</text>
+      <line x1="12" y1="48" x2="50" y2="48" stroke="#787c8e" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <text class="erd-fields" x="58" y="52">cross-reference</text>
+      <rect x="12" y="60" width="35" height="14" rx="4" fill="#fffffe" stroke="#7b7ff0" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text class="erd-fields" x="58" y="72">child / leaf entity</text>
+    </g>
+
+  </svg>
+</div>
+
 </div><!-- /deck -->
+
+<!-- ── Zoom controls ── -->
+<div class="zoom-controls">
+  <button id="zoom-out" aria-label="Zoom out" title="Zoom out">&#8722;</button>
+  <span class="zoom-level" id="zoom-level">100%</span>
+  <button id="zoom-in" aria-label="Zoom in" title="Zoom in">&#43;</button>
+  <button id="zoom-reset" aria-label="Reset zoom" title="Reset zoom" style="font-size:0.7rem; width:auto; padding:0 8px;">&#8634;</button>
+</div>
 
 <!-- ── Navigation ── -->
 <div class="nav">
@@ -1177,6 +1531,8 @@
     slides[cur].classList.add('active');
     document.getElementById('counter').textContent = `${cur + 1} / ${total}`;
     progress.style.width = `${((cur + 1) / total) * 100}%`;
+    // Reset pan on slide change
+    if (typeof panX !== 'undefined') { panX = 0; panY = 0; applyTransform(); }
   }
 
   document.getElementById('prev').addEventListener('click', () => go(cur - 1));
@@ -1187,7 +1543,70 @@
     if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(cur - 1); }
     if (e.key === 'Home') { e.preventDefault(); go(0); }
     if (e.key === 'End') { e.preventDefault(); go(total - 1); }
+    if ((e.key === '=' || e.key === '+') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zoom(0.1); }
+    if (e.key === '-' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zoom(-0.1); }
+    if (e.key === '0' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zoomReset(); }
   });
+
+  /* ── Zoom + Pan ── */
+  let scale = 1, panX = 0, panY = 0;
+  let isDragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0;
+  const zoomLabel = document.getElementById('zoom-level');
+  const deck = document.getElementById('deck');
+
+  function applyTransform() {
+    slides.forEach(s => {
+      s.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      s.style.transformOrigin = 'top center';
+      s.style.cursor = scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default';
+    });
+    zoomLabel.textContent = Math.round(scale * 100) + '%';
+  }
+
+  function zoom(delta) {
+    const prev = scale;
+    scale = Math.min(2.5, Math.max(0.4, scale + delta));
+    if (scale <= 1) { panX = 0; panY = 0; }
+    applyTransform();
+  }
+
+  function zoomReset() {
+    scale = 1; panX = 0; panY = 0;
+    applyTransform();
+  }
+
+  // Mouse drag to pan (only when zoomed in)
+  deck.addEventListener('mousedown', (e) => {
+    if (scale <= 1) return;
+    if (e.target.closest('.nav, .zoom-controls, button, a')) return;
+    isDragging = true;
+    dragStartX = e.clientX; dragStartY = e.clientY;
+    panStartX = panX; panStartY = panY;
+    e.preventDefault();
+    applyTransform();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    panX = panStartX + (e.clientX - dragStartX);
+    panY = panStartY + (e.clientY - dragStartY);
+    applyTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isDragging) { isDragging = false; applyTransform(); }
+  });
+
+  // Scroll wheel to zoom (no modifier key needed)
+  deck.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoom(e.deltaY < 0 ? 0.1 : -0.1);
+  }, { passive: false });
+
+
+  document.getElementById('zoom-in').addEventListener('click', () => zoom(0.1));
+  document.getElementById('zoom-out').addEventListener('click', () => zoom(-0.1));
+  document.getElementById('zoom-reset').addEventListener('click', zoomReset);
 </script>
 
 </body>

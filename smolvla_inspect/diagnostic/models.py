@@ -69,12 +69,12 @@ class DatasetDiversityReport:
 
 
 # ---------------------------------------------------------------------------
-# Anomalies
+# Symptoms
 # ---------------------------------------------------------------------------
 
 @dataclass
-class Anomaly:
-    """A single detected anomaly."""
+class Symptom:
+    """A single detected symptom."""
 
     type: str
     severity: str  # "critical" | "warning" | "info"
@@ -135,8 +135,8 @@ class DiagnosticMatrix:
 
     # -- analysis ----------------------------------------------------------
 
-    def anomalies(self) -> list[Anomaly]:
-        """Placeholder anomaly detection – returns an empty list for now."""
+    def symptoms(self) -> list[Symptom]:
+        """Placeholder symptom detection – returns an empty list for now."""
         return []
 
     # -- serialisation -----------------------------------------------------
@@ -272,12 +272,12 @@ class DiagnosticMatrix:
 
 @dataclass
 class Hypothesis:
-    """A testable hypothesis generated from anomalies."""
+    """A testable hypothesis generated from symptoms."""
 
     id: str
     description: str
     confidence: float  # 0-1
-    supporting_anomalies: list[str]
+    supporting_symptoms: list[str]
     test_type: str
     test_params: dict
     expected_if_true: str
@@ -447,7 +447,7 @@ class DiagnosticReport:
     semantic_probe: SemanticProbeReport | None
     qk_probe: QKProbeReport | None
     spatial_object_diagnosis: SpatialObjectDiagnosis | None
-    anomalies: list[Anomaly]
+    symptoms: list[Symptom]
     hypotheses: list[Hypothesis]
     counterfactual_results: list[CounterfactualResult]
     findings: list[Finding]
@@ -512,7 +512,7 @@ class DiagnosticReport:
                 if self.spatial_object_diagnosis
                 else None
             ),
-            "anomalies": [asdict(a) for a in self.anomalies],
+            "symptoms": [asdict(a) for a in self.symptoms],
             "hypotheses": [asdict(h) for h in self.hypotheses],
             "counterfactual_results": self._serialisable_counterfactuals(),
             "findings": [asdict(f) for f in self.findings],
@@ -630,8 +630,8 @@ class DiagnosticReport:
                 object_evidence=object_ev,
             )
 
-        # Anomalies
-        anomalies = [Anomaly(**a) for a in data.get("anomalies", [])]
+        # Symptoms
+        symptoms = [Symptom(**a) for a in data.get("symptoms", [])]
 
         # Hypotheses
         hypotheses = [Hypothesis(**h) for h in data.get("hypotheses", [])]
@@ -662,7 +662,7 @@ class DiagnosticReport:
             semantic_probe=semantic_probe,
             qk_probe=qk_probe,
             spatial_object_diagnosis=spatial_object_diagnosis,
-            anomalies=anomalies,
+            symptoms=symptoms,
             hypotheses=hypotheses,
             counterfactual_results=cf_results,
             findings=findings,
@@ -1213,19 +1213,19 @@ class DiagnosticReport:
                     )
                 sections.append("")
 
-        # ── Anomalies ─────────────────────────────────────────────
-        sections.append("## Detected Anomalies")
+        # ── Symptoms ─────────────────────────────────────────────
+        sections.append("## Detected Symptoms")
         sections.append("")
-        if self.anomalies:
-            sections.append("| Severity | Anomaly | Description |")
+        if self.symptoms:
+            sections.append("| Severity | Symptom | Description |")
             sections.append("|---|---|---|")
-            for a in self.anomalies:
+            for a in self.symptoms:
                 icon = {"critical": "CRITICAL", "warning": "WARNING", "info": "INFO"}.get(
                     a.severity, a.severity.upper()
                 )
                 sections.append(f"| {icon} | {a.type} | {a.description} |")
         else:
-            sections.append("No anomalies detected.")
+            sections.append("No symptoms detected.")
         sections.append("")
 
         # ── Hypotheses + Counterfactual Results (merged) ──────────
@@ -1233,7 +1233,7 @@ class DiagnosticReport:
         sections.append("")
         sections.append(
             "Each hypothesis is a testable claim about model behaviour derived "
-            "from the anomalies above. The system tests each hypothesis by "
+            "from the symptoms above. The system tests each hypothesis by "
             "applying a controlled perturbation to the input (e.g., moving an "
             "object, swapping the background) and measuring how much the model's "
             "predicted actions change."
@@ -1318,7 +1318,7 @@ class DiagnosticReport:
                 sections.append("| Property | Details |")
                 sections.append("|---|---|")
                 sections.append(f"| **Confidence** | {h.confidence:.0%} |")
-                sections.append(f"| **Supporting anomalies** | {', '.join(h.supporting_anomalies)} |")
+                sections.append(f"| **Supporting symptoms** | {', '.join(h.supporting_symptoms)} |")
                 sections.append(f"| **Test type** | {h.test_type} |")
 
                 if cr:
@@ -1698,7 +1698,7 @@ class ComparisonReport:
     attribution_deltas: list[AttributionDelta] = field(default_factory=list)
     scalar_deltas: dict[str, list[float | None]] = field(default_factory=dict)
     counterfactual_deltas: list[CounterfactualDelta] = field(default_factory=list)
-    anomaly_summary: dict[str, list[str]] = field(default_factory=dict)
+    symptom_summary: dict[str, list[str]] = field(default_factory=dict)
     weight_alpha_deltas: list[WeightAlphaDelta] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
     verdict: str = ""
@@ -1780,24 +1780,24 @@ class ComparisonReport:
                 s.append(f"| {cd.test_type} | {vals} | {delta_str} | {pct} | {conf} |")
             s.append("")
 
-        # Anomaly summary
-        if self.anomaly_summary:
-            s.append("## Anomaly Comparison")
+        # Symptom summary
+        if self.symptom_summary:
+            s.append("## Symptom Comparison")
             s.append("")
             all_types: list[str] = []
-            for types in self.anomaly_summary.values():
+            for types in self.symptom_summary.values():
                 for t in types:
                     if t not in all_types:
                         all_types.append(t)
             if all_types:
-                hdr = "| Anomaly | " + " | ".join(self.labels) + " |"
+                hdr = "| Symptom | " + " | ".join(self.labels) + " |"
                 sep = "|" + "---|" * (len(self.labels) + 1)
                 s.append(hdr)
                 s.append(sep)
                 for atype in all_types:
                     cells = []
                     for label in self.labels:
-                        present = atype in self.anomaly_summary.get(label, [])
+                        present = atype in self.symptom_summary.get(label, [])
                         cells.append("PRESENT" if present else "resolved")
                     s.append(f"| {atype} | " + " | ".join(cells) + " |")
                 s.append("")

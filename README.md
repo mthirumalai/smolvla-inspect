@@ -48,7 +48,7 @@ The diagnostic agent goes beyond visualization — it automatically answers "why
 
 1. **Scene understanding** — detects objects (OWL-ViT v2) and segments them (SAM) to create semantic regions
 2. **Diagnostic matrix** — cross-references every signal type against every region to compute attribution mass
-3. **Anomaly detection** — flags issues like high background attribution, spatial shortcuts, dead state pathways
+3. **Symptom detection** — flags issues like high background attribution, spatial shortcuts, dead state pathways
 4. **LLM hypothesis formation** — selects the most discriminating counterfactual tests to run
 5. **Counterfactual verification** — perturbs the scene (swap backgrounds, relocate objects, recolor, occlude) and measures action change
 6. **Report synthesis** — produces ranked findings with evidence chains and actionable fixes
@@ -89,7 +89,7 @@ export SMOLVLA_LLM_BASE_URL=http://localhost:11434/v1
 export SMOLVLA_LLM_API_KEY=ollama
 ```
 
-If no API key is set, the agent falls back to rule-based hypothesis generation — you still get the matrix, anomaly detection, and counterfactual results, just without LLM-generated narrative.
+If no API key is set, the agent falls back to rule-based hypothesis generation — you still get the matrix, symptom detection, and counterfactual results, just without LLM-generated narrative.
 
 <details>
 <summary><strong>Extra dependencies</strong></summary>
@@ -149,9 +149,9 @@ run_folder/
 </details>
 
 <details>
-<summary><strong>Detected anomalies</strong></summary>
+<summary><strong>Detected symptoms</strong></summary>
 
-| Anomaly | Severity | What it means |
+| Symptom | Severity | What it means |
 |---------|----------|---------------|
 | High background attribution | Critical/Warning | Model relies on background features, not task objects |
 | Spatial shortcut | Critical | Model memorized object positions instead of recognizing them |
@@ -557,7 +557,7 @@ smolvla-inspect/
 │       ├── agent.py             # DiagnosticAgent orchestrator
 │       ├── counterfactual.py    # Counterfactual perturbation primitives
 │       ├── diagnostic_cli.py    # CLI subcommand handler
-│       ├── matrix.py            # Diagnostic matrix + anomaly detectors
+│       ├── matrix.py            # Diagnostic matrix + symptom detectors
 │       ├── models.py            # Data models (dataclasses)
 │       ├── prompts.py           # LLM prompt templates
 │       ├── regions.py           # Region attribution scoring

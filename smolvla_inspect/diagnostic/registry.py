@@ -4,7 +4,7 @@ Registries
 ----------
 REGISTRY               — diagnostic primitives (scene / model / counterfactual / …)
 SIGNAL_REGISTRY        — expensive signal runner functions
-HYPOTHESIS_TEMPLATES   — rule-based anomaly → hypothesis mapping
+HYPOTHESIS_TEMPLATES   — rule-based symptom → hypothesis mapping
 LLM_PROVIDERS          — LLM provider callables
 """
 
@@ -101,13 +101,13 @@ def register_signal(name: str, *, cost_description: str = "",
 
 
 # ---------------------------------------------------------------------------
-# 3. Hypothesis template registry — rule-based anomaly → hypothesis mapping
+# 3. Hypothesis template registry — rule-based symptom → hypothesis mapping
 # ---------------------------------------------------------------------------
 
 @dataclass
 class HypothesisTemplate:
-    """Maps an anomaly type to a canned hypothesis and counterfactual test."""
-    anomaly_type: str
+    """Maps an symptom type to a canned hypothesis and counterfactual test."""
+    symptom_type: str
     description_template: str      # May contain {target}
     confidence: float
     test_type: str
@@ -120,10 +120,10 @@ class HypothesisTemplate:
 HYPOTHESIS_TEMPLATES: dict[str, HypothesisTemplate] = {}
 
 
-def register_hypothesis_template(anomaly_type: str, **kwargs) -> None:
-    """Register a rule-based hypothesis template for a given anomaly type."""
-    HYPOTHESIS_TEMPLATES[anomaly_type] = HypothesisTemplate(
-        anomaly_type=anomaly_type, **kwargs,
+def register_hypothesis_template(symptom_type: str, **kwargs) -> None:
+    """Register a rule-based hypothesis template for a given symptom type."""
+    HYPOTHESIS_TEMPLATES[symptom_type] = HypothesisTemplate(
+        symptom_type=symptom_type, **kwargs,
     )
 
 

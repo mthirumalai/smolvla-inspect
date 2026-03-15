@@ -37,14 +37,14 @@ HYPOTHESIS_PROMPT = """You are an expert robotics ML researcher diagnosing a vis
 **QK Decomposition:**
 {qk_probe_summary}
 
-**Detected Anomalies:**
-{anomalies_json}
+**Detected Symptoms:**
+{symptoms_json}
 
 **Available counterfactual tests:**
 __COUNTERFACTUAL_TESTS__
 
 For each hypothesis, provide:
-1. A clear description of what you hypothesize and why (cite specific matrix values and anomalies)
+1. A clear description of what you hypothesize and why (cite specific matrix values and symptoms)
 2. Which counterfactual test would best verify or reject it (or "none" if matrix evidence is sufficient)
 3. The test parameters as a JSON object
 4. What you expect to see if the hypothesis is true
@@ -54,7 +54,7 @@ Output ONLY a JSON array. Each element must have these exact keys:
 - "id": string (e.g. "h1", "h2", ...)
 - "description": string
 - "confidence": float 0-1
-- "supporting_anomalies": list of anomaly type strings
+- "supporting_symptoms": list of symptom type strings
 - "test_type": string (one of the counterfactual names above, or "none")
 - "test_params": object (parameters for the counterfactual, or empty object for "none")
 - "expected_if_true": string
@@ -64,7 +64,7 @@ Output ONLY a JSON array. Each element must have these exact keys:
 Maximum 7 hypotheses, ranked by severity/confidence. Output valid JSON only, no markdown fences.
 
 Example output format (abbreviated):
-[{{"id": "h1", "description": "Model relies on background texture...", "confidence": 0.8, "supporting_anomalies": ["high_background_attribution"], "test_type": "background_substitution", "test_params": {{"replacement": "gray"}}, "expected_if_true": "Action delta > 0.05", "expected_if_false": "Action delta < 0.01", "confirms_on_change": true}}, {{"id": "h2", "description": "Model ignores language instruction...", "confidence": 0.7, "supporting_anomalies": ["language_blindness"], "test_type": "task_string_swap", "test_params": {{"replacement_task": "do nothing"}}, "expected_if_true": "Action unchanged despite new instruction", "expected_if_false": "Action changes, showing language sensitivity", "confirms_on_change": false}}]"""
+[{{"id": "h1", "description": "Model relies on background texture...", "confidence": 0.8, "supporting_symptoms": ["high_background_attribution"], "test_type": "background_substitution", "test_params": {{"replacement": "gray"}}, "expected_if_true": "Action delta > 0.05", "expected_if_false": "Action delta < 0.01", "confirms_on_change": true}}, {{"id": "h2", "description": "Model ignores language instruction...", "confidence": 0.7, "supporting_symptoms": ["language_blindness"], "test_type": "task_string_swap", "test_params": {{"replacement_task": "do nothing"}}, "expected_if_true": "Action unchanged despite new instruction", "expected_if_false": "Action changes, showing language sensitivity", "confirms_on_change": false}}]"""
 
 
 SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnostic report for a vision-language-action model.
@@ -87,7 +87,7 @@ SYNTHESIS_PROMPT = """You are an expert robotics ML researcher writing a diagnos
 **QK Decomposition:**
 {qk_probe_summary}
 
-**Anomalies detected:** {anomalies_summary}
+**Symptoms detected:** {symptoms_summary}
 
 **Dataset diversity:** {diversity_summary}
 
@@ -116,7 +116,7 @@ Output ONLY a JSON array of findings. Each element must have these exact keys:
 - "interpretation": string
 - "fix": string
 - "expected_impact": string
-- "evidence_refs": list of strings (anomaly IDs, hypothesis IDs)
+- "evidence_refs": list of strings (symptom IDs, hypothesis IDs)
 
 After the JSON array, on a new line write "---NARRATIVE---" followed by a full narrative synthesis (2-4 paragraphs) summarizing the overall model health, key issues, and prioritized action plan. This narrative should be written for a robotics engineer who wants to understand what's wrong and what to do about it.
 
@@ -130,7 +130,7 @@ The model shows critical dependence on background features..."""
 
 def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
                             diversity_summary: str, matrix_markdown: str,
-                            anomalies_json: str,
+                            symptoms_json: str,
                             spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
                             semantic_probe_summary: str = "Semantic patch-to-text probe unavailable.",
                             qk_probe_summary: str = "QK decomposition unavailable.",
@@ -146,14 +146,14 @@ def build_hypothesis_prompt(task_string: str, detected_objects: list[str],
         spatial_object_summary=spatial_object_summary,
         semantic_probe_summary=semantic_probe_summary,
         qk_probe_summary=qk_probe_summary,
-        anomalies_json=anomalies_json,
+        symptoms_json=symptoms_json,
     )
     prompt = prompt.replace("__COUNTERFACTUAL_TESTS__", format_counterfactual_prompt_section())
     return prompt
 
 
 def build_synthesis_prompt(task_string: str, detected_objects: list[str],
-                           matrix_markdown: str, anomalies_summary: str,
+                           matrix_markdown: str, symptoms_summary: str,
                            diversity_summary: str,
                            hypotheses_with_results: str,
                            spatial_object_summary: str = "Spatial-vs-object diagnosis unavailable.",
@@ -169,7 +169,7 @@ def build_synthesis_prompt(task_string: str, detected_objects: list[str],
         spatial_object_summary=spatial_object_summary,
         semantic_probe_summary=semantic_probe_summary,
         qk_probe_summary=qk_probe_summary,
-        anomalies_summary=anomalies_summary,
+        symptoms_summary=symptoms_summary,
         diversity_summary=diversity_summary,
         hypotheses_with_results=hypotheses_with_results,
     )
@@ -198,11 +198,11 @@ def format_diversity_summary(diversity) -> str:
     return "\n".join(lines)
 
 
-def format_anomalies_json(anomalies) -> str:
-    """Format anomalies list as JSON string for the prompt."""
+def format_symptoms_json(symptoms) -> str:
+    """Format symptoms list as JSON string for the prompt."""
     import json
     items = []
-    for a in anomalies:
+    for a in symptoms:
         items.append({
             "type": a.type,
             "severity": a.severity,
@@ -230,7 +230,7 @@ def format_hypotheses_with_results(hypotheses, cf_results, *, skip_reason: str =
     for h in hypotheses:
         lines.append(f"### Hypothesis {h.id}: {h.description}")
         lines.append(f"Confidence: {h.confidence:.2f}")
-        lines.append(f"Supporting anomalies: {', '.join(h.supporting_anomalies)}")
+        lines.append(f"Supporting symptoms: {', '.join(h.supporting_symptoms)}")
 
         result = result_map.get(h.id)
         if result:

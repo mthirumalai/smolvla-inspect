@@ -10,12 +10,12 @@ import numpy as np
 
 from .models import (
     DiagnosticReport, DiagnosticMatrix, Hypothesis, CounterfactualResult,
-    EvidenceEntry, Finding, SceneSegmentation, DatasetDiversityReport, Anomaly,
+    EvidenceEntry, Finding, SceneSegmentation, DatasetDiversityReport, Symptom,
 )
 from .registry import REGISTRY, register_signal
 from .scene import parse_task_objects, detect_objects, segment_scene, analyze_dataset_diversity
 from .regions import attribute_to_regions
-from .matrix import build_diagnostic_matrix, detect_anomalies
+from .matrix import build_diagnostic_matrix, detect_symptoms
 from .spatial_object import (
     build_spatial_object_diagnosis,
     choose_target_object,
@@ -31,7 +31,7 @@ from .semantic_probe import (
 )
 from .prompts import (
     build_hypothesis_prompt, build_synthesis_prompt, build_triage_selection_prompt,
-    format_diversity_summary, format_anomalies_json, format_hypotheses_with_results,
+    format_diversity_summary, format_symptoms_json, format_hypotheses_with_results,
 )
 from ..data import _resolve_task_string, get_episode_frames, build_policy_batch_from_sample
 
@@ -512,18 +512,18 @@ class DiagnosticAgent:
         )
 
         internals = signals.get("model_internals")
-        anomalies = detect_anomalies(matrix, internals, dataset_diversity=diversity)
-        n_crit = sum(1 for a in anomalies if a.severity == "critical")
-        n_warn = sum(1 for a in anomalies if a.severity == "warning")
-        _progress("matrix", f"Detected {len(anomalies)} anomalies ({n_crit} critical, {n_warn} warnings)")
-        for a in anomalies:
+        symptoms = detect_symptoms(matrix, internals, dataset_diversity=diversity)
+        n_crit = sum(1 for a in symptoms if a.severity == "critical")
+        n_warn = sum(1 for a in symptoms if a.severity == "warning")
+        _progress("matrix", f"Detected {len(symptoms)} symptoms ({n_crit} critical, {n_warn} warnings)")
+        for a in symptoms:
             sev_icon = {"critical": "!!", "warning": "! ", "info": "  "}.get(a.severity, "  ")
             _progress("matrix", f"  {sev_icon} {a.type}: {a.description[:80]}")
 
         self.evidence_log.append(EvidenceEntry(
             phase="matrix",
-            primitive_name="matrix.detect_anomalies",
-            data={"anomaly_types": [a.type for a in anomalies]},
+            primitive_name="matrix.detect_symptoms",
+            data={"symptom_types": [a.type for a in symptoms]},
         ))
 
         primary_semantic_frame = None
@@ -568,7 +568,7 @@ class DiagnosticAgent:
             llm_label = "rule-based (no API key)"
         _progress("hypothesize", f"Forming hypotheses via {llm_label}...")
         hypotheses = await self._form_hypotheses(
-            task_string, scene, diversity, matrix, anomalies,
+            task_string, scene, diversity, matrix, symptoms,
             preliminary_spatial_object, semantic_probe, None)
         _progress("hypothesize", f"Formed {len(hypotheses)} hypotheses:")
         for h in hypotheses:
@@ -637,7 +637,7 @@ class DiagnosticAgent:
             if surprising:
                 _progress("iteration", f"Found {len(surprising)} surprising results, forming follow-up hypotheses...")
                 followup_hypotheses = await self._form_hypotheses(
-                    task_string, scene, diversity, matrix, anomalies,
+                    task_string, scene, diversity, matrix, symptoms,
                     pre_qk_spatial_object if 'pre_qk_spatial_object' in locals() else preliminary_spatial_object,
                     semantic_probe,
                     qk_probe,
@@ -705,7 +705,7 @@ class DiagnosticAgent:
                         id=f"mandatory_{test_type}",
                         description=f"Mandatory baseline test: {test_type}",
                         confidence=0.5,
-                        supporting_anomalies=[],
+                        supporting_symptoms=[],
                         test_type=test_type,
                         test_params=synth_params,
                         expected_if_true="Model output changes significantly",
@@ -798,7 +798,7 @@ class DiagnosticAgent:
         # ── Phase 9: LLM Synthesis ─────────────────────────────
         _progress("synthesis", f"Synthesizing report via {llm_label}...")
         findings, narrative = await self._synthesize_report(
-            task_string, scene, diversity, matrix, anomalies,
+            task_string, scene, diversity, matrix, symptoms,
             hypotheses, cf_results, spatial_object_diagnosis,
             semantic_probe,
             qk_probe,
@@ -843,7 +843,7 @@ class DiagnosticAgent:
             semantic_probe=semantic_probe,
             qk_probe=qk_probe,
             spatial_object_diagnosis=spatial_object_diagnosis,
-            anomalies=anomalies,
+            symptoms=symptoms,
             hypotheses=hypotheses,
             counterfactual_results=cf_results,
             findings=findings,
@@ -1284,11 +1284,11 @@ class DiagnosticAgent:
         """Generate a rule-based response when no LLM is available."""
         if "hypothesis" in prompt.lower() or "hypothesize" in prompt.lower():
             return '[]'
-        return '[]---NARRATIVE---\nDiagnostic analysis completed. LLM synthesis unavailable — review the diagnostic matrix and anomalies above for details.'
+        return '[]---NARRATIVE---\nDiagnostic analysis completed. LLM synthesis unavailable — review the diagnostic matrix and symptoms above for details.'
 
     async def _form_hypotheses(self, task_string: str, scene: SceneSegmentation,
                                 diversity, matrix: DiagnosticMatrix,
-                                anomalies: list[Anomaly],
+                                symptoms: list[Symptom],
                                 spatial_object_diagnosis=None,
                                 semantic_probe=None,
                                 qk_probe=None) -> list[Hypothesis]:
@@ -1298,7 +1298,7 @@ class DiagnosticAgent:
             detected_objects=scene.region_names(),
             diversity_summary=format_diversity_summary(diversity),
             matrix_markdown=matrix.to_markdown(),
-            anomalies_json=format_anomalies_json(anomalies),
+            symptoms_json=format_symptoms_json(symptoms),
             spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
             semantic_probe_summary=summarize_semantic_probe(semantic_probe),
             qk_probe_summary=summarize_qk_probe(qk_probe),
@@ -1317,7 +1317,7 @@ class DiagnosticAgent:
                     id=item.get("id", f"h{len(hypotheses)+1}"),
                     description=item.get("description", ""),
                     confidence=float(item.get("confidence", 0.5)),
-                    supporting_anomalies=item.get("supporting_anomalies", []),
+                    supporting_symptoms=item.get("supporting_symptoms", []),
                     test_type=item.get("test_type", "none"),
                     test_params=item.get("test_params", {}),
                     expected_if_true=item.get("expected_if_true", ""),
@@ -1331,9 +1331,9 @@ class DiagnosticAgent:
         except (KeyError, TypeError, ValueError) as e:
             print(f"  Warning: Failed to parse LLM hypotheses: {e}")
 
-        # Merge rule-based hypotheses for any anomaly-test mappings the LLM missed
+        # Merge rule-based hypotheses for any symptom-test mappings the LLM missed
         rule_based = self._rule_based_hypotheses(
-            anomalies,
+            symptoms,
             scene,
             target_object=getattr(spatial_object_diagnosis, "target_object", None),
         )
@@ -1345,17 +1345,17 @@ class DiagnosticAgent:
 
         return hypotheses[:self.config.get("max_hypotheses", 7)]
 
-    def _rule_based_hypotheses(self, anomalies: list[Anomaly],
+    def _rule_based_hypotheses(self, symptoms: list[Symptom],
                                 scene: SceneSegmentation,
                                 target_object: str | None = None) -> list[Hypothesis]:
-        """Generate hypotheses from anomalies without LLM."""
+        """Generate hypotheses from symptoms without LLM."""
         from .registry import HYPOTHESIS_TEMPLATES
         hypotheses = []
         target_objects = [r for r in scene.region_names() if r != "background" and r != "robot gripper"]
         target = target_object or (target_objects[0] if target_objects else "object")
 
-        for anomaly in anomalies:
-            tmpl = HYPOTHESIS_TEMPLATES.get(anomaly.type)
+        for symptom in symptoms:
+            tmpl = HYPOTHESIS_TEMPLATES.get(symptom.type)
             if tmpl is None:
                 continue
             # Resolve {target} placeholders in description and params
@@ -1367,7 +1367,7 @@ class DiagnosticAgent:
                 id=f"h{len(hypotheses)+1}",
                 description=desc,
                 confidence=tmpl.confidence,
-                supporting_anomalies=[anomaly.type],
+                supporting_symptoms=[symptom.type],
                 test_type=tmpl.test_type,
                 test_params=params,
                 expected_if_true=tmpl.expected_if_true,
@@ -1378,7 +1378,7 @@ class DiagnosticAgent:
 
     async def _synthesize_report(self, task_string: str, scene: SceneSegmentation,
                                   diversity, matrix: DiagnosticMatrix,
-                                  anomalies: list[Anomaly],
+                                  symptoms: list[Symptom],
                                   hypotheses: list[Hypothesis],
                                   cf_results: list[CounterfactualResult],
                                   spatial_object_diagnosis=None,
@@ -1394,7 +1394,7 @@ class DiagnosticAgent:
             spatial_object_summary=summarize_spatial_object_diagnosis(spatial_object_diagnosis),
             semantic_probe_summary=summarize_semantic_probe(semantic_probe),
             qk_probe_summary=summarize_qk_probe(qk_probe),
-            anomalies_summary=format_anomalies_json(anomalies),
+            symptoms_summary=format_symptoms_json(symptoms),
             diversity_summary=format_diversity_summary(diversity),
             hypotheses_with_results=format_hypotheses_with_results(
                 hypotheses, cf_results, skip_reason=cf_skip_reason),
@@ -1452,7 +1452,7 @@ class DiagnosticAgent:
         if not findings:
             print("  Falling back to rule-based findings.")
             findings = self._rule_based_findings(
-                anomalies,
+                symptoms,
                 hypotheses,
                 cf_results,
                 spatial_object_diagnosis=spatial_object_diagnosis,
@@ -1460,18 +1460,18 @@ class DiagnosticAgent:
 
         if not narrative:
             narrative = self._rule_based_narrative(
-                anomalies,
+                symptoms,
                 findings,
                 spatial_object_diagnosis=spatial_object_diagnosis,
             )
 
         return findings, narrative
 
-    def _rule_based_findings(self, anomalies: list[Anomaly],
+    def _rule_based_findings(self, symptoms: list[Symptom],
                               hypotheses: list[Hypothesis],
                               cf_results: list[CounterfactualResult],
                               spatial_object_diagnosis=None) -> list[Finding]:
-        """Generate expert-quality findings without LLM, using anomaly-specific knowledge."""
+        """Generate expert-quality findings without LLM, using symptom-specific knowledge."""
         findings = []
         result_map = {r.hypothesis_id: r for r in cf_results}
 
@@ -1545,7 +1545,7 @@ class DiagnosticAgent:
                 evidence_refs=[f"spatial_object:{diag.verdict}"],
             ))
 
-        # Anomaly-type → expert knowledge database
+        # Symptom-type → expert knowledge database
         _EXPERT_DB = {
             "high_background_attribution": {
                 "title": "Background texture dependence",
@@ -1781,30 +1781,30 @@ class DiagnosticAgent:
             },
         }
 
-        for anomaly in anomalies:
-            expert = _EXPERT_DB.get(anomaly.type, {})
-            evidence = anomaly.evidence or {}
+        for symptom in symptoms:
+            expert = _EXPERT_DB.get(symptom.type, {})
+            evidence = symptom.evidence or {}
 
             # Build observation from actual evidence data
-            obs_parts = [f"Anomaly detected: {anomaly.type}."]
-            if anomaly.type == "high_background_attribution":
+            obs_parts = [f"Symptom detected: {symptom.type}."]
+            if symptom.type == "high_background_attribution":
                 bg_share = evidence.get("background_share", 0)
                 signal = evidence.get("signal", "unknown")
                 obs_parts.append(f"{signal} shows {bg_share:.1%} background attribution.")
-            elif anomaly.type == "low_object_attribution":
+            elif symptom.type == "low_object_attribution":
                 low_objs = evidence.get("low_objects", {})
                 for obj, val in low_objs.items():
                     obs_parts.append(f"{obj}: {val:.1%} attribution.")
-            elif anomaly.type == "spatial_shortcut":
+            elif symptom.type == "spatial_shortcut":
                 ratio = evidence.get("positional_baseline_ratio", evidence.get("correlation", 0))
                 obs_parts.append(f"Positional baseline similarity: {ratio:.2f}.")
-            elif anomaly.type == "low_dataset_diversity":
+            elif symptom.type == "low_dataset_diversity":
                 lp = evidence.get("low_position_objects", [])
                 ut = evidence.get("unique_task_strings", "?")
                 if lp:
                     obs_parts.append(f"Low position variance objects: {', '.join(lp)}.")
                 obs_parts.append(f"Unique task strings: {ut}.")
-            elif anomaly.type == "action_attention_misalignment":
+            elif symptom.type == "action_attention_misalignment":
                 dims = evidence.get("background_attributed_dims", [])
                 obs_parts.append(f"Background-attributed action dims: {', '.join(dims)}.")
             else:
@@ -1812,20 +1812,20 @@ class DiagnosticAgent:
 
             finding = Finding(
                 id=f"f{len(findings)+1}",
-                severity=anomaly.severity,
-                title=expert.get("title", anomaly.description),
+                severity=symptom.severity,
+                title=expert.get("title", symptom.description),
                 observation=" ".join(obs_parts),
                 test_description="See counterfactual results below.",
                 test_result="",
-                interpretation=expert.get("interpretation", anomaly.description),
-                fix=expert.get("fix", f"Address the {anomaly.type} anomaly based on the diagnostic data."),
+                interpretation=expert.get("interpretation", symptom.description),
+                fix=expert.get("fix", f"Address the {symptom.type} symptom based on the diagnostic data."),
                 expected_impact=expert.get("expected_impact", "Improvement expected upon resolution."),
-                evidence_refs=[anomaly.type],
+                evidence_refs=[symptom.type],
             )
 
             # Link counterfactual results
             for h in hypotheses:
-                if anomaly.type in h.supporting_anomalies:
+                if symptom.type in h.supporting_symptoms:
                     r = result_map.get(h.id)
                     if r:
                         finding.test_description = f"Ran {r.test_type} counterfactual"
@@ -1841,7 +1841,7 @@ class DiagnosticAgent:
 
         return findings
 
-    def _rule_based_narrative(self, anomalies: list[Anomaly],
+    def _rule_based_narrative(self, symptoms: list[Symptom],
                                findings: list[Finding],
                                spatial_object_diagnosis=None) -> str:
         """Generate expert-quality narrative without LLM."""
@@ -1887,11 +1887,11 @@ class DiagnosticAgent:
             "cross_attention_diffuse",     # Architecture
             "temporal_attention_instability", # Temporal
         ]
-        anomaly_types = [a.type for a in anomalies]
+        symptom_types = [a.type for a in symptoms]
         seen = set()
         step = 1
         for atype in priority_order:
-            if atype in anomaly_types and atype not in seen:
+            if atype in symptom_types and atype not in seen:
                 seen.add(atype)
                 matching = [f for f in findings if atype in f.evidence_refs]
                 if matching:

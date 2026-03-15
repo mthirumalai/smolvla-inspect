@@ -67,7 +67,7 @@ interface DiagnosticReport {
       details: Record<string, unknown>;
     }>;
   };
-  anomalies: Array<{
+  symptoms: Array<{
     type: string;
     severity: string;
     description: string;
@@ -379,14 +379,14 @@ export default function DiagnosticPanel() {
         />
       )}
 
-      {/* Anomalies */}
-      {report.anomalies && report.anomalies.length > 0 && (
+      {/* Symptoms */}
+      {report.symptoms && report.symptoms.length > 0 && (
         <div className="card" style={{ padding: 16 }}>
           <h4 style={{ color: "var(--text-heading)", marginBottom: 8, fontSize: 14 }}>
-            Detected Anomalies ({report.anomalies.length})
+            Detected Symptoms ({report.symptoms.length})
           </h4>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {report.anomalies.map((a, i) => (
+            {report.symptoms.map((a, i) => (
               <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
                 <SeverityBadge severity={a.severity} />
                 <span style={{ color: "var(--text-heading)" }}>{a.description}</span>

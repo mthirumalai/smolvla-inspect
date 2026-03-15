@@ -72,7 +72,7 @@ Please provide a structured analysis in two parts:
 - **Spatial misalignment**: Recommend attention supervision losses, guided attention during fine-tuning, or data augmentation strategies that could help.
 - **Temporal instability**: Suggest frame-to-frame consistency regularization, temporal smoothing, or whether this indicates a data quality issue (jerky demonstrations).
 - **Background distraction**: Recommend background randomization during training, cropping strategies, or domain randomization.
-- **Entropy anomalies**: If too peaked, suggest temperature scaling or attention dropout. If too diffuse, suggest training with auxiliary spatial losses.
+- **Entropy symptoms**: If too peaked, suggest temperature scaling or attention dropout. If too diffuse, suggest training with auxiliary spatial losses.
 
 ### Broader implications
 - Given what self-attention reveals about the model's representation, what should the researcher examine next? (e.g., "Cross-attention maps to see if the action expert uses these representations", "GradCAM to check causal influence vs. mere attention", "Per-head analysis to find dead or redundant heads")
@@ -313,7 +313,7 @@ Please provide a structured analysis in two parts:
 - Does the observed pattern match these expectations?
 - Reference the trend direction and slope — is the balance shifting systematically across the episode?
 
-### Anomaly detection
+### Symptom detection
 - Are there abrupt shifts in modality balance? These might correspond to contact events, task transitions, or policy uncertainty.
 - Is one modality dominant throughout with near-zero contribution from the other? This would suggest the model hasn't learned to use both modalities.
 - Are there frames where vision drops to near-zero? The model might be "closing its eyes" and relying purely on proprioception — concerning for visual manipulation tasks.
@@ -538,7 +538,7 @@ Please provide a structured analysis in two parts:
 - Is the transition gradual (attribution slowly sharpens onto the target) or abrupt (sudden shift at a specific layer)?
 - After the grounding layer, does attribution remain stable or continue to evolve?
 
-### Anomaly detection across layers
+### Symptom detection across layers
 - Are there layers with very diffuse, near-uniform attribution? These might be "bottleneck layers" where spatial information is temporarily lost.
 - Are there layers with collapsed attribution (all mass on one patch)? This could indicate a representational bottleneck or skip-connection issue.
 - Do any late layers "regress" to early-layer patterns (losing spatial precision)? This would suggest representational degradation.
