@@ -1240,7 +1240,68 @@
   </div>
 </div>
 
-<!-- ════════════════════ SLIDE 18: RECAP ════════════════════ -->
+<!-- ════════════════════ SLIDE 18: CROSS-RUN COMPARISON ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">Workflow</div>
+  <h2>Cross-Run Comparison</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">Compare diagnostic runs side-by-side to track training progress, validate fixes, or detect regressions. No GPU or torch required &mdash; works from pre-computed reports.</p>
+
+  <div style="display: flex; gap: 1rem; margin-bottom: 0.8rem;">
+    <!-- Left: What gets compared -->
+    <div style="flex: 1;">
+      <div class="card card-accent" style="border-top: 3px solid var(--accent);">
+        <h3 style="margin:0 0 0.4rem;">What Gets Compared</h3>
+        <ul style="margin:0; padding-left:0;">
+          <li style="padding:0.2rem 0;"><strong>Attribution deltas</strong> &mdash; per-signal, per-region mass changes with % shift</li>
+          <li style="padding:0.2rem 0;"><strong>Counterfactual deltas</strong> &mdash; action delta L2 changes per test type, confirmation status</li>
+          <li style="padding:0.2rem 0;"><strong>Symptom tracking</strong> &mdash; resolved, new, and persistent symptoms across runs</li>
+          <li style="padding:0.2rem 0;"><strong>Weight spectral alphas</strong> &mdash; per-component mean alpha deltas with health status</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Right: Architecture + CLI -->
+    <div style="flex: 1;">
+      <div class="card" style="border-top: 3px solid var(--teal); margin-bottom: 0.8rem;">
+        <h3 style="margin:0 0 0.4rem;">Lightweight by Design</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0.4rem;">Comparison reads <code>report.json</code> and <code>weightwatcher.json</code> from each run directory. No model loading, no GPU, no torch import.</p>
+        <div style="background:var(--surface); border-radius:8px; padding:0.5rem 0.7rem; font-family:monospace; font-size:0.75rem; color:var(--navy); line-height:1.6;">
+          python regenerate_report.py compare \<br>
+          &nbsp;&nbsp;run_2026-03-10/ run_2026-03-15/ \<br>
+          &nbsp;&nbsp;--labels "before fix" "after fix" \<br>
+          &nbsp;&nbsp;--output-dir ./comparison_output
+        </div>
+      </div>
+
+      <div class="card" style="border-top: 3px solid var(--amber);">
+        <h3 style="margin:0 0 0.4rem;">Auto-Generated Outputs</h3>
+        <ul style="margin:0; padding-left:0;">
+          <li style="padding:0.15rem 0;"><strong>Verdict</strong> &mdash; concise summary of what improved or regressed</li>
+          <li style="padding:0.15rem 0;"><strong>Recommendations</strong> &mdash; actionable next steps based on delta patterns</li>
+          <li style="padding:0.15rem 0;"><strong>JSON + Markdown</strong> &mdash; machine-readable and human-readable reports</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data model flow -->
+  <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%);">
+    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; justify-content:center;">
+      <span style="background:var(--teal-bg); border:1px solid var(--teal); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--teal);">RunSnapshot A</span>
+      <span style="color:var(--dim);">+</span>
+      <span style="background:var(--teal-bg); border:1px solid var(--teal); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--teal);">RunSnapshot B</span>
+      <span style="color:var(--dim);">&xrarr;</span>
+      <span style="background:var(--accent-bg); border:1px solid var(--accent); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--accent);">compare_runs()</span>
+      <span style="color:var(--dim);">&xrarr;</span>
+      <span style="background:var(--amber-bg); border:1px solid var(--amber); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--amber);">ComparisonReport</span>
+      <span style="color:var(--dim);">&xrarr;</span>
+      <span style="background:var(--green-bg); border:1px solid var(--green); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--green);">Verdict + Recommendations</span>
+    </div>
+    <p style="text-align:center; margin-top:0.5rem; font-size:0.82rem; color:var(--muted);">Each <code>RunSnapshot</code> loads diagnostic JSON + weight internals. Deltas are computed per-signal, per-test, and per-component. The verdict and recommendations auto-generate from delta patterns.</p>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 19: RECAP ════════════════════ -->
 <div class="slide recap-slide">
   <div class="section-label" style="background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5);">Summary</div>
   <h1>Key Takeaways</h1>
@@ -1604,7 +1665,7 @@
 <!-- ── Navigation ── -->
 <div class="nav">
   <button id="prev" aria-label="Previous slide">&#8592;</button>
-  <span class="counter" id="counter">1 / 21</span>
+  <span class="counter" id="counter">1 / 22</span>
   <button id="next" aria-label="Next slide">&#8594;</button>
 </div>
 
