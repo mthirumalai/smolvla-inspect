@@ -255,6 +255,22 @@ Consult your client's docs for the exact config format.
 
 Restart your client and the 48 tools appear automatically.
 
+### Configuration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--base-dir` | `./outputs` | Root directory to scan for runs |
+
+`--base-dir` is set at server startup and stays fixed for the session — it can't be changed via natural language at runtime. The scanner walks the directory **recursively**, so any nested folder containing a `run_manifest.json` is discovered automatically.
+
+If your runs are spread across multiple directories, point `--base-dir` at a common parent:
+
+```json
+"args": ["inspect_attention.py", "mcp", "--base-dir", "/path/to/all/experiments"]
+```
+
+To pick up runs in a new location, update `--base-dir` in your client config and restart.
+
 ### Example queries
 
 | Query | Tool used |
