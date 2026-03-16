@@ -208,6 +208,18 @@ pip install "mcp>=1.0.0"
 python inspect_attention.py mcp --help
 ```
 
+### Verify it works
+
+Use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) to verify the server is working — it's a browser-based developer tool that lets you browse all 48 tools, call them with parameters, and see the raw JSON responses:
+
+```bash
+npx @modelcontextprotocol/inspector python inspect_attention.py mcp --base-dir ./outputs
+```
+
+The Inspector calls your real server against real data, so you can confirm tools return correct results before registering with a client.
+
+For the full natural-language experience ("compare these two runs and tell me what changed"), register the server with an MCP client that has an LLM behind it (see below).
+
 ### Register with your MCP client
 
 <details>
