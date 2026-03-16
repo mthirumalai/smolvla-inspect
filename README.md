@@ -20,6 +20,10 @@ pip install -r requirements.txt   # macOS: brew install ffmpeg@6 first
 
 # 4. Diagnostic agent — "why does my model fail?"
 ./run.sh diagnose --model your/model_id --dataset your/dataset_id --episode 0
+
+# 5. MCP server — let Claude Code query your runs
+pip install "mcp>=1.0.0"
+python inspect_attention.py mcp --base-dir ./outputs
 ```
 
 Results are written to `outputs/`. Launch the web viewer with `./start_servers.sh`.
@@ -34,6 +38,7 @@ SmolVLA is a vision-language-action policy: it takes camera images and a languag
 | Gradient attribution | `--gradient`, `--gradcam-connector`, `--per-action-dim`, etc. | Which pixels causally affect the predicted action? |
 | Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved? |
 | **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? |
+| **MCP server** | `mcp` subcommand | Let Claude Code query your runs directly |
 
 The internals report runs spectral analysis (WeightWatcher), attention entropy, and head redundancy checks across the SigLIP encoder, VLM, action expert, connector, and projection heads.
 
@@ -186,6 +191,63 @@ python regenerate_report.py compare dir1 dir2 --labels "baseline" "finetuned" --
 The comparison produces `comparison_report.json` and `comparison_report.md` with attribution deltas, counterfactual deltas, and weight spectral changes across runs.
 
 The diagnostic is also available in the web viewer — select a run, then click "Diagnostic Agent" in the sidebar.
+
+## MCP Server (Claude Code Integration)
+
+The MCP server exposes **48 read-only tools** so Claude Code can query your inspection runs, diagnostic reports, and comparison data directly — no web viewer needed.
+
+### Quick start
+
+```bash
+# Install the MCP dependency
+pip install "mcp>=1.0.0"
+
+# Test the CLI
+python inspect_attention.py mcp --help
+```
+
+### Register with Claude Code
+
+Add to `~/.claude/mcp_servers.json`:
+
+```json
+{
+  "smolvla-inspect": {
+    "command": "python",
+    "args": ["inspect_attention.py", "mcp", "--base-dir", "./outputs"],
+    "cwd": "/path/to/smolvla-inspect"
+  }
+}
+```
+
+Restart Claude Code, and the tools appear automatically.
+
+### What you can ask Claude
+
+| Query | Tool used |
+|-------|-----------|
+| "List all runs" | `list_runs` |
+| "Show details for run X" | `get_run_detail` |
+| "What symptoms did the diagnostic find?" | `get_symptoms` |
+| "Compare these two runs" | `compare_diagnostic_runs` |
+| "What does self-attention look like for frame 0?" | `get_attention_heatmaps` |
+| "Build a matrix of findings across models and datasets" | `compare_matrix` |
+| "What hypothesis templates are available?" | `list_hypothesis_templates` |
+
+<details>
+<summary><strong>Tool categories (48 tools)</strong></summary>
+
+| Category | Count | Tools |
+|----------|-------|-------|
+| Discovery | 8 | `list_runs`, `search_runs`, `get_run_detail`, `tag_run`, `untag_run`, `rescan_runs`, `validate_run`, `add_run` |
+| Inspection | 12 | `get_attention_heatmaps`, `get_gradient_attribution`, `get_per_head_attention`, `get_per_step_cross_attention`, `get_vlm_layers`, `get_per_action_dim`, `get_language_diff`, `get_vision_vs_state`, `get_model_internals`, `get_frame_image`, `list_run_images`, `get_frames` |
+| Statistics | 3 | `get_viz_stats`, `get_run_summary_stats`, `format_stats_for_prompt` |
+| Diagnostic | 11 | `get_diagnostic_report`, `get_symptoms`, `get_hypotheses`, `get_findings`, `get_evidence_chain`, `get_diagnostic_matrix`, `get_scene_data`, `get_counterfactual_result`, `get_semantic_probe`, `get_qk_probe`, `get_spatial_object_diagnosis` |
+| Comparison | 5 | `compare_diagnostic_runs`, `compare_run_configs`, `compare_component_weights`, `compare_heatmaps`, `compare_matrix` |
+| Registry | 7 | `list_primitives`, `list_signals`, `list_hypothesis_templates`, `list_symptom_detectors`, `get_primitive_detail`, `get_counterfactual_tests`, `get_signal_descriptions` |
+| Notes | 2 | `get_run_notes`, `set_run_notes` |
+
+</details>
 
 ## Setup
 
@@ -575,6 +637,20 @@ smolvla-inspect/
 │   ├── serve.py
 │   ├── viz.py
 │   ├── _compat.py
+│   ├── mcp/                    # MCP server (Claude Code integration)
+│   │   ├── __init__.py          # mcp_main() entry point
+│   │   ├── server.py            # FastMCP instance
+│   │   ├── context.py           # Settings singleton, resolve_run()
+│   │   ├── helpers.py           # JSON serialization, base64, envelopes
+│   │   ├── resources.py         # MCP resources (configs, registry, per-run)
+│   │   └── tools/
+│   │       ├── discovery.py     # 8 tools: list/search/tag/validate runs
+│   │       ├── inspection.py    # 12 tools: heatmaps, gradients, images
+│   │       ├── statistics.py    # 3 tools: viz stats, summary, formatted
+│   │       ├── diagnostic.py    # 11 tools: report, symptoms, findings
+│   │       ├── comparison.py    # 5 tools: cross-run comparisons
+│   │       ├── registry_tools.py # 7 tools: primitives, signals, templates
+│   │       └── notes.py         # 2 tools: get/set run notes
 │   └── diagnostic/             # Diagnostic agent package
 │       ├── __init__.py          # run_diagnostic() entry point
 │       ├── agent.py             # DiagnosticAgent orchestrator
@@ -623,6 +699,7 @@ smolvla-inspect/
 - [x] Config file support
 - [x] Interactive web viewer
 - [x] Agentic diagnostic system with counterfactual verification
+- [x] MCP server for Claude Code integration (48 read-only tools)
 - [ ] Representation probing
 - [ ] Causal tracing / activation patching
 - [ ] Temporal consistency analysis

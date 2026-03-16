@@ -26,6 +26,9 @@ def main():
         add_diagnose_args(parser, defaults=defaults)
         args = parser.parse_args()
         diagnose_main(args)
+    elif len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        from .mcp import mcp_main
+        mcp_main(sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == "compare":
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from .diagnostic.diagnostic_cli import add_compare_args, compare_main

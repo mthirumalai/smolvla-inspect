@@ -1150,7 +1150,96 @@
   </div>
 </div>
 
-<!-- ════════════════════ SLIDE 17: RECAP ════════════════════ -->
+<!-- ════════════════════ SLIDE 17: MCP SERVER ════════════════════ -->
+<div class="slide">
+  <div class="section-label teal">Integration</div>
+  <h2>MCP Server &mdash; Claude Code Integration</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">48 read-only tools let Claude Code query runs, diagnostics, and comparisons directly via the <strong>Model Context Protocol</strong>. No web viewer needed &mdash; just ask questions in natural language.</p>
+
+  <div style="display: flex; gap: 1rem; margin-bottom: 0.8rem;">
+    <!-- Left: Architecture -->
+    <div style="flex: 1;">
+      <div class="card" style="border-top: 3px solid var(--accent); margin-bottom: 0.8rem;">
+        <h3 style="margin:0 0 0.4rem;">How It Works</h3>
+        <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+          <span style="background:var(--accent-bg); border:1px solid var(--accent); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--accent);">Claude Code</span>
+          <span style="color:var(--dim);">&xrarr;</span>
+          <span style="background:var(--teal-bg); border:1px solid var(--teal); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--teal);">stdio JSON-RPC</span>
+          <span style="color:var(--dim);">&xrarr;</span>
+          <span style="background:var(--amber-bg); border:1px solid var(--amber); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--amber);">MCP Server</span>
+          <span style="color:var(--dim);">&xrarr;</span>
+          <span style="background:var(--green-bg); border:1px solid var(--green); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--green);">Run Data</span>
+        </div>
+        <p style="margin-top:0.5rem; color:var(--muted); font-size:0.82rem;">The MCP server reuses the same <code>run_scanner</code>, <code>data_loader</code>, <code>stats_engine</code>, and <code>diagnostic_service</code> modules as the web backend &mdash; zero code duplication.</p>
+      </div>
+
+      <div class="card" style="border-top: 3px solid var(--teal);">
+        <h3 style="margin:0 0 0.4rem;">Setup (3 steps)</h3>
+        <ol style="list-style:decimal; padding-left:1.3rem; margin:0;">
+          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);"><code style="font-size:0.75rem;">pip install "mcp&gt;=1.0.0"</code></li>
+          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Add entry to <code style="font-size:0.75rem;">~/.claude/mcp_servers.json</code></li>
+          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Restart Claude Code &mdash; tools appear automatically</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- Right: Tool categories -->
+    <div style="flex: 1;">
+      <div class="card" style="border-top: 3px solid var(--amber); padding:0.7rem 1rem;">
+        <h3 style="margin:0 0 0.5rem;">48 Tools in 7 Categories</h3>
+        <table style="width:100%; font-size:0.78rem; border-collapse:collapse;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Discovery</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">8</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">list, search, tag, validate runs</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Inspection</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">12</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">heatmaps, gradients, images</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Statistics</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">3</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">viz stats, summary, formatted</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Diagnostic</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">11</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">symptoms, hypotheses, findings</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Comparison</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">5</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">cross-run diffs, matrix</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Registry</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">7</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">primitives, signals, templates</td>
+          </tr>
+          <tr>
+            <td style="padding:0.25rem 0; font-weight:500; color:var(--navy);">Notes</td>
+            <td style="padding:0.25rem 0; color:var(--muted); text-align:right;">2</td>
+            <td style="padding:0.25rem 0 0.25rem 0.6rem; color:var(--slate);">get/set run notes</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Example queries -->
+  <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%);">
+    <h3 style="margin:0 0 0.3rem; font-size:0.88rem;">Example Queries (in Claude Code)</h3>
+    <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+      <code style="font-size:0.75rem; background:var(--surface); padding:0.3rem 0.6rem; border-radius:6px;">"Compare model v2 vs v3 across bridge and aloha datasets"</code>
+      <code style="font-size:0.75rem; background:var(--surface); padding:0.3rem 0.6rem; border-radius:6px;">"What symptoms did the diagnostic find in the latest run?"</code>
+      <code style="font-size:0.75rem; background:var(--surface); padding:0.3rem 0.6rem; border-radius:6px;">"Show self-attention stats for frame 0"</code>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ SLIDE 18: RECAP ════════════════════ -->
 <div class="slide recap-slide">
   <div class="section-label" style="background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5);">Summary</div>
   <h1>Key Takeaways</h1>
@@ -1514,7 +1603,7 @@
 <!-- ── Navigation ── -->
 <div class="nav">
   <button id="prev" aria-label="Previous slide">&#8592;</button>
-  <span class="counter" id="counter">1 / 19</span>
+  <span class="counter" id="counter">1 / 21</span>
   <button id="next" aria-label="Next slide">&#8594;</button>
 </div>
 
