@@ -2,7 +2,7 @@
   "mcpServers": {
     "smolvla-inspect": {
       "command": "/Users/subirmansukhani/Desktop/smolvla-inspect/.venv/bin/python",
-      "args": ["inspect_attention.py", "mcp", "--base-dir", "./outputs/outputs/mthirumalai"],
+      "args": ["inspect_attention.py", "mcp", "--base-dir", "./outputs/subirm"],
       "cwd": "/Users/subirmansukhani/Desktop/smolvla-inspect"
     }
   }
