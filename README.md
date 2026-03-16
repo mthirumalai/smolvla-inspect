@@ -21,7 +21,7 @@ pip install -r requirements.txt   # macOS: brew install ffmpeg@6 first
 # 4. Diagnostic agent — "why does my model fail?"
 ./run.sh diagnose --model your/model_id --dataset your/dataset_id --episode 0
 
-# 5. MCP server — let Claude Code query your runs
+# 5. MCP server — let AI agents query your runs
 pip install "mcp>=1.0.0"
 python inspect_attention.py mcp --base-dir ./outputs
 ```
@@ -38,7 +38,7 @@ SmolVLA is a vision-language-action policy: it takes camera images and a languag
 | Gradient attribution | `--gradient`, `--gradcam-connector`, `--per-action-dim`, etc. | Which pixels causally affect the predicted action? |
 | Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved? |
 | **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? |
-| **MCP server** | `mcp` subcommand | Let Claude Code query your runs directly |
+| **MCP server** | `mcp` subcommand | Let AI agents query your runs directly |
 
 The internals report runs spectral analysis (WeightWatcher), attention entropy, and head redundancy checks across the SigLIP encoder, VLM, action expert, connector, and projection heads.
 
@@ -192,9 +192,11 @@ The comparison produces `comparison_report.json` and `comparison_report.md` with
 
 The diagnostic is also available in the web viewer — select a run, then click "Diagnostic Agent" in the sidebar.
 
-## MCP Server (Claude Code Integration)
+## MCP Server (AI Agent Integration)
 
-The MCP server exposes **48 read-only tools** so Claude Code can query your inspection runs, diagnostic reports, and comparison data directly — no web viewer needed.
+The MCP server exposes **48 read-only tools** via the [Model Context Protocol](https://modelcontextprotocol.io/), so any MCP-compatible client can query your inspection runs, diagnostic reports, and comparison data directly — no web viewer needed.
+
+Works with: **Claude Code**, **Cursor**, **Windsurf**, **Continue**, **Zed**, and any custom MCP client.
 
 ### Quick start
 
@@ -206,7 +208,10 @@ pip install "mcp>=1.0.0"
 python inspect_attention.py mcp --help
 ```
 
-### Register with Claude Code
+### Register with your MCP client
+
+<details>
+<summary><strong>Claude Code</strong></summary>
 
 Add to `~/.claude/mcp_servers.json`:
 
@@ -220,9 +225,25 @@ Add to `~/.claude/mcp_servers.json`:
 }
 ```
 
-Restart Claude Code, and the tools appear automatically.
+</details>
 
-### What you can ask Claude
+<details>
+<summary><strong>Cursor / Windsurf / other MCP clients</strong></summary>
+
+The server uses **stdio transport** — configure your client to spawn the process:
+
+```
+command: python inspect_attention.py mcp --base-dir ./outputs
+cwd: /path/to/smolvla-inspect
+```
+
+Consult your client's docs for the exact config format.
+
+</details>
+
+Restart your client and the 48 tools appear automatically.
+
+### Example queries
 
 | Query | Tool used |
 |-------|-----------|
@@ -637,7 +658,7 @@ smolvla-inspect/
 │   ├── serve.py
 │   ├── viz.py
 │   ├── _compat.py
-│   ├── mcp/                    # MCP server (Claude Code integration)
+│   ├── mcp/                    # MCP server (AI agent integration)
 │   │   ├── __init__.py          # mcp_main() entry point
 │   │   ├── server.py            # FastMCP instance
 │   │   ├── context.py           # Settings singleton, resolve_run()
@@ -699,7 +720,7 @@ smolvla-inspect/
 - [x] Config file support
 - [x] Interactive web viewer
 - [x] Agentic diagnostic system with counterfactual verification
-- [x] MCP server for Claude Code integration (48 read-only tools)
+- [x] MCP server for AI agent integration (48 read-only tools)
 - [ ] Representation probing
 - [ ] Causal tracing / activation patching
 - [ ] Temporal consistency analysis

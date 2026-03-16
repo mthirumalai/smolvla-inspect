@@ -1147,14 +1147,15 @@
 
   <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%); text-align: center;">
     <p style="font-size: 0.95rem;"><strong>Add a new symptom detector + its hypothesis template + its counterfactual primitive</strong> &mdash; the LLM prompt, matrix, report, and comparison images all update automatically. Three decorator calls, zero plumbing.</p>
+    <p style="font-size: 0.82rem; margin-top: 0.5rem; color: var(--muted);"><code>AGENTS.md</code> in the repo root is the onboarding guide for AI coding assistants &mdash; it documents the architecture, key invariants, testing patterns, and extension points so that agents (Claude Code, Cursor, etc.) can contribute to the codebase with full context.</p>
   </div>
 </div>
 
 <!-- ════════════════════ SLIDE 17: MCP SERVER ════════════════════ -->
 <div class="slide">
   <div class="section-label teal">Integration</div>
-  <h2>MCP Server &mdash; Claude Code Integration</h2>
-  <p style="margin-bottom:0.8rem; color: var(--muted);">48 read-only tools let Claude Code query runs, diagnostics, and comparisons directly via the <strong>Model Context Protocol</strong>. No web viewer needed &mdash; just ask questions in natural language.</p>
+  <h2>MCP Server &mdash; AI Agent Integration</h2>
+  <p style="margin-bottom:0.8rem; color: var(--muted);">48 read-only tools let any <strong>MCP-compatible client</strong> (Claude Code, Cursor, Windsurf, Continue, Zed, custom agents) query runs, diagnostics, and comparisons directly. No web viewer needed &mdash; just ask questions in natural language.</p>
 
   <div style="display: flex; gap: 1rem; margin-bottom: 0.8rem;">
     <!-- Left: Architecture -->
@@ -1162,7 +1163,7 @@
       <div class="card" style="border-top: 3px solid var(--accent); margin-bottom: 0.8rem;">
         <h3 style="margin:0 0 0.4rem;">How It Works</h3>
         <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-          <span style="background:var(--accent-bg); border:1px solid var(--accent); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--accent);">Claude Code</span>
+          <span style="background:var(--accent-bg); border:1px solid var(--accent); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--accent);">MCP Client</span>
           <span style="color:var(--dim);">&xrarr;</span>
           <span style="background:var(--teal-bg); border:1px solid var(--teal); border-radius:6px; padding:0.25rem 0.6rem; font-size:0.78rem; font-weight:500; color:var(--teal);">stdio JSON-RPC</span>
           <span style="color:var(--dim);">&xrarr;</span>
@@ -1177,8 +1178,8 @@
         <h3 style="margin:0 0 0.4rem;">Setup (3 steps)</h3>
         <ol style="list-style:decimal; padding-left:1.3rem; margin:0;">
           <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);"><code style="font-size:0.75rem;">pip install "mcp&gt;=1.0.0"</code></li>
-          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Add entry to <code style="font-size:0.75rem;">~/.claude/mcp_servers.json</code></li>
-          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Restart Claude Code &mdash; tools appear automatically</li>
+          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Register server in your MCP client config</li>
+          <li style="padding:0.15rem 0; font-size:0.82rem; color:var(--slate);">Restart your client &mdash; tools appear automatically</li>
         </ol>
       </div>
     </div>
@@ -1230,7 +1231,7 @@
 
   <!-- Example queries -->
   <div class="card" style="background: linear-gradient(135deg, var(--accent-bg) 0%, var(--teal-bg) 100%);">
-    <h3 style="margin:0 0 0.3rem; font-size:0.88rem;">Example Queries (in Claude Code)</h3>
+    <h3 style="margin:0 0 0.3rem; font-size:0.88rem;">Example Queries (natural language)</h3>
     <div style="display:flex; gap:1rem; flex-wrap:wrap;">
       <code style="font-size:0.75rem; background:var(--surface); padding:0.3rem 0.6rem; border-radius:6px;">"Compare model v2 vs v3 across bridge and aloha datasets"</code>
       <code style="font-size:0.75rem; background:var(--surface); padding:0.3rem 0.6rem; border-radius:6px;">"What symptoms did the diagnostic find in the latest run?"</code>
