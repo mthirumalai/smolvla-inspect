@@ -494,15 +494,17 @@ smolvla_inspect/
 # As a CLI command
 smolvla-inspect mcp --base-dir ./outputs
 
-# For Claude Code config (~/.claude/mcp_servers.json)
+# For Claude Code config (.mcp.json in project root)
 {
-  "smolvla-inspect": {
-    "command": "python",
-    "args": ["-m", "smolvla_inspect.mcp.server", "--base-dir", "./outputs"],
-    "env": {
-      "ANTHROPIC_API_KEY": "...",
-      "SMOLVLA_LLM_PROVIDER": "anthropic",
-      "SMOLVLA_LLM_MODEL": "claude-sonnet-4-20250514"
+  "mcpServers": {
+    "smolvla-inspect": {
+      "command": "python",
+      "args": ["-m", "smolvla_inspect.mcp.server", "--base-dir", "./outputs"],
+      "env": {
+        "ANTHROPIC_API_KEY": "...",
+        "SMOLVLA_LLM_PROVIDER": "anthropic",
+        "SMOLVLA_LLM_MODEL": "claude-sonnet-4-20250514"
+      }
     }
   }
 }

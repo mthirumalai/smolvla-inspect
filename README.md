@@ -225,14 +225,16 @@ For the full natural-language experience ("compare these two runs and tell me wh
 <details>
 <summary><strong>Claude Code</strong></summary>
 
-Add to `~/.claude/mcp_servers.json`:
+Add to `.mcp.json` in your project root:
 
 ```json
 {
-  "smolvla-inspect": {
-    "command": "python",
-    "args": ["inspect_attention.py", "mcp", "--base-dir", "./outputs"],
-    "cwd": "/path/to/smolvla-inspect"
+  "mcpServers": {
+    "smolvla-inspect": {
+      "command": "python",
+      "args": ["inspect_attention.py", "mcp", "--base-dir", "./outputs"],
+      "cwd": "/path/to/smolvla-inspect"
+    }
   }
 }
 ```
