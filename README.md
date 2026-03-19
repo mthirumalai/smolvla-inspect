@@ -1,6 +1,6 @@
 # smolvla-inspect
 
-Inspect where a SmolVLA policy looks, what pixels actually drive its actions, and how its internal attention/weight structure behaves.
+A comprehensive interpretability toolkit for SmolVLA vision-language-action policies. Visualize attention heatmaps and gradient attribution to see where the model looks and which pixels drive its actions. Run automated diagnostics that segment scenes, build attribution matrices, detect failure symptoms, and verify hypotheses through counterfactual perturbations — swapping backgrounds, relocating objects, recoloring targets, inserting distractors, and more. Compare runs side by side, inspect weight health with spectral analysis, and let AI agents query everything through 48 MCP tools. Get from "my robot fails" to "here's why, and here's what to fix" in a single command.
 
 ![Example attention grid](assets/example_grid.png)
 *Example inspection grid for a pick-and-place episode. It combines raw attention, overlays, and gradient attribution in one view.*
@@ -57,6 +57,35 @@ The diagnostic agent goes beyond visualization — it automatically answers "why
 4. **LLM hypothesis formation** — selects the most discriminating counterfactual tests to run
 5. **Counterfactual verification** — perturbs the scene (swap backgrounds, relocate objects, recolor, occlude) and measures action change
 6. **Report synthesis** — produces ranked findings with evidence chains and actionable fixes
+
+#### Scene segmentation
+
+The agent first detects and segments every object in the frame, creating labeled semantic regions used by all downstream analysis.
+
+![Scene segmentation with OWL-ViT + SAM](assets/example_scene_segmentation.png)
+*Detected objects with bounding boxes, confidence scores, and SAM segmentation masks overlaid.*
+
+#### Counterfactual perturbations
+
+The agent tests causal hypotheses by perturbing the scene and measuring how the model's actions change. Each test isolates a specific variable:
+
+| Test | What it does | What it reveals |
+|------|-------------|-----------------|
+| Background substitution | Replaces the background with a neutral surface | Whether the model relies on background features |
+| Object relocation | Moves the target object to a new position | Whether the model tracks the object or memorized its position |
+| Object recolor | Changes the target object's color | Whether the model uses color as a recognition cue |
+| Targeted occlusion | Covers the target object with a gray patch | Whether the target is causally necessary for the action |
+| Distractor insertion | Adds a novel object to the scene | Whether the model is robust to visual clutter |
+| Task string swap | Changes the language instruction | Whether the model conditions on language or ignores it |
+
+![Background substitution](assets/example_counterfactual_background.png)
+*Background substitution: original scene (left) vs. neutral background (right). Large action deltas indicate background dependence.*
+
+![Object relocation](assets/example_counterfactual_relocation.png)
+*Object relocation: the target (green box) is moved to a new position (red box). GradCAM heatmaps below show whether attribution follows the object.*
+
+![Distractor insertion](assets/example_counterfactual_distractor.png)
+*Distractor insertion: a novel object (green circle) is placed in the scene. Minimal action change indicates robustness.*
 
 ### Run modes
 
