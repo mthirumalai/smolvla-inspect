@@ -1,6 +1,16 @@
 # smolvla-inspect
 
-A comprehensive interpretability toolkit for SmolVLA vision-language-action policies. Visualize attention heatmaps and gradient attribution to see where the model looks and which pixels drive its actions. Run automated diagnostics that segment scenes, build attribution matrices, detect failure symptoms, and verify hypotheses through counterfactual perturbations — swapping backgrounds, relocating objects, recoloring targets, inserting distractors, and more. Compare runs side by side, inspect weight health with spectral analysis, and let AI agents query everything through 48 MCP tools. Get from "my robot fails" to "here's why, and here's what to fix" in a single command.
+**Get from "my robot fails" to "here's why, and here's what to fix" in a single command.**
+
+A comprehensive interpretability toolkit for [SmolVLA](https://huggingface.co/lerobot/smolvla_base) vision-language-action policies.
+
+- **See where the model looks** — attention heatmaps, per-head grids, and cross-attention from the action decoder
+- **Find which pixels drive actions** — saliency maps, GradCAM, SmoothGrad, and per-action-dimension attribution
+- **Diagnose failures automatically** — scene segmentation, attribution matrices, symptom detection, and LLM-powered hypothesis generation
+- **Verify with counterfactuals** — swap backgrounds, relocate objects, recolor targets, insert distractors, occlude regions, and swap task strings
+- **Inspect model health** — spectral weight analysis, attention entropy, and head redundancy across all components
+- **Compare runs** — side-by-side attribution deltas, counterfactual deltas, and weight changes
+- **Query from AI agents** — 48 MCP tools expose every signal to Claude Code, Cursor, and other clients
 
 ![Example attention grid](assets/example_grid.png)
 *Example inspection grid for a pick-and-place episode. It combines raw attention, overlays, and gradient attribution in one view.*
