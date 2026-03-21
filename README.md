@@ -445,7 +445,7 @@ Every augmentation is independently toggleable via `enabled: true/false` in `con
 
 | Augmentation | What it does | Why it helps |
 |-------------|-------------|-------------|
-| Background replacement | Swap background with gray, noise, blur, or images from a bank | Forces the model to use object features, not scene memorization |
+| Background replacement | Swap background using a mix of strategies (see below) | Forces the model to use object features, not scene memorization |
 | Color jitter | Randomize brightness, contrast, saturation, hue | Prevents color-based shortcuts |
 | Gaussian blur | Probabilistic full-image blur | Simulates camera defocus, builds robustness |
 | Random crop + resize | Crop a random region and resize back | Breaks spatial position priors |
@@ -454,6 +454,22 @@ Every augmentation is independently toggleable via `enabled: true/false` in `con
 | Noise injection | Gaussian or salt-and-pepper noise | Simulates sensor noise |
 
 Color jitter can target `"foreground"`, `"background"`, or `"full"` image independently.
+
+#### Background replacement strategies
+
+Background replacement supports four strategies, and a `mix` mode that randomly picks one per frame based on configurable weights:
+
+| Strategy | Effect |
+|----------|--------|
+| `noise` | Uniform random pixels — completely destroys background structure |
+| `blur` | Gaussian blur of original — soft/defocused, structure faintly visible |
+| `gray` | Constant flat fill — clean neutral backdrop |
+| `image_bank` | Swap in a real image from a folder — most naturalistic variation |
+| `mix` | Randomly pick from the above per frame using weighted probabilities |
+
+The default config uses `mix` with 25% noise, 25% blur, 20% gray, 30% image_bank. 20 synthetic background images (solids, gradients, textures, patterns) are included in `backgrounds/`. Add your own photos of different tables/surfaces for more realistic variation.
+
+Segmentation re-runs every `seg_every_n` frames (default: 1) to track the robot gripper as it moves. All detected objects (gripper, task objects) are preserved; only the background is replaced.
 
 ### Config file structure
 
@@ -464,14 +480,23 @@ The config file (`configs/augmentation.yaml`) controls global settings and per-a
 seed: 42                    # master RNG seed for reproducibility
 num_copies: 3               # augmented copies per original episode
 device: auto                # "auto", "cpu", "cuda", or "mps" (for SAM segmentation)
+seg_every_n: 1              # re-run SAM every N frames (1=accurate, 10=fast)
 use_videos: true            # encode output as video
 image_writer_threads: 4     # parallel image writing threads
 
-# Each augmentation block has `enabled: true/false` plus its own parameters.
-# Example — background replacement:
+# Background replacement — uses mix mode by default:
 background_replacement:
   enabled: true
-  strategy: noise           # "gray", "noise", "blur", or "image_bank"
+  strategy: mix             # "gray", "noise", "blur", "image_bank", or "mix"
+  mix:
+    - strategy: noise
+      weight: 0.25
+    - strategy: blur
+      weight: 0.25
+    - strategy: gray
+      weight: 0.2
+    - strategy: image_bank
+      weight: 0.3
   gray:
     value: 0.5
   noise:
@@ -480,10 +505,10 @@ background_replacement:
   blur:
     sigma: 20.0
   image_bank:
-    directory: null          # path to a folder of background images
-    resize_mode: crop        # "crop" or "resize"
+    directory: ./backgrounds  # path to a folder of background images
+    resize_mode: crop         # "crop" or "resize"
 
-# Example — color jitter:
+# Color jitter:
 color_jitter:
   enabled: true
   target: full              # "foreground", "background", or "full"
@@ -497,7 +522,7 @@ color_jitter:
 # background_color_shift, noise_injection
 ```
 
-To customize: copy `configs/augmentation.yaml`, edit the values, and pass your copy with `--config`. CLI flags like `--num-copies` and `--seed` override the corresponding config values.
+To customize: copy `configs/augmentation.yaml`, edit the values, and pass your copy with `--config`. CLI flags like `--num-copies`, `--seed`, and `--seg-every-n` override the corresponding config values.
 
 ### CLI options
 
@@ -514,6 +539,7 @@ To customize: copy `configs/augmentation.yaml`, edit the values, and pass your c
 | `--task` | from dataset | Override task string for object detection |
 | `--include-originals` | off | Copy original episodes into the output |
 | `--skip-segmentation` | off | Skip SAM (disables mask-aware augmentations) |
+| `--seg-every-n` | from config | Re-run segmentation every N frames (1=accurate, 10=fast) |
 | `--dry-run` | off | Print plan without writing |
 | `--push-to-hub` | off | Push output to HuggingFace Hub |
 
@@ -965,6 +991,7 @@ smolvla-inspect/
 │           ├── FindingCard.tsx
 │           └── CounterfactualComparison.tsx
 ├── assets/
+├── backgrounds/                  # 20 synthetic background images for image_bank strategy
 ├── scripts/
 │   └── augment_dataset.py       # Dataset augmentation CLI
 ├── configs/
