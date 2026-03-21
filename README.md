@@ -41,7 +41,7 @@ Results are written to `outputs/`. Launch the web viewer with `./start_servers.s
 
 ## What This Tool Does
 
-SmolVLA is a vision-language-action policy: it takes camera images and a language instruction, then predicts robot actions. This repository gives you four ways to inspect that behavior:
+SmolVLA is a vision-language-action policy: it takes camera images and a language instruction, then predicts robot actions. This repository gives you five ways to inspect and improve that behavior:
 
 | Capability | Flags | What it answers |
 |------------|-------|-----------------|
@@ -49,6 +49,7 @@ SmolVLA is a vision-language-action policy: it takes camera images and a languag
 | Gradient attribution | `--gradient`, `--gradcam-connector`, `--per-action-dim`, etc. | Which pixels causally affect the predicted action? |
 | Model internals report | `--internals-only`, `--with-internals` | Are weights and attention heads well-behaved? |
 | **Diagnostic agent** | `diagnose` subcommand | Why does my model fail? What should I fix first? |
+| **Dataset augmentation** | `scripts/augment_dataset.py` | Generate diversified training data to fix diagnosed weaknesses |
 | **MCP server** | `mcp` subcommand | Let AI agents query your runs directly |
 
 The internals report runs spectral analysis (WeightWatcher), attention entropy, and head redundancy checks across the SigLIP encoder, VLM, action expert, connector, and projection heads.
@@ -209,6 +210,11 @@ parent_folder/
 | Attention-GradCAM divergence | Warning | Model looks at regions it doesn't use (or vice versa) |
 | Dead state pathway | Warning | Proprioceptive state input is being ignored |
 | Language insensitivity | Warning | Changing the task instruction doesn't shift visual attention |
+| Gripper fixation | Warning | Model over-attends to the robot gripper instead of task objects |
+| Low dataset diversity | Warning/Critical | Object positions, backgrounds, or task strings lack variation |
+| Cross-attention diffuse | Warning | Action expert uses near-uniform attention (not selective) |
+| Action-attention misalignment | Warning | Spatial action dims ground on background, not objects |
+| Temporal attention instability | Warning/Critical | Attention jumps erratically or doesn't track objects across frames |
 | Unstable GradCAM | Info | Gradient attribution varies significantly across frames |
 
 </details>
@@ -898,6 +904,9 @@ The report covers three attention components:
 smolvla-inspect/
 ├── inspect_attention.py
 ├── regenerate_report.py         # Re-render reports & compare runs (no GPU needed)
+├── run_single_counterfactual.py # Re-run one counterfactual without full diagnostic
+├── run_comparison.sh            # End-to-end two-model comparison script
+├── run_test.sh                  # Quick counterfactual test wrapper
 ├── smolvla_inspect/
 │   ├── cli.py
 │   ├── capture.py
@@ -934,12 +943,15 @@ smolvla-inspect/
 │       ├── diagnostic_cli.py    # CLI subcommand handler
 │       ├── matrix.py            # Diagnostic matrix + symptom detectors
 │       ├── models.py            # Data models (dataclasses + deserialisation)
+│       ├── occlusion.py         # Occlusion sensitivity mapping
 │       ├── prompts.py           # LLM prompt templates
 │       ├── regions.py           # Region attribution scoring
 │       ├── registry.py          # Primitive registry
 │       ├── report.py            # Report generation + export
 │       ├── scene.py             # Scene understanding (OWL-ViT + SAM)
-│       └── semantic_probe.py    # Semantic and QK probes
+│       ├── semantic_probe.py    # Semantic and QK probes
+│       ├── spatial_object.py    # Spatial-vs-object disambiguation
+│       └── temporal.py          # Temporal attention trajectory analysis
 ├── web/
 │   ├── backend/
 │   │   ├── routers/
@@ -956,9 +968,15 @@ smolvla-inspect/
 ├── scripts/
 │   └── augment_dataset.py       # Dataset augmentation CLI
 ├── configs/
+│   ├── defaults.yaml            # Conservative CPU-friendly defaults
+│   ├── gpu.yaml                 # CUDA-oriented config with gradients
 │   ├── diagnostic.yaml          # Diagnostic agent config
 │   └── augmentation.yaml        # Dataset augmentation config
 ├── docs/
+│   ├── ELI5.md                  # Beginner-friendly explainer
+│   ├── TESTING.md               # Testing guide and expected behaviors
+│   ├── mcp-server-spec.md       # MCP architecture and tool specs
+│   └── prescription-engine-spec.md # Prescription engine design (smolvla-prescribe)
 ├── clone-and-setup.sh
 ├── setup-gpu.sh
 ├── start_servers.sh
@@ -968,6 +986,15 @@ smolvla-inspect/
 ```
 
 </details>
+
+## Docs
+
+| Document | Description |
+|----------|-------------|
+| [ELI5](docs/ELI5.md) | Beginner-friendly explanation of how attention heatmaps work |
+| [Testing guide](docs/TESTING.md) | Expected behaviors, red flags, and QA checklist |
+| [MCP server spec](docs/mcp-server-spec.md) | Full MCP architecture and 48-tool reference |
+| [Prescription engine spec](docs/prescription-engine-spec.md) | Design spec for `smolvla-prescribe` — automated data improvement with GP-backed pilots, behavioral gating, and LLM-driven experiment design |
 
 ## Roadmap
 
@@ -979,6 +1006,7 @@ smolvla-inspect/
 - [x] Agentic diagnostic system with counterfactual verification
 - [x] MCP server for AI agent integration (48 read-only tools)
 - [x] Dataset augmentation pipeline (background replacement, color jitter, blur, crop, cutout, noise)
+- [ ] Prescription engine — automated data improvement loop with GP-backed pilots ([spec](docs/prescription-engine-spec.md))
 - [ ] Representation probing
 - [ ] Causal tracing / activation patching
 - [ ] Temporal consistency analysis

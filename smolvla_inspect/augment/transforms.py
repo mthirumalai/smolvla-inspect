@@ -118,8 +118,22 @@ def apply_background_replacement(
     if not cfg.get("enabled", False):
         return img
 
-    out = img.copy()
     strategy = cfg.get("strategy", "noise")
+
+    # Mix mode: randomly pick a strategy per frame based on weights
+    if strategy == "mix":
+        mix_entries = cfg.get("mix", [])
+        if not mix_entries:
+            raise ValueError("strategy 'mix' requires a 'mix' list with strategy/weight entries")
+        strategies = [e["strategy"] for e in mix_entries]
+        weights = np.array([e.get("weight", 1.0) for e in mix_entries], dtype=np.float64)
+        weights /= weights.sum()
+        chosen = strategies[rng.choice(len(strategies), p=weights)]
+        # Build a single-strategy config and recurse
+        single_cfg = {**cfg, "strategy": chosen}
+        return apply_background_replacement(img, bg_mask, single_cfg, rng, bg_images)
+
+    out = img.copy()
     h, w = img.shape[:2]
 
     if strategy == "gray":

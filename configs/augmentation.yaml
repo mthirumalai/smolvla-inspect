@@ -37,8 +37,18 @@ image_writer_threads: 4     # 0 = synchronous; 1-8 = parallel image writing thre
 # Requires SAM segmentation unless --skip-segmentation (then applies to full image).
 background_replacement:
   enabled: true
-  strategy: noise           # "gray" | "noise" | "blur" | "image_bank"
-  # Per-strategy parameters:
+  strategy: mix             # "gray" | "noise" | "blur" | "image_bank" | "mix"
+  # Mix mode: randomly pick a strategy per frame based on weights.
+  # Only used when strategy is "mix". Each entry needs a strategy name
+  # and a weight (higher = more likely). Weights are normalized automatically.
+  mix:
+    - strategy: noise
+      weight: 0.4
+    - strategy: blur
+      weight: 0.3
+    - strategy: gray
+      weight: 0.3
+  # Per-strategy parameters (used by both single-strategy and mix mode):
   gray:
     value: 0.5              # [0.0, 1.0] — constant fill intensity (0=black, 1=white)
   noise:
