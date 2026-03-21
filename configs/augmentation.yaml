@@ -21,6 +21,10 @@ seed: 42                    # any integer; controls all random augmentation choi
 num_copies: 3               # 1-N; how many augmented versions of each episode to create
 device: auto                # "auto", "cpu", "cuda", or "mps" (for SAM segmentation)
                             #   auto = cuda if available, then mps (macOS), then cpu
+seg_every_n: 1              # [1-N] — re-run SAM segmentation every N frames
+                            #   1 = every frame (accurate, slow)
+                            #   10 = every 10th frame (good balance)
+                            #   9999 = once per episode (fast, but mask drifts as robot moves)
 task_string: null           # override task string (null = read from dataset)
 episodes: null              # list of episode indices to augment (null = all)
 use_videos: true            # encode output as video (recommended)

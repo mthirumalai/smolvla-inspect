@@ -122,6 +122,7 @@ def main():
     parser.add_argument("--task", default=None, help="Override task string for object detection")
     parser.add_argument("--include-originals", action="store_true", help="Also copy original (unaugmented) episodes into the output dataset")
     parser.add_argument("--skip-segmentation", action="store_true", help="Skip SAM segmentation (no mask-aware augmentations)")
+    parser.add_argument("--seg-every-n", type=int, default=None, help="Re-run segmentation every N frames (default: from config, or 1 = every frame)")
     parser.add_argument("--dry-run", action="store_true", help="Print plan without writing data")
     parser.add_argument("--push-to-hub", action="store_true", help="Push output dataset to HuggingFace Hub after creation")
     args = parser.parse_args()
@@ -253,24 +254,22 @@ def main():
         image_writer_threads=config.get("image_writer_threads", 0),
     )
 
-    # Cache segmentation per episode (first frame is usually representative)
-    seg_cache: dict[int, SceneSegmentation | None] = {}
+    # Segmentation frequency: how often to re-run SAM (robot moves between frames)
+    seg_every_n = args.seg_every_n if args.seg_every_n is not None else config.get("seg_every_n", 1)
+    if not args.skip_segmentation and task_objects:
+        print(f"  Segmentation frequency: every {seg_every_n} frame(s)")
 
-    def get_segmentation(ep_idx: int, frame_indices: list[int]) -> SceneSegmentation | None:
-        if ep_idx in seg_cache:
-            return seg_cache[ep_idx]
+    def get_frame_segmentation(
+        sample: dict, frame_offset: int, prev_seg: SceneSegmentation | None,
+    ) -> SceneSegmentation | None:
+        """Get segmentation for a frame, re-running SAM every seg_every_n frames."""
         if args.skip_segmentation or not task_objects:
-            seg_cache[ep_idx] = None
             return None
-        # Use first frame for segmentation
-        first_sample = source[frame_indices[0]]
-        # Use the first image key
-        img_tensor = first_sample[image_keys[0]]
+        if prev_seg is not None and frame_offset % seg_every_n != 0:
+            return prev_seg
+        img_tensor = sample[image_keys[0]]
         img_hwc = tensor_to_hwc(img_tensor)
-        print(f"    Segmenting episode {ep_idx} (frame 0)...")
-        seg = segment_frame(img_hwc, task_objects, device)
-        seg_cache[ep_idx] = seg
-        return seg
+        return segment_frame(img_hwc, task_objects, device)
 
     total_episodes_written = 0
     t_start = time.time()
@@ -329,10 +328,13 @@ def main():
             rng = np.random.RandomState(copy_seed)
 
             frame_indices = get_episode_frame_indices(source, ep_idx)
-            seg = get_segmentation(ep_idx, frame_indices)
+            seg = None  # will be computed on first frame
 
             for frame_offset, fi in enumerate(frame_indices):
                 sample = source[fi]
+
+                # Re-segment if needed (tracks moving objects across frames)
+                seg = get_frame_segmentation(sample, frame_offset, seg)
 
                 # Augment each image key
                 img_overrides = {}
