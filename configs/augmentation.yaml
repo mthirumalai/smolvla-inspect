@@ -43,10 +43,12 @@ background_replacement:
   # and a weight (higher = more likely). Weights are normalized automatically.
   mix:
     - strategy: noise
-      weight: 0.4
+      weight: 0.25
     - strategy: blur
-      weight: 0.3
+      weight: 0.25
     - strategy: gray
+      weight: 0.2
+    - strategy: image_bank
       weight: 0.3
   # Per-strategy parameters (used by both single-strategy and mix mode):
   gray:
@@ -61,7 +63,7 @@ background_replacement:
                             #   medium (20): background mostly unrecognizable
                             #   large (40+): fully smoothed out
   image_bank:
-    directory: null          # path to folder of background images (jpg/png)
+    directory: ./backgrounds  # path to folder of background images (jpg/png)
     resize_mode: crop        # "crop" (random crop to match aspect) or "resize" (stretch)
 
 # ---------------------------------------------------------------------------
