@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>smolvla-inspect CLI UI mocks</title>
+    <link rel="stylesheet" href="./mock.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">CLI launch UX concept</p>
+          <h1>Replace flag hunting with a guided run builder</h1>
+          <p class="hero-copy">
+            The current CLI has a small set of high-frequency choices and a large
+            expert tail. These mocks turn the frequent path into presets, keep
+            every flag accessible under an advanced drawer, and hand completed
+            runs directly into the existing viewer.
+          </p>
+        </div>
+        <div class="hero-stats">
+          <div class="stat">
+            <span class="stat-label">Primary paths</span>
+            <strong>3</strong>
+            <span class="stat-note">Quick inspect, deep attribution, health</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Flag groups</span>
+            <strong>5</strong>
+            <span class="stat-note">Inputs, attention, gradients, extended, output</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Expert access</span>
+            <strong>100%</strong>
+            <span class="stat-note">Advanced panel still exposes the raw CLI surface</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="mock-frame">
+        <div class="mock-label">Mock A</div>
+        <div class="app-window">
+          <div class="topbar">
+            <div class="brand-lockup">
+              <div class="brand-mark"></div>
+              <div>
+                <div class="brand-title">smolvla-inspect</div>
+                <div class="brand-subtitle">Create inspection run</div>
+              </div>
+            </div>
+            <nav class="topnav">
+              <a class="topnav-link active" href="#">Create run</a>
+              <a class="topnav-link" href="#">Explore runs</a>
+              <a class="topnav-link" href="#">Compare</a>
+              <a class="topnav-link" href="#">Health reports</a>
+            </nav>
+            <button class="ghost-btn">Import config</button>
+          </div>
+
+          <div class="workspace">
+            <aside class="step-rail">
+              <div class="rail-item active">
+                <span class="rail-index">01</span>
+                <div>
+                  <strong>Start with a preset</strong>
+                  <p>Map common flag bundles to named intents.</p>
+                </div>
+              </div>
+              <div class="rail-item">
+                <span class="rail-index">02</span>
+                <div>
+                  <strong>Choose model + data</strong>
+                  <p>Expose the same required inputs as the CLI.</p>
+                </div>
+              </div>
+              <div class="rail-item">
+                <span class="rail-index">03</span>
+                <div>
+                  <strong>Review outputs</strong>
+                  <p>Show rows, files, and runtime before launch.</p>
+                </div>
+              </div>
+            </aside>
+
+            <main class="canvas">
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <p class="section-kicker">Preset</p>
+                    <h2>Most users should begin here</h2>
+                  </div>
+                  <span class="inline-pill">Built from `configs/defaults.yaml` + `configs/gpu.yaml`</span>
+                </div>
+                <div class="preset-grid">
+                  <article class="preset-card selected">
+                    <div class="preset-title-row">
+                      <h3>Quick inspect</h3>
+                      <span class="pill success">Recommended</span>
+                    </div>
+                    <p>
+                      For everyday debugging. Uses rollout attention, cross-attention,
+                      per-head grid, and viewer export.
+                    </p>
+                    <div class="tag-row">
+                      <span class="tag">`--method rollout`</span>
+                      <span class="tag">`--cross-attention`</span>
+                      <span class="tag">`--show-heads`</span>
+                    </div>
+                  </article>
+                  <article class="preset-card">
+                    <div class="preset-title-row">
+                      <h3>Deep attribution</h3>
+                      <span class="pill warn">GPU preferred</span>
+                    </div>
+                    <p>
+                      Turns on GradCAM, SmoothGrad, and selected extended attribution
+                      features without making users assemble the flag stack manually.
+                    </p>
+                    <div class="tag-row">
+                      <span class="tag">`--gradient both`</span>
+                      <span class="tag">`--gradcam-connector`</span>
+                      <span class="tag">`--vision-vs-state`</span>
+                    </div>
+                  </article>
+                  <article class="preset-card">
+                    <div class="preset-title-row">
+                      <h3>Model health</h3>
+                      <span class="pill neutral">Separate mode</span>
+                    </div>
+                    <p>
+                      Switches from heatmaps to spectral, entropy, and redundancy
+                      diagnostics. Hides unrelated visualization controls.
+                    </p>
+                    <div class="tag-row">
+                      <span class="tag">`--model-health`</span>
+                      <span class="tag">`--health-frames`</span>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              <div class="two-up">
+                <section class="card">
+                  <div class="card-head compact">
+                    <div>
+                      <p class="section-kicker">Inputs</p>
+                      <h2>Model, dataset, sampling</h2>
+                    </div>
+                  </div>
+                  <div class="form-grid">
+                    <label class="field field-wide">
+                      <span>Model</span>
+                      <input type="text" value="lerobot/smolvla_base" />
+                    </label>
+                    <label class="field field-wide">
+                      <span>Dataset</span>
+                      <input type="text" value="lerobot/svla_so101_pickplace" />
+                    </label>
+                    <label class="field">
+                      <span>Episode</span>
+                      <input type="text" value="0" />
+                    </label>
+                    <label class="field">
+                      <span>Frames</span>
+                      <input type="text" value="8" />
+                    </label>
+                    <label class="field">
+                      <span>Device</span>
+                      <div class="segmented">
+                        <button class="seg active">Auto</button>
+                        <button class="seg">CPU</button>
+                        <button class="seg">CUDA</button>
+                        <button class="seg">MPS</button>
+                      </div>
+                    </label>
+                    <label class="field">
+                      <span>Task override</span>
+                      <input type="text" value="Leave empty to use task from dataset" />
+                    </label>
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-head compact">
+                    <div>
+                      <p class="section-kicker">Analysis</p>
+                      <h2>Only the decisions people make often</h2>
+                    </div>
+                  </div>
+                  <div class="choice-stack">
+                    <div class="choice-row active">
+                      <div>
+                        <strong>Attention maps</strong>
+                        <p>Always on for Quick inspect. Method defaults to rollout.</p>
+                      </div>
+                      <span class="mini-chip">Rollout</span>
+                    </div>
+                    <div class="choice-row active">
+                      <div>
+                        <strong>Cross-attention</strong>
+                        <p>Shown as a task-level choice instead of a single obscure flag.</p>
+                      </div>
+                      <span class="mini-chip">On</span>
+                    </div>
+                    <div class="choice-row">
+                      <div>
+                        <strong>Gradient attribution</strong>
+                        <p>Collapsed behind one card. Expands only if the user needs it.</p>
+                      </div>
+                      <span class="mini-chip dim">Off</span>
+                    </div>
+                    <div class="choice-row">
+                      <div>
+                        <strong>Advanced features</strong>
+                        <p>Per-step cross-attention, VLM layers, language diff, and raw flags.</p>
+                      </div>
+                      <button class="ghost-btn small">Open advanced</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <section class="card">
+                <div class="card-head compact">
+                  <div>
+                    <p class="section-kicker">Output</p>
+                    <h2>Make the artifacts explicit</h2>
+                  </div>
+                </div>
+                <div class="output-grid">
+                  <div class="output-card">
+                    <span class="output-label">Saved files</span>
+                    <strong>Main grid PNG, per-head PNG, manifest, exported viewer data</strong>
+                  </div>
+                  <div class="output-card">
+                    <span class="output-label">Destination</span>
+                    <strong>`./outputs/mthirumalai/`</strong>
+                  </div>
+                  <div class="output-card">
+                    <span class="output-label">Next step</span>
+                    <strong>Open run automatically in the existing web viewer</strong>
+                  </div>
+                </div>
+              </section>
+            </main>
+
+            <aside class="summary-rail">
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Generated run</h3>
+                  <span class="pill neutral">CLI parity</span>
+                </div>
+                <div class="summary-list">
+                  <div class="summary-row">
+                    <span>Preset</span>
+                    <strong>Quick inspect</strong>
+                  </div>
+                  <div class="summary-row">
+                    <span>Expected runtime</span>
+                    <strong>2 to 4 min on CPU</strong>
+                  </div>
+                  <div class="summary-row">
+                    <span>Output rows</span>
+                    <strong>Self-attn, cross-attn, overlays</strong>
+                  </div>
+                  <div class="summary-row">
+                    <span>Viewer ready</span>
+                    <strong>Yes</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="summary-card command-card">
+                <div class="summary-head">
+                  <h3>Command preview</h3>
+                  <span class="pill success">Copyable</span>
+                </div>
+                <pre><code>./run.sh \
+  --model lerobot/smolvla_base \
+  --dataset lerobot/svla_so101_pickplace \
+  --episode 0 \
+  --num-frames 8 \
+  --method rollout \
+  --cross-attention \
+  --show-heads \
+  --export-data</code></pre>
+              </section>
+
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Why this works</h3>
+                </div>
+                <ul class="plain-list">
+                  <li>Expose presets for the flags already bundled in repo configs.</li>
+                  <li>Keep the common path to about six visible decisions.</li>
+                  <li>Reserve niche features for an advanced surface, not the default form.</li>
+                </ul>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock-frame">
+        <div class="mock-label">Mock B</div>
+        <div class="app-window">
+          <div class="topbar">
+            <div class="brand-lockup">
+              <div class="brand-mark"></div>
+              <div>
+                <div class="brand-title">smolvla-inspect</div>
+                <div class="brand-subtitle">Advanced feature drawer</div>
+              </div>
+            </div>
+            <nav class="topnav">
+              <a class="topnav-link active" href="#">Create run</a>
+              <a class="topnav-link" href="#">Explore runs</a>
+              <a class="topnav-link" href="#">Compare</a>
+            </nav>
+            <button class="ghost-btn">Back to simple view</button>
+          </div>
+
+          <div class="advanced-layout">
+            <main class="advanced-main">
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <p class="section-kicker">Advanced controls</p>
+                    <h2>Every existing flag, grouped by mental model instead of parser order</h2>
+                  </div>
+                  <div class="banner-pill">
+                    Hidden dependencies are surfaced inline before launch.
+                  </div>
+                </div>
+
+                <div class="notice-row">
+                  <div class="notice">
+                    <strong>`--per-step-cross-attention`</strong> auto-enables
+                    cross-attention.
+                  </div>
+                  <div class="notice">
+                    <strong>`--language-diff`</strong> auto-enables GradCAM when needed.
+                  </div>
+                </div>
+
+                <div class="advanced-grid">
+                  <section class="advanced-group">
+                    <div class="advanced-head">
+                      <h3>Attention cleanup</h3>
+                      <span class="tag">`--raw-attention` `--attn-threshold`</span>
+                    </div>
+                    <div class="slider-card">
+                      <div class="slider-row">
+                        <span>Suppress positional noise</span>
+                        <strong>0.50</strong>
+                      </div>
+                      <div class="fake-slider">
+                        <div class="fake-slider-fill w50"></div>
+                      </div>
+                      <p>Switch label language from “threshold percentile” to “noise suppression”.</p>
+                    </div>
+                    <div class="toggle-card">
+                      <div>
+                        <strong>Show raw attention</strong>
+                        <p>Removes baseline subtraction for research debugging only.</p>
+                      </div>
+                      <span class="switch off"></span>
+                    </div>
+                  </section>
+
+                  <section class="advanced-group">
+                    <div class="advanced-head">
+                      <h3>Gradient attribution</h3>
+                      <span class="tag">`--gradient` `--smooth-grad` `--gradient-device`</span>
+                    </div>
+                    <div class="choice-stack">
+                      <div class="choice-row active">
+                        <div>
+                          <strong>Method</strong>
+                          <p>Saliency, GradCAM, or both as one visible choice.</p>
+                        </div>
+                        <span class="mini-chip">Both</span>
+                      </div>
+                      <div class="choice-row">
+                        <div>
+                          <strong>Gradient device split</strong>
+                          <p>Explains the MPS to CPU fallback without making users know the workaround.</p>
+                        </div>
+                        <span class="mini-chip">CPU</span>
+                      </div>
+                      <div class="choice-row">
+                        <div>
+                          <strong>SmoothGrad samples</strong>
+                          <p>Only appears when saliency is included.</p>
+                        </div>
+                        <span class="mini-chip">20</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="advanced-group">
+                    <div class="advanced-head">
+                      <h3>Extended attribution</h3>
+                      <span class="tag">Connector, VLM, language diff, per-action-dim</span>
+                    </div>
+                    <div class="feature-list">
+                      <div class="feature-row">
+                        <div>
+                          <strong>Per-step cross-attention</strong>
+                          <p>Temporal evolution of expert attention across denoising steps.</p>
+                        </div>
+                        <span class="switch on"></span>
+                      </div>
+                      <div class="feature-row">
+                        <div>
+                          <strong>Connector GradCAM</strong>
+                          <p>Shows what survives the compression bottleneck.</p>
+                        </div>
+                        <span class="switch on"></span>
+                      </div>
+                      <div class="feature-row">
+                        <div>
+                          <strong>VLM layer sweep</strong>
+                          <p>Layer chips instead of a comma-separated string field.</p>
+                        </div>
+                        <div class="layer-chips">
+                          <span>4</span><span>8</span><span>12</span><span>16</span>
+                        </div>
+                      </div>
+                      <div class="feature-row">
+                        <div>
+                          <strong>Vision vs. state</strong>
+                          <p>Keep enabled by default in the deep attribution preset.</p>
+                        </div>
+                        <span class="switch on"></span>
+                      </div>
+                      <div class="feature-row">
+                        <div>
+                          <strong>Language difference</strong>
+                          <p>Shows “auto alternate prompt” as a human-readable option.</p>
+                        </div>
+                        <span class="mini-chip">Auto</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="advanced-group">
+                    <div class="advanced-head">
+                      <h3>Data plumbing</h3>
+                      <span class="tag">`--image-key` `--image-map` `--skip-attention`</span>
+                    </div>
+                    <div class="field-stack">
+                      <label class="field field-wide">
+                        <span>Image key override</span>
+                        <input type="text" value="Auto-detect from dataset" />
+                      </label>
+                      <label class="field field-wide">
+                        <span>Dataset to policy image map</span>
+                        <input type="text" value="front=camera2,side=camera3" />
+                      </label>
+                      <div class="toggle-card">
+                        <div>
+                          <strong>Skip attention capture</strong>
+                          <p>For gradient-only recovery or debugging.</p>
+                        </div>
+                        <span class="switch off"></span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </section>
+            </main>
+
+            <aside class="advanced-side">
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Advanced summary</h3>
+                  <span class="pill warn">High compute</span>
+                </div>
+                <ul class="plain-list">
+                  <li>Estimated GPU run time: 10 to 18 min</li>
+                  <li>Extra outputs: VLM layers, per-step cross-attn, vision vs state, language diff</li>
+                  <li>Likely command length: 12 to 16 flags</li>
+                </ul>
+              </section>
+
+              <section class="summary-card command-card">
+                <div class="summary-head">
+                  <h3>Preset becomes</h3>
+                </div>
+                <pre><code>./run.sh --config configs/gpu.yaml \
+  --gradient both \
+  --smooth-grad 20 \
+  --per-step-cross-attention \
+  --gradcam-connector \
+  --gradcam-vlm-layers 4,8,12,16 \
+  --vision-vs-state \
+  --language-diff auto</code></pre>
+              </section>
+
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Design rule</h3>
+                </div>
+                <p class="side-note">
+                  Advanced mode is a drawer or dedicated screen, not the default
+                  launch page. That keeps the main experience predictable while
+                  still preserving full research flexibility.
+                </p>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock-frame">
+        <div class="mock-label">Mock C</div>
+        <div class="app-window">
+          <div class="topbar">
+            <div class="brand-lockup">
+              <div class="brand-mark"></div>
+              <div>
+                <div class="brand-title">smolvla-inspect</div>
+                <div class="brand-subtitle">Review and launch</div>
+              </div>
+            </div>
+            <nav class="topnav">
+              <a class="topnav-link active" href="#">Create run</a>
+              <a class="topnav-link" href="#">Explore runs</a>
+              <a class="topnav-link" href="#">Compare</a>
+            </nav>
+            <button class="ghost-btn">Save as preset</button>
+          </div>
+
+          <div class="review-layout">
+            <main class="review-main">
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <p class="section-kicker">Review</p>
+                    <h2>Make the run legible before execution</h2>
+                  </div>
+                  <span class="inline-pill">This screen removes guesswork around side effects.</span>
+                </div>
+                <div class="review-grid">
+                  <div class="review-block">
+                    <span class="review-label">Run type</span>
+                    <strong>Deep attribution</strong>
+                    <p>Base on GPU preset, with exported data for the web viewer.</p>
+                  </div>
+                  <div class="review-block">
+                    <span class="review-label">Inputs</span>
+                    <strong>Episode 3, 12 frames, CUDA</strong>
+                    <p>Task override left empty, image keys auto-detected.</p>
+                  </div>
+                  <div class="review-block">
+                    <span class="review-label">Outputs</span>
+                    <strong>7 images + 1 text report + manifest</strong>
+                    <p>Viewer-ready run folder created under `./outputs/`.</p>
+                  </div>
+                  <div class="review-block alert">
+                    <span class="review-label">Warnings</span>
+                    <strong>Per-action-dim disabled on CPU</strong>
+                    <p>Surface practical constraints before launch instead of failing late.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="preview-panel">
+                <div class="preview-copy">
+                  <div class="summary-head">
+                    <h3>What users see after the run finishes</h3>
+                    <span class="pill success">Existing viewer reused</span>
+                  </div>
+                  <p>
+                    The setup UI should hand off to the current run browser rather
+                    than inventing a second results surface. After completion, the
+                    primary action becomes <em>Open in viewer</em>.
+                  </p>
+                  <div class="timeline">
+                    <div class="timeline-step done">Queued</div>
+                    <div class="timeline-step done">Loading model</div>
+                    <div class="timeline-step done">Loading dataset</div>
+                    <div class="timeline-step current">Computing attributions</div>
+                    <div class="timeline-step">Open run in viewer</div>
+                  </div>
+                </div>
+                <div class="preview-image-wrap">
+                  <img src="../../assets/example_grid.png" alt="Example output grid preview" />
+                </div>
+              </section>
+            </main>
+
+            <aside class="review-side">
+              <section class="summary-card command-card">
+                <div class="summary-head">
+                  <h3>Final command</h3>
+                  <span class="pill neutral">Transparent</span>
+                </div>
+                <pre><code>./run.sh \
+  --config configs/gpu.yaml \
+  --episode 3 \
+  --num-frames 12 \
+  --device cuda \
+  --gradient both \
+  --per-step-cross-attention \
+  --gradcam-connector \
+  --gradcam-vlm-layers 4,8,12,16 \
+  --vision-vs-state \
+  --export-data</code></pre>
+              </section>
+
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Launch actions</h3>
+                </div>
+                <div class="cta-stack">
+                  <button class="primary-btn">Launch inspection</button>
+                  <button class="ghost-btn full">Save as reusable preset</button>
+                  <button class="ghost-btn full">Export YAML config</button>
+                </div>
+              </section>
+
+              <section class="summary-card">
+                <div class="summary-head">
+                  <h3>Implementation hint</h3>
+                </div>
+                <p class="side-note">
+                  The command preview can be the contract between UI and CLI. It
+                  keeps implementation risk low because the UI only needs to
+                  synthesize validated args and then invoke the existing script.
+                </p>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
