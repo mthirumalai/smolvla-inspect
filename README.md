@@ -346,6 +346,14 @@ The diagnostic reports often reveal that models rely on background features rath
 
 It uses the same SAM-based segmentation from the diagnostic agent to separate foreground from background, then applies configurable transforms to each frame and writes the result as a new LeRobot dataset.
 
+### Prerequisites
+
+Datasets are downloaded from HuggingFace Hub. Log in first if your dataset is private or if you plan to push augmented data back with `--push-to-hub`:
+
+```bash
+huggingface-cli login
+```
+
 ### Quick start
 
 ```bash
