@@ -10,3 +10,4 @@ demo/
 demo_output/
 scratch/
 output/
+.DS_Store
