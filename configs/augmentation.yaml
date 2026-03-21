@@ -19,7 +19,8 @@
 # ---------------------------------------------------------------------------
 seed: 42                    # any integer; controls all random augmentation choices
 num_copies: 3               # 1-N; how many augmented versions of each episode to create
-device: cpu                 # "cpu" or "cuda" (for SAM segmentation)
+device: auto                # "auto", "cpu", "cuda", or "mps" (for SAM segmentation)
+                            #   auto = cuda if available, then mps (macOS), then cpu
 task_string: null           # override task string (null = read from dataset)
 episodes: null              # list of episode indices to augment (null = all)
 use_videos: true            # encode output as video (recommended)

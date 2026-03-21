@@ -344,7 +344,7 @@ To pick up runs in a new location, update `--base-dir` in your client config and
 
 The diagnostic reports often reveal that models rely on background features rather than task objects. The augmentation pipeline lets you generate diversified training data from an existing LeRobot dataset to fix this.
 
-It uses the same SAM-based segmentation from the diagnostic agent to separate foreground from background, then applies configurable transforms to each frame and writes the result as a new LeRobot dataset.
+It uses the same SAM-based segmentation from the diagnostic agent to separate foreground from background, then applies configurable transforms to each frame and writes the result as a new LeRobot dataset. Segmentation preserves all task-relevant objects (including the robot gripper) and only modifies background regions. Supports CUDA, Apple Silicon (MPS), and CPU.
 
 ### Prerequisites
 
@@ -385,14 +385,19 @@ python scripts/augment_dataset.py \
     --num-copies 5 \
     --include-originals
 
-# Use SAM segmentation on GPU for mask-aware augmentations (background
-# replacement targets only background pixels, foreground stays intact)
+# SAM segmentation for mask-aware augmentations (background replacement
+# targets only background pixels; gripper, objects stay intact).
+# Device defaults to "auto" (picks cuda > mps > cpu).
 python scripts/augment_dataset.py \
     --dataset mthirumalai/so101.pnp.1 \
     --config configs/augmentation.yaml \
     --output-repo my-org/so101.pnp.1.augmented \
-    --output-dir ./augmented_data \
-    --device cuda
+    --output-dir ./augmented_data
+
+# Or force a specific device:
+#   --device cuda    (NVIDIA GPU)
+#   --device mps     (Apple Silicon)
+#   --device cpu     (fallback, slower)
 
 # Skip segmentation for faster runs (augmentations apply to the full image)
 python scripts/augment_dataset.py \
@@ -452,7 +457,7 @@ The config file (`configs/augmentation.yaml`) controls global settings and per-a
 # Global settings
 seed: 42                    # master RNG seed for reproducibility
 num_copies: 3               # augmented copies per original episode
-device: cpu                 # "cpu" or "cuda" (for SAM segmentation)
+device: auto                # "auto", "cpu", "cuda", or "mps" (for SAM segmentation)
 use_videos: true            # encode output as video
 image_writer_threads: 4     # parallel image writing threads
 
@@ -499,7 +504,7 @@ To customize: copy `configs/augmentation.yaml`, edit the values, and pass your c
 | `--episodes` | all | Specific episode indices to augment |
 | `--num-copies` | from config | Augmented copies per episode |
 | `--seed` | from config | Master RNG seed |
-| `--device` | from config | Device for SAM segmentation |
+| `--device` | `auto` | Device for SAM segmentation (`auto`/`cpu`/`cuda`/`mps`) |
 | `--task` | from dataset | Override task string for object detection |
 | `--include-originals` | off | Copy original episodes into the output |
 | `--skip-segmentation` | off | Skip SAM (disables mask-aware augmentations) |

@@ -118,7 +118,7 @@ def main():
     parser.add_argument("--episodes", nargs="*", type=int, default=None, help="Episode indices to augment (default: all)")
     parser.add_argument("--num-copies", type=int, default=None, help="Override config num_copies")
     parser.add_argument("--seed", type=int, default=None, help="Override config seed")
-    parser.add_argument("--device", default=None, help="Override config device (cpu/cuda)")
+    parser.add_argument("--device", default=None, help="Override config device (auto/cpu/cuda/mps)")
     parser.add_argument("--task", default=None, help="Override task string for object detection")
     parser.add_argument("--include-originals", action="store_true", help="Also copy original (unaugmented) episodes into the output dataset")
     parser.add_argument("--skip-segmentation", action="store_true", help="Skip SAM segmentation (no mask-aware augmentations)")
@@ -141,7 +141,17 @@ def main():
 
     seed = config.get("seed", 42)
     num_copies = config.get("num_copies", 3)
-    device = config.get("device", "cpu")
+    device = config.get("device", "auto")
+
+    # Resolve "auto" device
+    if device == "auto":
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    print(f"Using device: {device}")
 
     # Load source dataset
     print(f"Loading source dataset: {args.dataset}")
@@ -183,8 +193,7 @@ def main():
     if not args.skip_segmentation:
         from smolvla_inspect.diagnostic.scene import parse_task_objects
         task_objects = parse_task_objects(task_string)
-        # Remove "robot gripper" — we don't want to mask it as foreground for augmentation
-        task_objects = [o for o in task_objects if o != "robot gripper"]
+        # Keep all objects including robot gripper — we want to preserve them during augmentation
         print(f"  Task objects for segmentation: {task_objects}")
     else:
         task_objects = []
