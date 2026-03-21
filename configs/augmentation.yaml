@@ -1,0 +1,101 @@
+# ============================================================================
+# Dataset Augmentation Configuration
+# ============================================================================
+# Controls which augmentations are applied to training data and their params.
+# All augmentations are independently toggleable via `enabled: true/false`.
+#
+# Usage:
+#   python scripts/augment_dataset.py \
+#     --dataset mthirumalai/so101.pnp.1 \
+#     --config configs/augmentation.yaml \
+#     --output-repo my-org/so101.pnp.1.augmented
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
+seed: 42                    # master RNG seed for reproducibility
+num_copies: 3               # augmented copies per original episode
+device: cpu                 # "cpu" or "cuda" (for SAM segmentation)
+task_string: null           # override task string (null = read from dataset)
+episodes: null              # list of episode indices to augment (null = all)
+use_videos: true            # encode output as video (recommended)
+image_writer_threads: 4     # parallel image writing threads (0 = sync)
+
+# ---------------------------------------------------------------------------
+# Background replacement
+# ---------------------------------------------------------------------------
+background_replacement:
+  enabled: true
+  # Strategy: "gray", "noise", "blur", or "image_bank"
+  strategy: noise
+  # Per-strategy parameters:
+  gray:
+    value: 0.5              # constant fill value [0, 1]
+  noise:
+    # noise is always seeded from global seed + copy index
+    low: 0.0
+    high: 1.0
+  blur:
+    sigma: 20.0             # Gaussian blur sigma
+  image_bank:
+    # Directory of background images (jpg/png). One is sampled per episode.
+    directory: null          # e.g., "./backgrounds/"
+    resize_mode: crop        # "crop" (random crop to match) or "resize" (stretch)
+
+# ---------------------------------------------------------------------------
+# Color jitter (applied to foreground only, background only, or full image)
+# ---------------------------------------------------------------------------
+color_jitter:
+  enabled: true
+  target: full              # "foreground", "background", or "full"
+  brightness: 0.4           # max brightness delta
+  contrast: 0.4             # max contrast delta
+  saturation: 0.3           # max saturation delta
+  hue: 0.1                  # max hue delta (fraction of full circle)
+
+# ---------------------------------------------------------------------------
+# Gaussian blur (soft augmentation applied to full image)
+# ---------------------------------------------------------------------------
+gaussian_blur:
+  enabled: false
+  probability: 0.5          # probability of applying per frame
+  kernel_size_range: [5, 15]  # randomly sampled odd kernel size
+  sigma_range: [0.5, 2.0]   # randomly sampled sigma
+
+# ---------------------------------------------------------------------------
+# Random crop + resize (breaks spatial priors)
+# ---------------------------------------------------------------------------
+random_crop:
+  enabled: false
+  scale_range: [0.8, 1.0]   # fraction of original area to keep
+  ratio_range: [0.9, 1.1]   # aspect ratio jitter range
+
+# ---------------------------------------------------------------------------
+# Foreground cutout / occlusion (forces robustness to partial visibility)
+# ---------------------------------------------------------------------------
+foreground_cutout:
+  enabled: false
+  probability: 0.3          # probability of applying per frame
+  max_fraction: 0.4         # max fraction of foreground pixels to cut
+
+# ---------------------------------------------------------------------------
+# Background color shift (cheap alternative to full replacement)
+# ---------------------------------------------------------------------------
+background_color_shift:
+  enabled: false
+  hue_range: [-0.15, 0.15]  # hue shift range (fraction of full circle)
+  saturation_range: [0.7, 1.3]  # saturation multiplier range
+  value_range: [0.7, 1.3]   # brightness multiplier range
+
+# ---------------------------------------------------------------------------
+# Noise injection (sensor noise simulation)
+# ---------------------------------------------------------------------------
+noise_injection:
+  enabled: false
+  probability: 0.5
+  type: gaussian             # "gaussian" or "salt_pepper"
+  gaussian:
+    std: 0.02                # standard deviation of additive noise
+  salt_pepper:
+    amount: 0.01             # fraction of pixels affected

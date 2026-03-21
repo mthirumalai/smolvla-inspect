@@ -10,6 +10,7 @@ A comprehensive interpretability toolkit for [SmolVLA](https://huggingface.co/le
 - **Verify with counterfactuals** — swap backgrounds, relocate objects, recolor targets, insert distractors, occlude regions, and swap task strings
 - **Inspect model health** — spectral weight analysis, attention entropy, and head redundancy across all components
 - **Compare runs** — side-by-side attribution deltas, counterfactual deltas, and weight changes
+- **Augment training data** — configurable background replacement, color jitter, blur, crop, cutout, and noise to reduce background dependence
 - **Query from AI agents** — 48 MCP tools expose every signal to Claude Code, Cursor, and other clients
 
 ![Example attention grid](assets/example_grid.png)
@@ -339,6 +340,72 @@ To pick up runs in a new location, update `--base-dir` in your client config and
 
 </details>
 
+## Dataset Augmentation
+
+The diagnostic reports often reveal that models rely on background features rather than task objects. The augmentation pipeline lets you generate diversified training data from an existing LeRobot dataset to fix this.
+
+It uses the same SAM-based segmentation from the diagnostic agent to separate foreground from background, then applies configurable transforms to each frame and writes the result as a new LeRobot dataset.
+
+### Quick start
+
+```bash
+# Augment all episodes with default settings (background noise + color jitter)
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --output-dir ./augmented_data
+
+# Preview what would happen without writing data
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo test --dry-run
+```
+
+### Available augmentations
+
+Every augmentation is independently toggleable via `enabled: true/false` in `configs/augmentation.yaml`:
+
+| Augmentation | What it does | Why it helps |
+|-------------|-------------|-------------|
+| Background replacement | Swap background with gray, noise, blur, or images from a bank | Forces the model to use object features, not scene memorization |
+| Color jitter | Randomize brightness, contrast, saturation, hue | Prevents color-based shortcuts |
+| Gaussian blur | Probabilistic full-image blur | Simulates camera defocus, builds robustness |
+| Random crop + resize | Crop a random region and resize back | Breaks spatial position priors |
+| Foreground cutout | Zero out random foreground pixels | Forces robustness to partial occlusion |
+| Background color shift | HSV shift on background only | Cheap alternative to full replacement |
+| Noise injection | Gaussian or salt-and-pepper noise | Simulates sensor noise |
+
+Color jitter can target `"foreground"`, `"background"`, or `"full"` image independently.
+
+### CLI options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dataset` | required | Source LeRobot dataset repo_id |
+| `--config` | required | Path to augmentation YAML config |
+| `--output-repo` | required | Output dataset repo_id |
+| `--output-dir` | HF cache | Local output directory |
+| `--episodes` | all | Specific episode indices to augment |
+| `--num-copies` | from config | Augmented copies per episode |
+| `--seed` | from config | Master RNG seed |
+| `--device` | from config | Device for SAM segmentation |
+| `--task` | from dataset | Override task string for object detection |
+| `--include-originals` | off | Copy original episodes into the output |
+| `--skip-segmentation` | off | Skip SAM (disables mask-aware augmentations) |
+| `--dry-run` | off | Print plan without writing |
+| `--push-to-hub` | off | Push output to HuggingFace Hub |
+
+### Recommended workflow
+
+1. Run diagnostic inspection on your model to identify weaknesses
+2. Check the report's recommendations (e.g., "high background attribution", "low object grounding")
+3. Enable the relevant augmentations in `configs/augmentation.yaml`
+4. Generate augmented episodes: `python scripts/augment_dataset.py ...`
+5. Retrain on the augmented dataset
+6. Re-run inspection to verify improvement
+
 ## Setup
 
 ### Requirements
@@ -397,6 +464,7 @@ Defaults come from `configs/defaults.yaml`. Use `--config` to load another; CLI 
 | `configs/defaults.yaml` | Conservative CPU-friendly defaults |
 | `configs/gpu.yaml` | CUDA-oriented config with gradients and extended attribution |
 | `configs/diagnostic.yaml` | Diagnostic agent defaults |
+| `configs/augmentation.yaml` | Dataset augmentation pipeline defaults |
 
 <details>
 <summary><strong>Common commands</strong></summary>
@@ -727,6 +795,9 @@ smolvla-inspect/
 │   ├── serve.py
 │   ├── viz.py
 │   ├── _compat.py
+│   ├── augment/                # Dataset augmentation pipeline
+│   │   ├── __init__.py
+│   │   └── transforms.py       # 7 composable image transforms
 │   ├── mcp/                    # MCP server (AI agent integration)
 │   │   ├── __init__.py          # mcp_main() entry point
 │   │   ├── server.py            # FastMCP instance
@@ -768,8 +839,11 @@ smolvla-inspect/
 │           ├── FindingCard.tsx
 │           └── CounterfactualComparison.tsx
 ├── assets/
+├── scripts/
+│   └── augment_dataset.py       # Dataset augmentation CLI
 ├── configs/
-│   └── diagnostic.yaml          # Diagnostic agent config
+│   ├── diagnostic.yaml          # Diagnostic agent config
+│   └── augmentation.yaml        # Dataset augmentation config
 ├── docs/
 ├── clone-and-setup.sh
 ├── setup-gpu.sh
@@ -790,6 +864,7 @@ smolvla-inspect/
 - [x] Interactive web viewer
 - [x] Agentic diagnostic system with counterfactual verification
 - [x] MCP server for AI agent integration (48 read-only tools)
+- [x] Dataset augmentation pipeline (background replacement, color jitter, blur, crop, cutout, noise)
 - [ ] Representation probing
 - [ ] Causal tracing / activation patching
 - [ ] Temporal consistency analysis
