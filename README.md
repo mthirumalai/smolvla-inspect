@@ -363,6 +363,63 @@ python scripts/augment_dataset.py \
     --output-repo test --dry-run
 ```
 
+<details>
+<summary><strong>More examples</strong></summary>
+
+```bash
+# 5 augmented copies of specific episodes, keep originals in the output
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.aug5x \
+    --output-dir ./augmented_data \
+    --episodes 0 1 2 3 4 \
+    --num-copies 5 \
+    --include-originals
+
+# Use SAM segmentation on GPU for mask-aware augmentations (background
+# replacement targets only background pixels, foreground stays intact)
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --output-dir ./augmented_data \
+    --device cuda
+
+# Skip segmentation for faster runs (augmentations apply to the full image)
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --output-dir ./augmented_data \
+    --skip-segmentation
+
+# Override the task string used for object detection
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --output-dir ./augmented_data \
+    --task "pick up the red cube and place it in the bowl"
+
+# Set a different seed for reproducibility
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --output-dir ./augmented_data \
+    --seed 123
+
+# Augment and push directly to HuggingFace Hub
+python scripts/augment_dataset.py \
+    --dataset mthirumalai/so101.pnp.1 \
+    --config configs/augmentation.yaml \
+    --output-repo my-org/so101.pnp.1.augmented \
+    --push-to-hub
+```
+
+</details>
+
 ### Available augmentations
 
 Every augmentation is independently toggleable via `enabled: true/false` in `configs/augmentation.yaml`:
