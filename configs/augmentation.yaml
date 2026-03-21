@@ -4,6 +4,9 @@
 # Controls which augmentations are applied to training data and their params.
 # All augmentations are independently toggleable via `enabled: true/false`.
 #
+# PIXEL VALUES: Images are float32 in [0.0, 1.0] range internally.
+#   0.0 = black, 0.5 = mid-gray, 1.0 = white.
+#
 # Usage:
 #   python scripts/augment_dataset.py \
 #     --dataset mthirumalai/so101.pnp.1 \
@@ -14,88 +17,113 @@
 # ---------------------------------------------------------------------------
 # Global settings
 # ---------------------------------------------------------------------------
-seed: 42                    # master RNG seed for reproducibility
-num_copies: 3               # augmented copies per original episode
+seed: 42                    # any integer; controls all random augmentation choices
+num_copies: 3               # 1-N; how many augmented versions of each episode to create
 device: cpu                 # "cpu" or "cuda" (for SAM segmentation)
 task_string: null           # override task string (null = read from dataset)
 episodes: null              # list of episode indices to augment (null = all)
 use_videos: true            # encode output as video (recommended)
-image_writer_threads: 4     # parallel image writing threads (0 = sync)
+image_writer_threads: 4     # 0 = synchronous; 1-8 = parallel image writing threads
 
 # ---------------------------------------------------------------------------
 # Background replacement
 # ---------------------------------------------------------------------------
+# Replaces background pixels with a synthetic fill.
+# Requires SAM segmentation unless --skip-segmentation (then applies to full image).
 background_replacement:
   enabled: true
-  # Strategy: "gray", "noise", "blur", or "image_bank"
-  strategy: noise
+  strategy: noise           # "gray" | "noise" | "blur" | "image_bank"
   # Per-strategy parameters:
   gray:
-    value: 0.5              # constant fill value [0, 1]
+    value: 0.5              # [0.0, 1.0] — constant fill intensity (0=black, 1=white)
   noise:
-    # noise is always seeded from global seed + copy index
-    low: 0.0
-    high: 1.0
+    # Uniform random noise per pixel; seeded from global seed + copy index
+    low: 0.0                # [0.0, 1.0] — noise lower bound
+    high: 1.0               # [0.0, 1.0] — noise upper bound (must be >= low)
   blur:
-    sigma: 20.0             # Gaussian blur sigma
+    sigma: 20.0             # [1.0, 50.0] — Gaussian blur sigma in pixels
+                            #   small (5): slight softening
+                            #   medium (20): background mostly unrecognizable
+                            #   large (40+): fully smoothed out
   image_bank:
-    # Directory of background images (jpg/png). One is sampled per episode.
-    directory: null          # e.g., "./backgrounds/"
-    resize_mode: crop        # "crop" (random crop to match) or "resize" (stretch)
+    directory: null          # path to folder of background images (jpg/png)
+    resize_mode: crop        # "crop" (random crop to match aspect) or "resize" (stretch)
 
 # ---------------------------------------------------------------------------
-# Color jitter (applied to foreground only, background only, or full image)
+# Color jitter
 # ---------------------------------------------------------------------------
+# Randomly adjusts brightness, contrast, saturation, and hue.
+# Each parameter sets the MAX random deviation from the original.
+# The actual jitter is sampled uniformly from [-value, +value] per frame.
 color_jitter:
   enabled: true
-  target: full              # "foreground", "background", or "full"
-  brightness: 0.4           # max brightness delta
-  contrast: 0.4             # max contrast delta
-  saturation: 0.3           # max saturation delta
-  hue: 0.1                  # max hue delta (fraction of full circle)
+  target: full              # "foreground" | "background" | "full"
+  brightness: 0.4           # [0.0, 1.0] — max brightness shift
+                            #   0.0 = no change, 0.2 = subtle, 0.5 = strong, 1.0 = extreme
+  contrast: 0.4             # [0.0, 1.0] — max contrast multiplier deviation from 1.0
+                            #   actual multiplier sampled from [1-val, 1+val]
+                            #   0.0 = no change, 0.3 = moderate, 0.5 = strong
+  saturation: 0.3           # [0.0, 1.0] — max saturation multiplier deviation from 1.0
+                            #   actual multiplier sampled from [1-val, 1+val]
+                            #   0.0 = no change, 0.3 = moderate, 1.0 = can fully desaturate
+  hue: 0.1                  # [0.0, 0.5] — max hue rotation (fraction of color wheel)
+                            #   0.0 = no change, 0.1 = slight shift, 0.5 = any color possible
 
 # ---------------------------------------------------------------------------
 # Gaussian blur (soft augmentation applied to full image)
 # ---------------------------------------------------------------------------
 gaussian_blur:
   enabled: false
-  probability: 0.5          # probability of applying per frame
-  kernel_size_range: [5, 15]  # randomly sampled odd kernel size
-  sigma_range: [0.5, 2.0]   # randomly sampled sigma
+  probability: 0.5          # [0.0, 1.0] — chance of applying per frame (0=never, 1=always)
+  kernel_size_range: [5, 15]  # [odd integers, min 3] — randomly sampled blur kernel size
+  sigma_range: [0.5, 2.0]    # [>0] — randomly sampled sigma in pixels
+                              #   0.5 = barely visible, 1.0 = soft, 2.0+ = noticeably blurry
 
 # ---------------------------------------------------------------------------
 # Random crop + resize (breaks spatial priors)
 # ---------------------------------------------------------------------------
 random_crop:
   enabled: false
-  scale_range: [0.8, 1.0]   # fraction of original area to keep
-  ratio_range: [0.9, 1.1]   # aspect ratio jitter range
+  scale_range: [0.8, 1.0]   # [0.0, 1.0] — fraction of original image area to keep
+                             #   0.8 = crop up to 20% of area, 0.5 = crop up to half
+  ratio_range: [0.9, 1.1]   # [>0] — aspect ratio jitter (width/height)
+                             #   1.0 = original ratio, 0.9-1.1 = slight stretch/squeeze
 
 # ---------------------------------------------------------------------------
 # Foreground cutout / occlusion (forces robustness to partial visibility)
 # ---------------------------------------------------------------------------
+# Requires SAM segmentation to identify foreground pixels.
 foreground_cutout:
   enabled: false
-  probability: 0.3          # probability of applying per frame
-  max_fraction: 0.4         # max fraction of foreground pixels to cut
+  probability: 0.3          # [0.0, 1.0] — chance of applying per frame
+  max_fraction: 0.4         # [0.0, 1.0] — max fraction of foreground pixels to zero out
+                            #   0.1 = mild occlusion, 0.3 = moderate, 0.5+ = aggressive
 
 # ---------------------------------------------------------------------------
 # Background color shift (cheap alternative to full replacement)
 # ---------------------------------------------------------------------------
+# Shifts hue/saturation/brightness of background pixels in HSV space.
+# Requires SAM segmentation to identify background pixels.
 background_color_shift:
   enabled: false
-  hue_range: [-0.15, 0.15]  # hue shift range (fraction of full circle)
-  saturation_range: [0.7, 1.3]  # saturation multiplier range
-  value_range: [0.7, 1.3]   # brightness multiplier range
+  hue_range: [-0.15, 0.15]       # [-0.5, 0.5] — hue rotation range (fraction of color wheel)
+                                  #   0.0 = no shift, ±0.1 = subtle, ±0.5 = full rotation
+  saturation_range: [0.7, 1.3]   # [>0] — saturation multiplier range
+                                  #   1.0 = no change, <1 = desaturate, >1 = more vivid
+  value_range: [0.7, 1.3]        # [>0] — brightness multiplier range
+                                  #   1.0 = no change, <1 = darken, >1 = brighten
 
 # ---------------------------------------------------------------------------
 # Noise injection (sensor noise simulation)
 # ---------------------------------------------------------------------------
 noise_injection:
   enabled: false
-  probability: 0.5
-  type: gaussian             # "gaussian" or "salt_pepper"
+  probability: 0.5          # [0.0, 1.0] — chance of applying per frame
+  type: gaussian             # "gaussian" | "salt_pepper"
   gaussian:
-    std: 0.02                # standard deviation of additive noise
+    std: 0.02               # [>0] — standard deviation of additive noise
+                            #   0.01 = barely visible, 0.02 = subtle grain,
+                            #   0.05 = noticeable, 0.1+ = heavy
   salt_pepper:
-    amount: 0.01             # fraction of pixels affected
+    amount: 0.01            # [0.0, 1.0] — fraction of pixels affected
+                            #   0.01 = sparse specks, 0.05 = moderate, 0.1+ = heavy

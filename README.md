@@ -444,6 +444,50 @@ Every augmentation is independently toggleable via `enabled: true/false` in `con
 
 Color jitter can target `"foreground"`, `"background"`, or `"full"` image independently.
 
+### Config file structure
+
+The config file (`configs/augmentation.yaml`) controls global settings and per-augmentation parameters. Here's the layout:
+
+```yaml
+# Global settings
+seed: 42                    # master RNG seed for reproducibility
+num_copies: 3               # augmented copies per original episode
+device: cpu                 # "cpu" or "cuda" (for SAM segmentation)
+use_videos: true            # encode output as video
+image_writer_threads: 4     # parallel image writing threads
+
+# Each augmentation block has `enabled: true/false` plus its own parameters.
+# Example — background replacement:
+background_replacement:
+  enabled: true
+  strategy: noise           # "gray", "noise", "blur", or "image_bank"
+  gray:
+    value: 0.5
+  noise:
+    low: 0.0
+    high: 1.0
+  blur:
+    sigma: 20.0
+  image_bank:
+    directory: null          # path to a folder of background images
+    resize_mode: crop        # "crop" or "resize"
+
+# Example — color jitter:
+color_jitter:
+  enabled: true
+  target: full              # "foreground", "background", or "full"
+  brightness: 0.4
+  contrast: 0.4
+  saturation: 0.3
+  hue: 0.1
+
+# Other augmentation blocks follow the same pattern:
+# gaussian_blur, random_crop, foreground_cutout,
+# background_color_shift, noise_injection
+```
+
+To customize: copy `configs/augmentation.yaml`, edit the values, and pass your copy with `--config`. CLI flags like `--num-copies` and `--seed` override the corresponding config values.
+
 ### CLI options
 
 | Flag | Default | Description |
