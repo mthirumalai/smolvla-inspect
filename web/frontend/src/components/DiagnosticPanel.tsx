@@ -107,17 +107,21 @@ interface DiagnosticReport {
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 export default function DiagnosticPanel() {
-  const { selectedRunId } = useAppStore();
+  const { selectedRunId, runs } = useAppStore();
   const [report, setReport] = useState<DiagnosticReport | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "running" | "complete" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [showFullReport, setShowFullReport] = useState(false);
 
+  // Get the selected run name for API calls (diagnostic API expects name, not ID)
+  const selectedRun = runs.find(run => run.id === selectedRunId);
+  const selectedRunName = selectedRun?.name;
+
   // Check if diagnostic exists
   useEffect(() => {
-    if (!selectedRunId) return;
+    if (!selectedRunName) return;
     setStatus("loading");
-    fetch(`${API_BASE}/api/diagnostic/${selectedRunId}`)
+    fetch(`${API_BASE}/api/diagnostic/${selectedRunName}`)
       .then((res) => {
         if (res.ok) return res.json();
         if (res.status === 404) return null;
@@ -132,15 +136,15 @@ export default function DiagnosticPanel() {
         }
       })
       .catch(() => setStatus("idle"));
-  }, [selectedRunId]);
+  }, [selectedRunName]);
 
   const handleRunDiagnostic = async () => {
-    if (!selectedRunId) return;
+    if (!selectedRunName) return;
     setStatus("running");
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/api/diagnostic/${selectedRunId}/run`, {
+      const res = await fetch(`${API_BASE}/api/diagnostic/${selectedRunName}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skip_counterfactuals: false }),
@@ -188,7 +192,7 @@ export default function DiagnosticPanel() {
 
       if (status !== "complete" && status !== "error") {
         // Reload report
-        const reloadRes = await fetch(`${API_BASE}/api/diagnostic/${selectedRunId}`);
+        const reloadRes = await fetch(`${API_BASE}/api/diagnostic/${selectedRunName}`);
         if (reloadRes.ok) {
           setReport(await reloadRes.json());
           setStatus("complete");
@@ -200,7 +204,7 @@ export default function DiagnosticPanel() {
     }
   };
 
-  if (!selectedRunId) return null;
+  if (!selectedRunName) return null;
 
   // Empty state
   if (status === "idle") {

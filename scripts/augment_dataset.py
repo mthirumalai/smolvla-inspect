@@ -203,7 +203,21 @@ def main():
     # Load background image bank if needed
     bg_images = None
     bg_cfg = config.get("background_replacement", {})
-    if bg_cfg.get("enabled") and bg_cfg.get("strategy") == "image_bank":
+    needs_bg_images = False
+
+    if bg_cfg.get("enabled"):
+        strategy = bg_cfg.get("strategy")
+        if strategy == "image_bank":
+            needs_bg_images = True
+        elif strategy == "mix":
+            # Check if image_bank is one of the mix strategies
+            mix_entries = bg_cfg.get("mix", [])
+            for entry in mix_entries:
+                if entry.get("strategy") == "image_bank":
+                    needs_bg_images = True
+                    break
+
+    if needs_bg_images:
         bg_dir = bg_cfg.get("image_bank", {}).get("directory")
         if bg_dir:
             print(f"  Loading background image bank from: {bg_dir}")
