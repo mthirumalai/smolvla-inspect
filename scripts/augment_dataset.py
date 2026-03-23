@@ -73,12 +73,197 @@ def img_to_hwc_uint8(img_float_hwc: np.ndarray) -> np.ndarray:
     return (np.clip(img_float_hwc, 0.0, 1.0) * 255).astype(np.uint8)
 
 
+class CachedSegmentationModels:
+    """Cache OWL-ViT and SAM models to avoid reloading on every frame."""
+
+    def __init__(self, device: str = "cpu"):
+        self.device = device
+        self.owl_processor = None
+        self.owl_model = None
+        self.sam_predictor = None
+        self._models_loaded = False
+
+    def _load_models_once(self):
+        """Load OWL-ViT and SAM models if not already loaded."""
+        if self._models_loaded:
+            return
+
+        print(f"  Loading OWL-ViT v2 (google/owlv2-base-patch16-ensemble) on {self.device}...")
+        try:
+            from transformers import Owlv2ForObjectDetection, Owlv2Processor
+            self.owl_processor = Owlv2Processor.from_pretrained("google/owlv2-base-patch16-ensemble")
+            self.owl_model = Owlv2ForObjectDetection.from_pretrained("google/owlv2-base-patch16-ensemble")
+            self.owl_model = self.owl_model.to(self.device)
+            self.owl_model.eval()
+        except ImportError:
+            print("  WARNING: transformers not available. Object detection will be skipped.")
+            return
+
+        print(f"  Loading SAM vit_b on {self.device}...")
+        try:
+            from segment_anything import SamPredictor, sam_model_registry
+            from smolvla_inspect.diagnostic.scene import _ensure_sam_checkpoint
+            checkpoint_path = _ensure_sam_checkpoint()
+            sam = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
+            sam = sam.to(self.device)
+            self.sam_predictor = SamPredictor(sam)
+        except ImportError:
+            print("  WARNING: segment_anything not available. Will use bounding box fallbacks.")
+
+        self._models_loaded = True
+        print(f"  Models loaded successfully on {self.device}")
+
+    def segment_frame(self, img_hwc: np.ndarray, task_objects: list[str]) -> SceneSegmentation:
+        """Run detection + segmentation on a single frame using cached models."""
+        from smolvla_inspect.diagnostic.scene import SceneSegmentation, DetectedObject
+        import torch
+        import numpy as np
+        from PIL import Image
+
+        # Load models once if not already loaded
+        self._load_models_once()
+
+        # Convert to uint8 for detection/segmentation
+        img_uint8 = (img_hwc * 255).astype(np.uint8)
+        h, w = img_uint8.shape[:2]
+
+        # Skip if no models available
+        if not self._models_loaded or self.owl_model is None:
+            return SceneSegmentation(
+                objects=[],
+                background_mask=np.ones((h, w), dtype=bool),
+                image_shape=(h, w),
+            )
+
+        # Run object detection with cached models
+        detections = self._detect_objects_cached(img_uint8, task_objects)
+
+        # Run segmentation with cached models
+        segmentation = self._segment_scene_cached(img_uint8, detections)
+
+        return segmentation
+
+    def _detect_objects_cached(self, image: np.ndarray, object_queries: list[str]) -> list:
+        """Run object detection using cached OWL-ViT model."""
+        from smolvla_inspect.diagnostic.scene import DetectedObject
+        import torch
+        from PIL import Image
+
+        if not object_queries or self.owl_model is None:
+            return []
+
+        # Convert numpy image to PIL
+        pil_image = Image.fromarray(image)
+
+        # Process inputs
+        inputs = self.owl_processor(text=[object_queries], images=pil_image, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.owl_model(**inputs)
+
+        # Post-process at the primary threshold
+        target_sizes = torch.tensor([pil_image.size[::-1]], device=self.device)
+        results = self.owl_processor.post_process_object_detection(
+            outputs, threshold=0.1, target_sizes=target_sizes,
+        )[0]
+
+        detections = []
+        boxes = results["boxes"].cpu().numpy()
+        scores = results["scores"].cpu().numpy()
+        labels = results["labels"].cpu().numpy()
+
+        for box, score, label_idx in zip(boxes, scores, labels):
+            if label_idx < len(object_queries):
+                detections.append(DetectedObject(
+                    label=object_queries[label_idx],
+                    box=tuple(box.astype(int).tolist()),
+                    score=float(score),
+                    mask=None
+                ))
+
+        return detections
+
+    def _segment_scene_cached(self, image: np.ndarray, detections: list) -> SceneSegmentation:
+        """Run scene segmentation using cached SAM model."""
+        from smolvla_inspect.diagnostic.scene import SceneSegmentation, DetectedObject
+        import numpy as np
+
+        h, w = image.shape[:2]
+
+        if not detections:
+            return SceneSegmentation(
+                objects=[],
+                background_mask=np.ones((h, w), dtype=bool),
+                image_shape=(h, w),
+            )
+
+        if self.sam_predictor is None:
+            # Fallback to bounding box masks
+            segmented_objects = []
+            union_mask = np.zeros((h, w), dtype=bool)
+
+            for det in detections:
+                x1, y1, x2, y2 = det.box
+                x1, x2 = max(0, int(x1)), min(w, int(x2))
+                y1, y2 = max(0, int(y1)), min(h, int(y2))
+
+                bbox_mask = np.zeros((h, w), dtype=bool)
+                bbox_mask[y1:y2, x1:x2] = True
+                union_mask |= bbox_mask
+
+                segmented_objects.append(DetectedObject(
+                    label=det.label,
+                    box=det.box,
+                    score=det.score,
+                    mask=bbox_mask
+                ))
+
+            background_mask = ~union_mask
+            return SceneSegmentation(
+                objects=segmented_objects,
+                background_mask=background_mask,
+                image_shape=(h, w),
+            )
+
+        # Use SAM for proper segmentation
+        self.sam_predictor.set_image(image)
+
+        segmented_objects = []
+        union_mask = np.zeros((h, w), dtype=bool)
+
+        for det in detections:
+            x1, y1, x2, y2 = det.box
+            box_array = np.array([x1, y1, x2, y2])
+
+            masks, scores, _ = self.sam_predictor.predict(box=box_array, multimask_output=True)
+
+            if len(masks) > 0:
+                best_mask = masks[np.argmax(scores)]
+                union_mask |= best_mask
+
+                segmented_objects.append(DetectedObject(
+                    label=det.label,
+                    box=det.box,
+                    score=det.score,
+                    mask=best_mask
+                ))
+
+        background_mask = ~union_mask
+        return SceneSegmentation(
+            objects=segmented_objects,
+            background_mask=background_mask,
+            image_shape=(h, w),
+        )
+
+
 def segment_frame(
     img_hwc: np.ndarray,
     task_objects: list[str],
     device: str,
 ) -> SceneSegmentation:
     """Run detection + segmentation on a single frame."""
+    # This function is kept for backward compatibility but should use cached version
     from smolvla_inspect.diagnostic.scene import detect_objects, segment_scene
 
     # Convert to uint8 for detection/segmentation
@@ -270,20 +455,24 @@ def main():
 
     # Segmentation frequency: how often to re-run SAM (robot moves between frames)
     seg_every_n = args.seg_every_n if args.seg_every_n is not None else config.get("seg_every_n", 1)
+
+    # Initialize cached segmentation models (load once, reuse for all frames)
+    cached_segmentation = None
     if not args.skip_segmentation and task_objects:
         print(f"  Segmentation frequency: every {seg_every_n} frame(s)")
+        cached_segmentation = CachedSegmentationModels(device)
 
     def get_frame_segmentation(
         sample: dict, frame_offset: int, prev_seg: SceneSegmentation | None,
     ) -> SceneSegmentation | None:
         """Get segmentation for a frame, re-running SAM every seg_every_n frames."""
-        if args.skip_segmentation or not task_objects:
+        if args.skip_segmentation or not task_objects or cached_segmentation is None:
             return None
         if prev_seg is not None and frame_offset % seg_every_n != 0:
             return prev_seg
         img_tensor = sample[image_keys[0]]
         img_hwc = tensor_to_hwc(img_tensor)
-        return segment_frame(img_hwc, task_objects, device)
+        return cached_segmentation.segment_frame(img_hwc, task_objects)
 
     total_episodes_written = 0
     t_start = time.time()
