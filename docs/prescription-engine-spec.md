@@ -2495,3 +2495,17 @@ smolvla-prescribe generate \
 20. **Negative experiment surfacing.** Failed experiments are valuable ("don't do X, it caused a regression"). But how many failures should we surface vs. successes? Too many failures and the LLM becomes overly cautious. Current approach: surface by absolute outcome score (both high positive and high negative), letting the LLM judge.
 
 21. **Cross-architecture retrieval.** Should retrieval match on model architecture features, or just on symptom profiles? A background shortcut in a 500M model may require different treatment than in a 2B model. Architecture-weighted similarity could help, but reduces the effective corpus size.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 6 proposals, 6 accepted, 0 deferred |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 5 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+
+- **OUTSIDE VOICE:** 10 findings from independent Claude subagent. 2 acted on (placebo test → sanity check, LLM benchmark added). Remaining findings addressed by existing review decisions or are philosophical scope disagreements.
+- **ENG REVIEW AMENDMENTS:** LeRobot integration spike (Phase 0), --resume flag, segmentation mask caching, axis selection DRY utility, undefined variable fix, dual-layer test strategy (mocks + fixtures).
+- **UNRESOLVED:** 0 across all reviews
+- **VERDICT:** CEO + ENG CLEARED — ready to implement.
