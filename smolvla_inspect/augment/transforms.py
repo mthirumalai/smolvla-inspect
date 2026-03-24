@@ -95,6 +95,51 @@ def _load_background_images(directory: str | Path) -> list[np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
+# Episode-level background consistency
+# ---------------------------------------------------------------------------
+
+def resolve_episode_background(
+    cfg: dict,
+    rng: np.random.RandomState,
+    bg_images: list[np.ndarray] | None = None,
+) -> dict:
+    """Pre-resolve background replacement choices for episode-level consistency.
+
+    Called once per episode so every frame shares the same background strategy,
+    image, and noise pattern.  Returns a dict consumed by
+    ``apply_background_replacement`` via the *episode_bg* parameter.
+    """
+    if not cfg.get("enabled", False):
+        return {}
+
+    result: dict = {}
+    strategy = cfg.get("strategy", "noise")
+
+    # Resolve mix mode → single strategy for the whole episode
+    if strategy == "mix":
+        mix_entries = cfg.get("mix", [])
+        if not mix_entries:
+            raise ValueError("strategy 'mix' requires a 'mix' list")
+        strategies = [e["strategy"] for e in mix_entries]
+        weights = np.array([e.get("weight", 1.0) for e in mix_entries], dtype=np.float64)
+        weights /= weights.sum()
+        result["strategy"] = strategies[rng.choice(len(strategies), p=weights)]
+    else:
+        result["strategy"] = strategy
+
+    resolved = result["strategy"]
+
+    if resolved == "image_bank" and bg_images:
+        result["bg_image_idx"] = int(rng.randint(len(bg_images)))
+        result["crop_seed"] = int(rng.randint(2**31))
+
+    if resolved == "noise":
+        result["noise_seed"] = int(rng.randint(2**31))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Background replacement
 # ---------------------------------------------------------------------------
 
@@ -104,6 +149,7 @@ def apply_background_replacement(
     cfg: dict,
     rng: np.random.RandomState,
     bg_images: list[np.ndarray] | None = None,
+    episode_bg: dict | None = None,
 ) -> np.ndarray:
     """Replace background pixels according to the configured strategy.
 
@@ -120,7 +166,12 @@ def apply_background_replacement(
 
     strategy = cfg.get("strategy", "noise")
 
+    # If episode_bg provided, use its pre-resolved strategy
+    if episode_bg and "strategy" in episode_bg:
+        strategy = episode_bg["strategy"]
+
     # Mix mode: randomly pick a strategy per frame based on weights
+    # (only reached when episode_bg is not provided / not consistent)
     if strategy == "mix":
         mix_entries = cfg.get("mix", [])
         if not mix_entries:
@@ -143,7 +194,12 @@ def apply_background_replacement(
     elif strategy == "noise":
         params = cfg.get("noise", {})
         lo, hi = params.get("low", 0.0), params.get("high", 1.0)
-        noise = rng.uniform(lo, hi, (h, w, img.shape[2])).astype(np.float32)
+        # Use episode-level seed for consistent noise across frames
+        if episode_bg and "noise_seed" in episode_bg:
+            noise_rng = np.random.RandomState(episode_bg["noise_seed"])
+        else:
+            noise_rng = rng
+        noise = noise_rng.uniform(lo, hi, (h, w, img.shape[2])).astype(np.float32)
         out[bg_mask] = noise[bg_mask]
 
     elif strategy == "blur":
@@ -173,8 +229,14 @@ def apply_background_replacement(
             raise ValueError("image_bank strategy requires bg_images to be loaded")
         params = cfg.get("image_bank", {})
         resize_mode = params.get("resize_mode", "crop")
-        chosen = bg_images[rng.randint(len(bg_images))]
-        bg_patch = _resize_bg_image(chosen, h, w, resize_mode, rng)
+        # Use episode-level image selection for consistency across frames
+        if episode_bg and "bg_image_idx" in episode_bg:
+            chosen = bg_images[episode_bg["bg_image_idx"]]
+            crop_rng = np.random.RandomState(episode_bg.get("crop_seed", 0))
+        else:
+            chosen = bg_images[rng.randint(len(bg_images))]
+            crop_rng = rng
+        bg_patch = _resize_bg_image(chosen, h, w, resize_mode, crop_rng)
         out[bg_mask] = bg_patch[bg_mask]
 
     else:
@@ -480,6 +542,7 @@ def augment_image(
     config: dict,
     rng: np.random.RandomState,
     bg_images: list[np.ndarray] | None = None,
+    episode_bg: dict | None = None,
 ) -> np.ndarray:
     """Apply the full augmentation pipeline to a single image.
 
@@ -490,6 +553,8 @@ def augment_image(
     config : full augmentation config dict
     rng : seeded RNG instance
     bg_images : pre-loaded background bank images
+    episode_bg : pre-resolved background choices from ``resolve_episode_background``
+        for consistent backgrounds within an episode (None = per-frame random)
 
     Returns
     -------
@@ -504,6 +569,7 @@ def augment_image(
     if bg_mask is not None:
         img = apply_background_replacement(
             img, bg_mask, config.get("background_replacement", {}), rng, bg_images,
+            episode_bg,
         )
 
     # 3. Background color shift

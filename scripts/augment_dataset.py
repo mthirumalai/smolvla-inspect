@@ -48,7 +48,11 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from smolvla_inspect.augment.transforms import augment_image, _load_background_images
+from smolvla_inspect.augment.transforms import (
+    augment_image,
+    _load_background_images,
+    resolve_episode_background,
+)
 from smolvla_inspect.diagnostic.models import SceneSegmentation
 
 # Keys managed by LeRobotDataset.add_frame() / save_episode() — never pass these in frames
@@ -123,6 +127,8 @@ def main():
     parser.add_argument("--include-originals", action="store_true", help="Also copy original (unaugmented) episodes into the output dataset")
     parser.add_argument("--skip-segmentation", action="store_true", help="Skip SAM segmentation (no mask-aware augmentations)")
     parser.add_argument("--seg-every-n", type=int, default=None, help="Re-run segmentation every N frames (default: from config, or 1 = every frame)")
+    parser.add_argument("--consistent-bg", action="store_true", default=None, help="Same background strategy/image within each episode (default: true)")
+    parser.add_argument("--no-consistent-bg", dest="consistent_bg", action="store_false", help="Different background per frame (original behavior)")
     parser.add_argument("--dry-run", action="store_true", help="Print plan without writing data")
     parser.add_argument("--push-to-hub", action="store_true", help="Push output dataset to HuggingFace Hub after creation")
     args = parser.parse_args()
@@ -200,10 +206,16 @@ def main():
         task_objects = []
         print("  Skipping segmentation (no mask-aware augmentations)")
 
-    # Load background image bank if needed
+    # Load background image bank if needed (for image_bank strategy or mix mode containing it)
     bg_images = None
     bg_cfg = config.get("background_replacement", {})
-    if bg_cfg.get("enabled") and bg_cfg.get("strategy") == "image_bank":
+    needs_bg_images = (
+        bg_cfg.get("strategy") == "image_bank"
+        or (bg_cfg.get("strategy") == "mix" and any(
+            e.get("strategy") == "image_bank" for e in bg_cfg.get("mix", [])
+        ))
+    )
+    if bg_cfg.get("enabled") and needs_bg_images:
         bg_dir = bg_cfg.get("image_bank", {}).get("directory")
         if bg_dir:
             print(f"  Loading background image bank from: {bg_dir}")
@@ -258,6 +270,15 @@ def main():
     seg_every_n = args.seg_every_n if args.seg_every_n is not None else config.get("seg_every_n", 1)
     if not args.skip_segmentation and task_objects:
         print(f"  Segmentation frequency: every {seg_every_n} frame(s)")
+
+    # Consistent background: same strategy/image within each episode (default: true)
+    consistent_bg = args.consistent_bg
+    if consistent_bg is None:
+        consistent_bg = config.get("background_replacement", {}).get("consistent", True)
+    if consistent_bg:
+        print("  Background consistency: per-episode (same background across all frames)")
+    else:
+        print("  Background consistency: per-frame (different background each frame)")
 
     def get_frame_segmentation(
         sample: dict, frame_offset: int, prev_seg: SceneSegmentation | None,
@@ -327,6 +348,13 @@ def main():
             copy_seed = seed + copy_idx * 10000 + ep_idx
             rng = np.random.RandomState(copy_seed)
 
+            # Pre-resolve background choices for the whole episode
+            episode_bg = None
+            if consistent_bg:
+                episode_bg = resolve_episode_background(
+                    config.get("background_replacement", {}), rng, bg_images,
+                )
+
             frame_indices = get_episode_frame_indices(source, ep_idx)
             seg = None  # will be computed on first frame
 
@@ -349,10 +377,10 @@ def main():
                         h, w = img_hwc.shape[:2]
                         bg_mask = _resize_mask(seg.background_mask, (h, w))
 
-                    # Per-frame RNG so augmentation varies across frames
+                    # Per-frame RNG so non-background augmentation varies across frames
                     frame_rng = np.random.RandomState(copy_seed + frame_offset)
 
-                    augmented = augment_image(img_hwc, bg_mask, config, frame_rng, bg_images)
+                    augmented = augment_image(img_hwc, bg_mask, config, frame_rng, bg_images, episode_bg)
                     img_overrides[img_key] = augmented  # HWC float32
 
                 output.add_frame(_build_frame(sample, img_overrides))

@@ -457,7 +457,7 @@ Color jitter can target `"foreground"`, `"background"`, or `"full"` image indepe
 
 #### Background replacement strategies
 
-Background replacement supports four strategies, and a `mix` mode that randomly picks one per frame based on configurable weights:
+Background replacement supports four strategies, and a `mix` mode that randomly picks one per episode based on configurable weights:
 
 | Strategy | Effect |
 |----------|--------|
@@ -465,9 +465,11 @@ Background replacement supports four strategies, and a `mix` mode that randomly 
 | `blur` | Gaussian blur of original — soft/defocused, structure faintly visible |
 | `gray` | Constant flat fill — clean neutral backdrop |
 | `image_bank` | Swap in a real image from a folder — most naturalistic variation |
-| `mix` | Randomly pick from the above per frame using weighted probabilities |
+| `mix` | Randomly pick from the above per episode using weighted probabilities |
 
 The default config uses `mix` with 25% noise, 25% blur, 20% gray, 30% image_bank. 20 synthetic background images (solids, gradients, textures, patterns) are included in `backgrounds/`. Add your own photos of different tables/surfaces for more realistic variation.
+
+By default, backgrounds are **consistent within each episode** — the same strategy, image, and noise pattern are applied to every frame. This avoids flickering backgrounds during playback and better matches the real data distribution where backgrounds don't change frame-to-frame. Disable with `consistent: false` in the config or `--no-consistent-bg` on the CLI to get independent per-frame random backgrounds.
 
 Segmentation re-runs every `seg_every_n` frames (default: 1) to track the robot gripper as it moves. All detected objects (gripper, task objects) are preserved; only the background is replaced.
 
@@ -487,6 +489,7 @@ image_writer_threads: 4     # parallel image writing threads
 # Background replacement — uses mix mode by default:
 background_replacement:
   enabled: true
+  consistent: true          # same background within each episode (no flickering)
   strategy: mix             # "gray", "noise", "blur", "image_bank", or "mix"
   mix:
     - strategy: noise
@@ -540,6 +543,8 @@ To customize: copy `configs/augmentation.yaml`, edit the values, and pass your c
 | `--include-originals` | off | Copy original episodes into the output |
 | `--skip-segmentation` | off | Skip SAM (disables mask-aware augmentations) |
 | `--seg-every-n` | from config | Re-run segmentation every N frames (1=accurate, 10=fast) |
+| `--consistent-bg` | on | Same background within each episode (no flickering) |
+| `--no-consistent-bg` | — | Different background per frame (original behavior) |
 | `--dry-run` | off | Print plan without writing |
 | `--push-to-hub` | off | Push output to HuggingFace Hub |
 

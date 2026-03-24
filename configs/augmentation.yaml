@@ -37,10 +37,12 @@ image_writer_threads: 4     # 0 = synchronous; 1-8 = parallel image writing thre
 # Requires SAM segmentation unless --skip-segmentation (then applies to full image).
 background_replacement:
   enabled: true
+  consistent: true          # true = same background within each episode (no flickering)
+                            # false = different background per frame (original behavior)
   strategy: mix             # "gray" | "noise" | "blur" | "image_bank" | "mix"
-  # Mix mode: randomly pick a strategy per frame based on weights.
-  # Only used when strategy is "mix". Each entry needs a strategy name
-  # and a weight (higher = more likely). Weights are normalized automatically.
+  # Mix mode: randomly pick a strategy per episode (if consistent) or per frame.
+  # Each entry needs a strategy name and a weight (higher = more likely).
+  # Weights are normalized automatically.
   mix:
     - strategy: noise
       weight: 0.25
