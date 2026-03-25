@@ -81,14 +81,15 @@ def segment_frame(
     img_hwc: np.ndarray,
     task_objects: list[str],
     device: str,
+    cached_models=None,
 ) -> SceneSegmentation:
     """Run detection + segmentation on a single frame."""
     from smolvla_inspect.diagnostic.scene import detect_objects, segment_scene
 
     # Convert to uint8 for detection/segmentation
     img_uint8 = (img_hwc * 255).astype(np.uint8)
-    detections = detect_objects(img_uint8, task_objects, device=device)
-    segmentation = segment_scene(img_uint8, detections, device=device)
+    detections = detect_objects(img_uint8, task_objects, device=device, cached_models=cached_models)
+    segmentation = segment_scene(img_uint8, detections, device=device, cached_models=cached_models)
     return segmentation
 
 
@@ -268,8 +269,13 @@ def main():
 
     # Segmentation frequency: how often to re-run SAM (robot moves between frames)
     seg_every_n = args.seg_every_n if args.seg_every_n is not None else config.get("seg_every_n", 1)
+
+    # Cache OWL-ViT + SAM models so they're loaded once, not per frame
+    scene_cache = None
     if not args.skip_segmentation and task_objects:
         print(f"  Segmentation frequency: every {seg_every_n} frame(s)")
+        from smolvla_inspect.diagnostic.scene import CachedSceneModels
+        scene_cache = CachedSceneModels(device=device)
 
     # Consistent background: same strategy/image within each episode (default: true)
     consistent_bg = args.consistent_bg
@@ -296,7 +302,7 @@ def main():
         for img_key in image_keys:
             img_tensor = sample[img_key]
             img_hwc = tensor_to_hwc(img_tensor)
-            result[img_key] = segment_frame(img_hwc, task_objects, device)
+            result[img_key] = segment_frame(img_hwc, task_objects, device, cached_models=scene_cache)
         return result
 
     total_episodes_written = 0
@@ -428,6 +434,10 @@ def main():
     with open(prov_path, "w") as f:
         json.dump(provenance, f, indent=2)
     print(f"  Provenance saved to: {prov_path}")
+
+    # Free cached OWL-ViT + SAM models
+    if scene_cache is not None:
+        scene_cache.cleanup()
 
     if args.push_to_hub:
         print("\nPushing to HuggingFace Hub...")

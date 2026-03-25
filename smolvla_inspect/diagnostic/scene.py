@@ -129,6 +129,69 @@ def _per_class_nms(
 
 _FALLBACK_CONFIDENCE = 0.03
 
+_DEFAULT_OWL_MODEL_ID = "google/owlv2-base-patch16-ensemble"
+
+
+class CachedSceneModels:
+    """Cache OWL-ViT and SAM models across calls to avoid reloading per frame.
+
+    Usage::
+
+        cache = CachedSceneModels(device="cuda")
+        for frame in frames:
+            dets = detect_objects(image, queries, cached_models=cache)
+            seg  = segment_scene(image, dets, cached_models=cache)
+        cache.cleanup()   # free GPU memory when done
+    """
+
+    def __init__(self, device: str = "cpu", model_id: str = _DEFAULT_OWL_MODEL_ID):
+        self.device = device
+        self.model_id = model_id
+        # OWL-ViT
+        self.owl_processor = None
+        self.owl_model = None
+        # SAM
+        self.sam_predictor = None
+        self._sam_model = None  # keep reference for cleanup
+        self._owl_loaded = False
+        self._sam_loaded = False
+
+    def get_owl(self):
+        """Return (processor, model), loading on first call."""
+        if not self._owl_loaded:
+            from transformers import Owlv2ForObjectDetection, Owlv2Processor
+            print(f"  Loading OWL-ViT v2 ({self.model_id}) on {self.device}...")
+            self.owl_processor = Owlv2Processor.from_pretrained(self.model_id)
+            self.owl_model = Owlv2ForObjectDetection.from_pretrained(self.model_id)
+            self.owl_model = self.owl_model.to(self.device)
+            self.owl_model.eval()
+            self._owl_loaded = True
+        return self.owl_processor, self.owl_model
+
+    def get_sam_predictor(self):
+        """Return SamPredictor, loading on first call."""
+        if not self._sam_loaded:
+            from segment_anything import SamPredictor, sam_model_registry
+            checkpoint_path = _ensure_sam_checkpoint()
+            print(f"  Loading SAM vit_b on {self.device}...")
+            sam = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
+            sam = sam.to(self.device)
+            self._sam_model = sam
+            self.sam_predictor = SamPredictor(sam)
+            self._sam_loaded = True
+        return self.sam_predictor
+
+    def cleanup(self):
+        """Free GPU memory."""
+        del self.owl_processor, self.owl_model
+        del self.sam_predictor, self._sam_model
+        self.owl_processor = self.owl_model = None
+        self.sam_predictor = self._sam_model = None
+        self._owl_loaded = False
+        self._sam_loaded = False
+        if self.device != "cpu":
+            torch.cuda.empty_cache()
+
 
 def detect_objects(
     image: np.ndarray,
@@ -137,7 +200,8 @@ def detect_objects(
     nms_iou_threshold: float = 0.5,
     max_per_class: int = 3,
     device: str = "cpu",
-    model_id: str = "google/owlv2-base-patch16-ensemble",
+    model_id: str = _DEFAULT_OWL_MODEL_ID,
+    cached_models: CachedSceneModels | None = None,
 ) -> list[DetectedObject]:
     """Run open-vocabulary object detection using OWL-ViT v2.
 
@@ -161,6 +225,9 @@ def detect_objects(
         Maximum detections to keep per object class.
     device : str
         ``"cpu"`` or ``"cuda"``.
+    cached_models : CachedSceneModels or None
+        Pre-loaded models to reuse across calls.  When provided, models are
+        **not** cleaned up after the call — the caller owns the lifecycle.
 
     Returns
     -------
@@ -178,12 +245,16 @@ def detect_objects(
               "Returning empty detections.")
         return []
 
+    owns_models = cached_models is None
     try:
-        print(f"  Loading OWL-ViT v2 ({model_id}) on {device}...")
-        processor = Owlv2Processor.from_pretrained(model_id)
-        model = Owlv2ForObjectDetection.from_pretrained(model_id)
-        model = model.to(device)
-        model.eval()
+        if cached_models is not None:
+            processor, model = cached_models.get_owl()
+        else:
+            print(f"  Loading OWL-ViT v2 ({model_id}) on {device}...")
+            processor = Owlv2Processor.from_pretrained(model_id)
+            model = Owlv2ForObjectDetection.from_pretrained(model_id)
+            model = model.to(device)
+            model.eval()
 
         # Convert numpy image to PIL
         pil_image = Image.fromarray(image)
@@ -270,13 +341,14 @@ def detect_objects(
         detections = []
 
     finally:
-        # Clean up model from GPU
-        try:
-            del model, processor
-            if device != "cpu":
-                torch.cuda.empty_cache()
-        except NameError:
-            pass
+        # Only clean up if we loaded models ourselves
+        if owns_models:
+            try:
+                del model, processor
+                if device != "cpu":
+                    torch.cuda.empty_cache()
+            except NameError:
+                pass
 
     return detections
 
@@ -336,6 +408,7 @@ def segment_scene(
     image: np.ndarray,
     detections: list[DetectedObject],
     device: str = "cpu",
+    cached_models: CachedSceneModels | None = None,
 ) -> SceneSegmentation:
     """Segment a scene using SAM, prompted by detected bounding boxes.
 
@@ -347,6 +420,9 @@ def segment_scene(
         Objects detected by :func:`detect_objects` (boxes used as SAM prompts).
     device : str
         ``"cpu"`` or ``"cuda"``.
+    cached_models : CachedSceneModels or None
+        Pre-loaded models to reuse across calls.  When provided, models are
+        **not** cleaned up after the call — the caller owns the lifecycle.
 
     Returns
     -------
@@ -369,13 +445,17 @@ def segment_scene(
         print("  WARNING: segment_anything not installed. Falling back to bounding-box masks.")
         return _bbox_fallback_masks(detections, h, w)
 
+    owns_models = cached_models is None
     predictor = None
     try:
-        checkpoint_path = _ensure_sam_checkpoint()
-        print(f"  Loading SAM vit_b on {device}...")
-        sam = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
-        sam = sam.to(device)
-        predictor = SamPredictor(sam)
+        if cached_models is not None:
+            predictor = cached_models.get_sam_predictor()
+        else:
+            checkpoint_path = _ensure_sam_checkpoint()
+            print(f"  Loading SAM vit_b on {device}...")
+            sam = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
+            sam = sam.to(device)
+            predictor = SamPredictor(sam)
         predictor.set_image(image)
 
         segmented_objects: list[DetectedObject] = []
@@ -417,13 +497,14 @@ def segment_scene(
         background_mask = fallback.background_mask
 
     finally:
-        # Clean up SAM from GPU
-        try:
-            del predictor, sam
-            if device != "cpu":
-                torch.cuda.empty_cache()
-        except NameError:
-            pass
+        # Only clean up if we loaded models ourselves
+        if owns_models:
+            try:
+                del predictor, sam
+                if device != "cpu":
+                    torch.cuda.empty_cache()
+            except NameError:
+                pass
 
     return SceneSegmentation(
         objects=segmented_objects,
