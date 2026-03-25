@@ -98,45 +98,72 @@ def _load_background_images(directory: str | Path) -> list[np.ndarray]:
 # Episode-level background consistency
 # ---------------------------------------------------------------------------
 
+def resolve_episode_consistency(
+    config: dict,
+    rng: np.random.RandomState,
+    bg_images: list[np.ndarray] | None = None,
+) -> dict:
+    """Pre-resolve per-frame-varying choices for episode-level consistency.
+
+    Called once per episode so every frame shares the same background strategy,
+    image, noise pattern, **and** color jitter parameters.  Returns a dict
+    consumed by ``apply_background_replacement`` (via *episode_bg*) and
+    ``apply_color_jitter`` (via *episode_jitter*).
+    """
+    result: dict = {}
+
+    # --- Background replacement ---
+    bg_cfg = config.get("background_replacement", {})
+    if bg_cfg.get("enabled", False):
+        strategy = bg_cfg.get("strategy", "noise")
+
+        # Resolve mix mode -> single strategy for the whole episode
+        if strategy == "mix":
+            mix_entries = bg_cfg.get("mix", [])
+            if not mix_entries:
+                raise ValueError("strategy 'mix' requires a 'mix' list")
+            strategies = [e["strategy"] for e in mix_entries]
+            weights = np.array([e.get("weight", 1.0) for e in mix_entries], dtype=np.float64)
+            weights /= weights.sum()
+            result["strategy"] = strategies[rng.choice(len(strategies), p=weights)]
+        else:
+            result["strategy"] = strategy
+
+        resolved = result["strategy"]
+
+        if resolved == "image_bank" and bg_images:
+            result["bg_image_idx"] = int(rng.randint(len(bg_images)))
+            result["crop_seed"] = int(rng.randint(2**31))
+
+        if resolved == "noise":
+            result["noise_seed"] = int(rng.randint(2**31))
+
+    # --- Color jitter (pre-sample once for the whole episode) ---
+    cj_cfg = config.get("color_jitter", {})
+    if cj_cfg.get("enabled", False):
+        b = cj_cfg.get("brightness", 0.0)
+        c = cj_cfg.get("contrast", 0.0)
+        s = cj_cfg.get("saturation", 0.0)
+        h = cj_cfg.get("hue", 0.0)
+        result["jitter_brightness"] = float(rng.uniform(-b, b))
+        result["jitter_contrast"] = float(rng.uniform(max(0, 1 - c), 1 + c))
+        result["jitter_saturation"] = float(rng.uniform(max(0, 1 - s), 1 + s))
+        result["jitter_hue"] = float(rng.uniform(-h, h))
+
+    return result
+
+
+# Keep the old name as an alias so existing callers don't break
 def resolve_episode_background(
     cfg: dict,
     rng: np.random.RandomState,
     bg_images: list[np.ndarray] | None = None,
 ) -> dict:
-    """Pre-resolve background replacement choices for episode-level consistency.
-
-    Called once per episode so every frame shares the same background strategy,
-    image, and noise pattern.  Returns a dict consumed by
-    ``apply_background_replacement`` via the *episode_bg* parameter.
-    """
-    if not cfg.get("enabled", False):
-        return {}
-
-    result: dict = {}
-    strategy = cfg.get("strategy", "noise")
-
-    # Resolve mix mode → single strategy for the whole episode
-    if strategy == "mix":
-        mix_entries = cfg.get("mix", [])
-        if not mix_entries:
-            raise ValueError("strategy 'mix' requires a 'mix' list")
-        strategies = [e["strategy"] for e in mix_entries]
-        weights = np.array([e.get("weight", 1.0) for e in mix_entries], dtype=np.float64)
-        weights /= weights.sum()
-        result["strategy"] = strategies[rng.choice(len(strategies), p=weights)]
-    else:
-        result["strategy"] = strategy
-
-    resolved = result["strategy"]
-
-    if resolved == "image_bank" and bg_images:
-        result["bg_image_idx"] = int(rng.randint(len(bg_images)))
-        result["crop_seed"] = int(rng.randint(2**31))
-
-    if resolved == "noise":
-        result["noise_seed"] = int(rng.randint(2**31))
-
-    return result
+    """Legacy wrapper — delegates to ``resolve_episode_consistency``."""
+    # Wrap the single bg config into the full config shape expected by the new fn
+    return resolve_episode_consistency(
+        {"background_replacement": cfg}, rng, bg_images,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +311,7 @@ def apply_color_jitter(
     bg_mask: np.ndarray | None,
     cfg: dict,
     rng: np.random.RandomState,
+    episode_bg: dict | None = None,
 ) -> np.ndarray:
     """Apply color jitter (brightness, contrast, saturation, hue).
 
@@ -293,6 +321,7 @@ def apply_color_jitter(
     bg_mask : (H, W) bool or None
     cfg : color_jitter config dict
     rng : seeded RNG
+    episode_bg : pre-resolved episode consistency dict (has jitter_* keys)
     """
     if not cfg.get("enabled", False):
         return img
@@ -300,11 +329,17 @@ def apply_color_jitter(
     out = img.copy()
     target = cfg.get("target", "full")
 
-    # Sample jitter parameters
-    brightness = rng.uniform(-cfg.get("brightness", 0.0), cfg.get("brightness", 0.0))
-    contrast = rng.uniform(max(0, 1 - cfg.get("contrast", 0.0)), 1 + cfg.get("contrast", 0.0))
-    sat_factor = rng.uniform(max(0, 1 - cfg.get("saturation", 0.0)), 1 + cfg.get("saturation", 0.0))
-    hue_delta = rng.uniform(-cfg.get("hue", 0.0), cfg.get("hue", 0.0))
+    # Use episode-level jitter if available, otherwise sample per-frame
+    if episode_bg and "jitter_brightness" in episode_bg:
+        brightness = episode_bg["jitter_brightness"]
+        contrast = episode_bg["jitter_contrast"]
+        sat_factor = episode_bg["jitter_saturation"]
+        hue_delta = episode_bg["jitter_hue"]
+    else:
+        brightness = rng.uniform(-cfg.get("brightness", 0.0), cfg.get("brightness", 0.0))
+        contrast = rng.uniform(max(0, 1 - cfg.get("contrast", 0.0)), 1 + cfg.get("contrast", 0.0))
+        sat_factor = rng.uniform(max(0, 1 - cfg.get("saturation", 0.0)), 1 + cfg.get("saturation", 0.0))
+        hue_delta = rng.uniform(-cfg.get("hue", 0.0), cfg.get("hue", 0.0))
 
     # Build mask for which pixels to affect
     if target == "foreground" and bg_mask is not None:
@@ -577,9 +612,9 @@ def augment_image(
         img, bg_mask, config.get("background_color_shift", {}), rng,
     )
 
-    # 4. Color jitter
+    # 4. Color jitter (episode-consistent when episode_bg has jitter params)
     img = apply_color_jitter(
-        img, bg_mask, config.get("color_jitter", {}), rng,
+        img, bg_mask, config.get("color_jitter", {}), rng, episode_bg,
     )
 
     # 5. Foreground cutout

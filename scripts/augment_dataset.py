@@ -51,7 +51,7 @@ if str(_project_root) not in sys.path:
 from smolvla_inspect.augment.transforms import (
     augment_image,
     _load_background_images,
-    resolve_episode_background,
+    resolve_episode_consistency,
 )
 from smolvla_inspect.diagnostic.models import SceneSegmentation
 
@@ -281,16 +281,23 @@ def main():
         print("  Background consistency: per-frame (different background each frame)")
 
     def get_frame_segmentation(
-        sample: dict, frame_offset: int, prev_seg: SceneSegmentation | None,
-    ) -> SceneSegmentation | None:
-        """Get segmentation for a frame, re-running SAM every seg_every_n frames."""
+        sample: dict, frame_offset: int, prev_segs: dict[str, SceneSegmentation] | None,
+        image_key: str | None = None,
+    ) -> dict[str, SceneSegmentation] | None:
+        """Get segmentation for a frame, re-running SAM every seg_every_n frames.
+
+        Returns a dict mapping image_key -> SceneSegmentation, one per camera.
+        """
         if args.skip_segmentation or not task_objects:
             return None
-        if prev_seg is not None and frame_offset % seg_every_n != 0:
-            return prev_seg
-        img_tensor = sample[image_keys[0]]
-        img_hwc = tensor_to_hwc(img_tensor)
-        return segment_frame(img_hwc, task_objects, device)
+        if prev_segs is not None and frame_offset % seg_every_n != 0:
+            return prev_segs
+        result = {}
+        for img_key in image_keys:
+            img_tensor = sample[img_key]
+            img_hwc = tensor_to_hwc(img_tensor)
+            result[img_key] = segment_frame(img_hwc, task_objects, device)
+        return result
 
     total_episodes_written = 0
     t_start = time.time()
@@ -348,21 +355,21 @@ def main():
             copy_seed = seed + copy_idx * 10000 + ep_idx
             rng = np.random.RandomState(copy_seed)
 
-            # Pre-resolve background choices for the whole episode
+            # Pre-resolve background + color jitter for the whole episode
             episode_bg = None
             if consistent_bg:
-                episode_bg = resolve_episode_background(
-                    config.get("background_replacement", {}), rng, bg_images,
+                episode_bg = resolve_episode_consistency(
+                    config, rng, bg_images,
                 )
 
             frame_indices = get_episode_frame_indices(source, ep_idx)
-            seg = None  # will be computed on first frame
+            segs = None  # will be computed on first frame (per-camera dict)
 
             for frame_offset, fi in enumerate(frame_indices):
                 sample = source[fi]
 
-                # Re-segment if needed (tracks moving objects across frames)
-                seg = get_frame_segmentation(sample, frame_offset, seg)
+                # Re-segment if needed (per-camera, tracks moving objects)
+                segs = get_frame_segmentation(sample, frame_offset, segs)
 
                 # Augment each image key
                 img_overrides = {}
@@ -370,12 +377,12 @@ def main():
                     img_tensor = sample[img_key]
                     img_hwc = tensor_to_hwc(img_tensor)
 
-                    # Get background mask sized to this image
+                    # Get background mask for this specific camera
                     bg_mask = None
-                    if seg is not None:
+                    if segs is not None and img_key in segs:
                         from smolvla_inspect.diagnostic.counterfactual import _resize_mask
                         h, w = img_hwc.shape[:2]
-                        bg_mask = _resize_mask(seg.background_mask, (h, w))
+                        bg_mask = _resize_mask(segs[img_key].background_mask, (h, w))
 
                     # Per-frame RNG so non-background augmentation varies across frames
                     frame_rng = np.random.RandomState(copy_seed + frame_offset)
