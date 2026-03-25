@@ -87,7 +87,43 @@ from smolvla_inspect.diagnostic.comparison import compare_diagnostic_runs
 from smolvla_inspect.diagnostic import run_diagnostic
 ```
 
-The interface is the existing public API of `smolvla_inspect.diagnostic`. No changes to smolvla-inspect are required — the prescription engine is a downstream consumer.
+The interface is the existing public API of `smolvla_inspect.diagnostic`. No changes to smolvla-inspect are required -- the prescription engine is a downstream consumer.
+
+### Stability Contract
+
+smolvla-prescribe depends on a specific set of imports from smolvla-inspect. To avoid breaking the downstream consumer when evolving smolvla-inspect:
+
+**Rules for smolvla-inspect changes:**
+1. **Don't rename or remove** public functions, classes, or their parameters. If a better name is needed, add the new name and keep the old one as an alias.
+2. **Add parameters with defaults.** New parameters must always have default values so existing callers are unaffected (e.g. `cached_models=None`).
+3. **Don't change return types.** Adding new fields to dataclasses is fine; removing or renaming existing fields is not.
+
+**Interface validation test in smolvla-prescribe:**
+
+```python
+# tests/test_inspect_interface.py
+def test_inspect_imports():
+    """Validates that the smolvla-inspect interface contract is intact.
+
+    If this test fails, a breaking change was made in smolvla-inspect.
+    Fix it there (add an alias, restore the default) rather than
+    updating this test.
+    """
+    from smolvla_inspect.diagnostic.models import (
+        DiagnosticReport, DiagnosticMatrix, Symptom, Finding,
+        CounterfactualResult, DatasetDiversityReport, SceneSegmentation,
+    )
+    from smolvla_inspect.diagnostic.counterfactual import (
+        background_substitution, object_relocation, lighting_perturbation,
+        object_recolor, distractor_insertion, task_string_swap,
+        occlusion_targeted,
+    )
+    from smolvla_inspect.diagnostic.comparison import compare_diagnostic_runs
+    from smolvla_inspect.diagnostic.scene import CachedSceneModels
+    from smolvla_inspect.diagnostic import run_diagnostic
+```
+
+This test runs on every CI pass in smolvla-prescribe. If a rename or removal in smolvla-inspect breaks it, fix it in smolvla-inspect (add an alias or restore the default) rather than updating this test.
 
 For the MCP server: smolvla-inspect's MCP server remains read-only (48 tools for querying diagnostic data). `smolvla-prescribe` can optionally register its own MCP tools (e.g., `run_sweep`, `get_prescription_report`, `list_trajectories`) as a separate MCP server, or as an extension to the existing one via a plugin mechanism.
 
