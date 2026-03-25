@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smolvla-inspect"
+version = "0.1.0"
+description = "Attention visualization and diagnostic tool for SmolVLA."
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+include = ["smolvla_inspect*"]
