@@ -487,8 +487,8 @@ def _compute_result(
     requires_gpu=True,
     requires_model=True,
     description="Replace background pixels and measure action change.",
-    prompt_description="Replace background with gray/noise/blur. Tests if model relies on background features.",
-    param_schema='replacement: "gray"|"noise"|"blur"',
+    prompt_description="Replace background with gray/noise/blur/image_bank. Tests if model relies on background features.",
+    param_schema='replacement: "gray"|"noise"|"blur"|"image_bank"',
 )
 def background_substitution(
     policy,
@@ -500,13 +500,20 @@ def background_substitution(
     replacement: str = "gray",
     noise_seed: int = 42,
     image_map=None,
+    bg_images: list | None = None,
+    bg_image_index: int | None = None,
 ) -> CounterfactualResult:
-    """Replace background pixels with gray / noise / blur and measure action shift.
+    """Replace background pixels with gray / noise / blur / image_bank and measure action shift.
 
     Parameters
     ----------
     replacement : str
-        One of ``"gray"``, ``"noise"``, or ``"blur"``.
+        One of ``"gray"``, ``"noise"``, ``"blur"``, or ``"image_bank"``.
+    bg_images : list of np.ndarray, optional
+        Background images for ``"image_bank"`` mode. Each array is HWC float32 [0, 1].
+    bg_image_index : int, optional
+        Select a specific image from *bg_images* (for deterministic sweeps).
+        If None, uses *noise_seed* to pick one randomly.
     """
     # Baseline actions
     policy.reset()
@@ -547,6 +554,20 @@ def background_substitution(
                 ) / (kernel_size * kernel_size)
             blurred = blurred[:h, :w]
         modified_hwc[bg_mask] = blurred[bg_mask]
+    elif replacement == "image_bank":
+        if bg_images is None or len(bg_images) == 0:
+            raise ValueError(
+                'replacement="image_bank" requires bg_images to be provided'
+            )
+        from smolvla_inspect.augment.transforms import _resize_bg_image
+        if bg_image_index is not None:
+            chosen = bg_images[bg_image_index % len(bg_images)]
+        else:
+            rng = np.random.RandomState(noise_seed)
+            chosen = bg_images[rng.randint(len(bg_images))]
+        crop_rng = np.random.RandomState(noise_seed)
+        bg_patch = _resize_bg_image(chosen, h, w, "crop", crop_rng)
+        modified_hwc[bg_mask] = bg_patch[bg_mask]
     else:
         raise ValueError(f"Unknown replacement mode: {replacement!r}")
 
