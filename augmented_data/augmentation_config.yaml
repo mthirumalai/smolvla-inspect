@@ -1,0 +1,77 @@
+background_color_shift:
+  enabled: false
+  hue_range:
+  - -0.15
+  - 0.15
+  saturation_range:
+  - 0.7
+  - 1.3
+  value_range:
+  - 0.7
+  - 1.3
+background_replacement:
+  blur:
+    sigma: 20.0
+  enabled: true
+  gray:
+    value: 0.5
+  image_bank:
+    directory: ./backgrounds
+    resize_mode: crop
+  mix:
+  - strategy: noise
+    weight: 0.25
+  - strategy: blur
+    weight: 0.25
+  - strategy: gray
+    weight: 0.2
+  - strategy: image_bank
+    weight: 0.3
+  noise:
+    high: 1.0
+    low: 0.0
+  strategy: mix
+color_jitter:
+  brightness: 0.4
+  contrast: 0.4
+  enabled: true
+  hue: 0.1
+  saturation: 0.3
+  target: full
+device: auto
+episodes: null
+foreground_cutout:
+  enabled: false
+  max_fraction: 0.4
+  probability: 0.3
+gaussian_blur:
+  enabled: false
+  kernel_size_range:
+  - 5
+  - 15
+  probability: 0.5
+  sigma_range:
+  - 0.5
+  - 2.0
+image_writer_threads: 4
+noise_injection:
+  enabled: false
+  gaussian:
+    std: 0.02
+  probability: 0.5
+  salt_pepper:
+    amount: 0.01
+  type: gaussian
+num_copies: 3
+random_crop:
+  enabled: false
+  ratio_range:
+  - 0.9
+  - 1.1
+  scale_range:
+  - 0.8
+  - 1.0
+seed: 42
+seg_every_n: 1
+task_string: null
+use_videos: true

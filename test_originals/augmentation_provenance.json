@@ -1,0 +1,14 @@
+{
+  "source_dataset": "mthirumalai/so101.pnp.1",
+  "source_episodes": [
+    0
+  ],
+  "num_copies": 0,
+  "seed": 42,
+  "total_augmented_episodes": 1,
+  "include_originals": true,
+  "enabled_augmentations": [
+    "background_replacement",
+    "color_jitter"
+  ]
+}
